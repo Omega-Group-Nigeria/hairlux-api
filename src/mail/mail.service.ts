@@ -1,0 +1,171 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import type { Queue } from 'bull';
+import { EmailJobData } from './mail.processor';
+import {
+  otpTemplate,
+  resetPasswordTemplate,
+  bookingConfirmationTemplate,
+  depositSuccessTemplate,
+  referralRewardTemplate,
+} from './templates';
+
+@Injectable()
+export class MailService {
+  private readonly logger = new Logger(MailService.name);
+
+  constructor(@InjectQueue('email') private emailQueue: Queue<EmailJobData>) {}
+
+  async sendOtpEmail(email: string, otpCode: string, firstName: string) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Verify Your Email — HairLux',
+          html: otpTemplate(firstName, otpCode),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`OTP email queued for ${email}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing OTP email:`, errorMessage);
+    }
+  }
+
+  async sendPasswordResetEmail(
+    email: string,
+    resetToken: string,
+    firstName: string,
+  ) {
+    try {
+      const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3001'}/reset-password?token=${resetToken}`;
+
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Reset Your Password — HairLux',
+          html: resetPasswordTemplate(firstName, resetUrl),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`Password reset email queued for ${email}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing password reset email:`, errorMessage);
+    }
+  }
+
+  async sendDepositSuccessEmail(
+    email: string,
+    firstName: string,
+    deposit: {
+      amount: number;
+      reference: string;
+      newBalance: number;
+      date: string;
+    },
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Deposit Successful — HairLux',
+          html: depositSuccessTemplate(firstName, deposit),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`Deposit success email queued for ${email}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing deposit success email:`, errorMessage);
+    }
+  }
+
+  async sendBookingConfirmationEmail(
+    email: string,
+    firstName: string,
+    bookingDetails: {
+      services: { name: string; price: number; duration: number }[];
+      date: string;
+      time: string;
+      address: string;
+      totalAmount: number;
+      paymentMethod: 'WALLET' | 'CASH';
+      bookingIds: string[];
+    },
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Booking Confirmed — HairLux',
+          html: bookingConfirmationTemplate(firstName, bookingDetails),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`Booking confirmation email queued for ${email}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Error queuing booking confirmation email:`,
+        errorMessage,
+      );
+    }
+  }
+
+  async sendReferralRewardEmail(
+    email: string,
+    firstName: string,
+    reward: {
+      earnedAmount: number;
+      referredName: string;
+      newBalance: number;
+    },
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'You Earned a Referral Reward — HairLux',
+          html: referralRewardTemplate(firstName, reward),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`Referral reward email queued for ${email}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing referral reward email:`, errorMessage);
+    }
+  }
+}

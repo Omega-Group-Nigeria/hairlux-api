@@ -1,0 +1,394 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum StaffStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  WALLET
+  CASH
+}
+
+enum TransactionType {
+  DEPOSIT
+  DEBIT
+  CREDIT
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ServiceStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ReferralRewardType {
+  FIXED
+  PERCENTAGE
+}
+
+enum ReferralStatus {
+  PENDING
+  REWARDED
+  FAILED
+}
+
+model User {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  password         String
+  firstName        String    @map("first_name")
+  lastName         String    @map("last_name")
+  phone            String?
+  role             UserRole  @default(USER)
+  status           UserStatus @default(ACTIVE)
+  emailVerified    Boolean   @default(false) @map("email_verified")
+  otpCode          String?   @map("otp_code")
+  otpExpiry        DateTime? @map("otp_expiry")
+  resetToken       String?   @map("reset_token")
+  resetTokenExpiry DateTime? @map("reset_token_expiry")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  addresses       Address[]
+  bookings        Booking[]
+  wallet          Wallet?
+  reviews         Review[]
+  refreshTokens   RefreshToken[]
+  referralCode    ReferralCode?
+  referrals       Referral[]     @relation("ReferrerUser")
+  referredBy      Referral?      @relation("ReferredUser")
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model Address {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  label        String?  // e.g., "Home", "Office"
+  addressLine  String   @map("address_line")
+  city         String
+  state        String
+  country      String   @default("Nigeria")
+  postalCode   String?  @map("postal_code")
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean  @default(false) @map("is_default")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@map("addresses")
+}
+
+model ServiceCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  services Service[]
+
+  @@map("service_categories")
+}
+
+model Service {
+  id          String        @id @default(uuid())
+  categoryId  String        @map("category_id")
+  name        String
+  description String?
+  price       Decimal       @db.Decimal(10, 2)
+  duration    Int           // Duration in minutes
+  imageUrl    String?       @map("image_url")
+  imagePublicId String?     @map("image_public_id")
+  status      ServiceStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  category ServiceCategory @relation(fields: [categoryId], references: [id])
+  bookings Booking[]
+  reviews  Review[]
+
+  @@map("services")
+}
+
+model Staff {
+  id          String      @id @default(uuid())
+  firstName   String      @map("first_name")
+  lastName    String      @map("last_name")
+  email       String      @unique
+  phone       String
+  bio         String?
+  imageUrl    String?     @map("image_url")
+  status      StaffStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  bookings       Booking[]
+  availability   StaffAvailability[]
+
+  @@map("staff")
+}
+
+model StaffAvailability {
+  id        String   @id @default(uuid())
+  staffId   String   @map("staff_id")
+  dayOfWeek Int      @map("day_of_week") // 0 = Sunday, 6 = Saturday
+  startTime String   @map("start_time") // Format: "HH:mm"
+  endTime   String   @map("end_time")   // Format: "HH:mm"
+  isAvailable Boolean @default(true) @map("is_available")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, dayOfWeek])
+  @@map("staff_availability")
+}
+
+model Booking {
+  id            String        @id @default(uuid())
+  userId        String        @map("user_id")
+  serviceId     String        @map("service_id")
+  staffId       String?       @map("staff_id")
+  addressId     String        @map("address_id")
+  bookingDate   DateTime      @map("booking_date")
+  bookingTime   String        @map("booking_time") // Format: "HH:mm"
+  status        BookingStatus @default(PENDING)
+  paymentMethod PaymentMethod @map("payment_method")
+  totalAmount   Decimal       @db.Decimal(10, 2) @map("total_amount")
+  notes         String?
+  cancelReason  String?       @map("cancel_reason")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  user    User     @relation(fields: [userId], references: [id])
+  service Service  @relation(fields: [serviceId], references: [id])
+  staff   Staff?   @relation(fields: [staffId], references: [id])
+  address Address  @relation(fields: [addressId], references: [id])
+  review  Review?
+
+  @@map("bookings")
+}
+
+model Wallet {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  balance   Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@map("wallets")
+}
+
+model Transaction {
+  id                String            @id @default(uuid())
+  walletId          String            @map("wallet_id")
+  type              TransactionType
+  amount            Decimal           @db.Decimal(10, 2)
+  status            TransactionStatus @default(PENDING)
+  reference         String            @unique // Payment gateway reference or internal ref
+  description       String?
+  paystackReference String?           @map("paystack_reference") // For deposit verification
+  metadata          Json?             // Store additional payment details
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@map("transactions")
+}
+
+model Review {
+  id        String       @id @default(uuid())
+  userId    String       @map("user_id")
+  serviceId String       @map("service_id")
+  bookingId String       @unique @map("booking_id")
+  rating    Int          // 1-5
+  comment   String?
+  status    ReviewStatus @default(PENDING)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id])
+  service Service @relation(fields: [serviceId], references: [id])
+  booking Booking @relation(fields: [bookingId], references: [id])
+
+  @@map("reviews")
+}
+
+model BusinessSettings {
+  id                 String   @id @default(uuid())
+  businessName       String   @map("business_name")
+  email              String
+  phone              String
+  address            String
+  slotDuration       Int      @default(30) @map("slot_duration")        // Booking slot length in minutes
+  advanceBookingDays Int      @default(30) @map("advance_booking_days") // How many days ahead bookings allowed
+  minNoticeHours     Int      @default(2) @map("min_notice_hours")      // Minimum hours before a booking
+  maxBookingsPerDay  Int      @default(10) @map("max_bookings_per_day")
+  bookingPolicy      String?  @map("booking_policy")
+  cancellationPolicy String?  @map("cancellation_policy")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("business_settings")
+}
+
+model BusinessHours {
+  id        String   @id @default(uuid())
+  dayOfWeek Int      @unique @map("day_of_week") // 0=Sunday, 1=Monday ... 6=Saturday
+  openTime  String   @map("open_time")            // Format: "HH:mm"
+  closeTime String   @map("close_time")           // Format: "HH:mm"
+  isOpen    Boolean  @default(true) @map("is_open")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("business_hours")
+}
+
+model BusinessException {
+  id        String   @id @default(uuid())
+  date      DateTime @unique                      // Specific calendar date
+  isClosed  Boolean  @default(true) @map("is_closed")
+  openTime  String?  @map("open_time")            // Override open time (only if not closed)
+  closeTime String?  @map("close_time")           // Override close time (only if not closed)
+  reason    String?                               // e.g. "Christmas Holiday"
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("business_exceptions")
+}
+
+model DiscountCode {
+  id          String    @id @default(uuid())
+  code        String    @unique              // e.g. "SUMMER20" — case-insensitive at app level
+  name        String                         // e.g. "Summer Sale"
+  percentage  Float                          // e.g. 20.0 (represents 20%)
+  isActive    Boolean   @default(true) @map("is_active")
+  startsAt    DateTime? @map("starts_at")    // null = active immediately
+  expiresAt   DateTime? @map("expires_at")   // null = never expires
+  maxUses     Int?      @map("max_uses")     // null = unlimited
+  usedCount   Int       @default(0) @map("used_count")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("discount_codes")
+}
+
+// ─── Referral System ─────────────────────────────────────────────────────────
+
+model ReferralSettings {
+  id               String             @id @default(uuid())
+  isActive         Boolean            @default(false) @map("is_active")
+  rewardType       ReferralRewardType @default(FIXED) @map("reward_type")
+  rewardValue      Decimal            @db.Decimal(10, 2) @map("reward_value")
+  minDepositAmount Decimal            @default(0) @db.Decimal(10, 2) @map("min_deposit_amount")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  @@map("referral_settings")
+}
+
+model ReferralCode {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  code        String   @unique
+  totalUses   Int      @default(0) @map("total_uses")
+  totalEarned Decimal  @default(0) @db.Decimal(10, 2) @map("total_earned")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referrals Referral[] @relation("ReferrerCode")
+
+  @@map("referral_codes")
+}
+
+model Referral {
+  id           String         @id @default(uuid())
+  referrerId   String         @map("referrer_id")
+  referredId   String         @unique @map("referred_id") // one referral per user
+  code         String
+  status       ReferralStatus @default(PENDING)
+  rewardAmount Decimal?       @db.Decimal(10, 2) @map("reward_amount")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  referrer     User         @relation("ReferrerUser", fields: [referrerId], references: [id])
+  referred     User         @relation("ReferredUser", fields: [referredId], references: [id])
+  referralCode ReferralCode @relation("ReferrerCode", fields: [code], references: [code])
+
+  @@map("referrals")
+}

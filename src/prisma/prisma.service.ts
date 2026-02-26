@@ -1,0 +1,108 @@
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+
+@Injectable()
+export class PrismaService implements OnModuleInit, OnModuleDestroy {
+  public client: PrismaClient;
+  private pool: Pool;
+
+  constructor(private configService: ConfigService) {
+    const databaseUrl = this.configService.get<string>('DATABASE_URL');
+    this.pool = new Pool({ connectionString: databaseUrl });
+    const adapter = new PrismaPg(this.pool);
+
+    this.client = new PrismaClient({
+      adapter,
+      log: ['query', 'info', 'warn', 'error'],
+    });
+  }
+
+  async onModuleInit() {
+    await this.client.$connect();
+  }
+
+  async onModuleDestroy() {
+    await this.client.$disconnect();
+    await this.pool.end();
+  }
+
+  // Proxy all PrismaClient properties
+  get user() {
+    return this.client.user;
+  }
+
+  get refreshToken() {
+    return this.client.refreshToken;
+  }
+
+  get address() {
+    return this.client.address;
+  }
+
+  get serviceCategory() {
+    return this.client.serviceCategory;
+  }
+
+  get service() {
+    return this.client.service;
+  }
+
+  get staff() {
+    return this.client.staff;
+  }
+
+  get staffAvailability() {
+    return this.client.staffAvailability;
+  }
+
+  get booking() {
+    return this.client.booking;
+  }
+
+  get wallet() {
+    return this.client.wallet;
+  }
+
+  get transaction() {
+    return this.client.transaction;
+  }
+
+  get review() {
+    return this.client.review;
+  }
+
+  get businessSettings() {
+    return this.client.businessSettings;
+  }
+
+  get businessHours() {
+    return this.client.businessHours;
+  }
+
+  get businessException() {
+    return this.client.businessException;
+  }
+
+  get discountCode() {
+    return this.client.discountCode;
+  }
+
+  get referralSettings() {
+    return this.client.referralSettings;
+  }
+
+  get referralCode() {
+    return this.client.referralCode;
+  }
+
+  get referral() {
+    return this.client.referral;
+  }
+
+  get $transaction() {
+    return this.client.$transaction.bind(this.client);
+  }
+}
