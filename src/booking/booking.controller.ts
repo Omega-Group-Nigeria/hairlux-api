@@ -114,9 +114,10 @@ export class BookingController {
   @ApiOperation({
     summary: 'Create and pay for a booking',
     description:
-      'Book one or more services in a single appointment. Payment is processed immediately. ' +
-      'WALLET: deducts the full amount from your wallet — booking is only created if balance is sufficient. ' +
-      'CASH: slot is reserved and payment collected on delivery.',
+      'Book one or more services in a single appointment. All services are stored under ONE booking record with a single reservation code. ' +
+      '`bookingType` must be `HOME_SERVICE` (requires `addressId` — stylist visits you) or `WALK_IN` (in-store, no address needed). ' +
+      'Payment: WALLET deducts the full total from your wallet immediately — booking is only created if balance is sufficient. ' +
+      'CASH: slot is reserved and payment is collected on the day.',
   })
   @ApiResponse({
     status: 201,
@@ -126,29 +127,38 @@ export class BookingController {
         success: true,
         message: 'Payment successful. Booking confirmed.',
         data: {
+          booking: {
+            id: '123e4567-e89b-12d3-a456-426614174010',
+            status: 'CONFIRMED',
+            bookingType: 'HOME_SERVICE',
+            bookingDate: '2026-02-15T14:00:00.000Z',
+            bookingTime: '14:00',
+            totalAmount: 45000,
+            reservationCode: 'HLX-A3K9',
+            services: [
+              {
+                serviceId: 'svc-uuid-1',
+                name: 'Box Braids',
+                price: 25000,
+                duration: 180,
+              },
+              {
+                serviceId: 'svc-uuid-2',
+                name: 'Deep Conditioning',
+                price: 20000,
+                duration: 60,
+              },
+            ],
+            address: {
+              id: 'addr-uuid',
+              addressLine: '15 Lekki Phase 1',
+              city: 'Lagos',
+            },
+          },
+          reservationCode: 'HLX-A3K9',
           totalAmount: 45000,
           paymentMethod: 'WALLET',
           message: 'Payment successful. Booking confirmed.',
-          bookings: [
-            {
-              id: '123e4567-e89b-12d3-a456-426614174010',
-              status: 'CONFIRMED',
-              bookingDate: '2026-02-15T14:00:00.000Z',
-              bookingTime: '14:00',
-              totalAmount: 25000,
-              service: {
-                id: '...',
-                name: 'Braiding Service',
-                price: 25000,
-                duration: 120,
-              },
-              address: {
-                id: '...',
-                addressLine: '15 Lekki Phase 1',
-                city: 'Lagos',
-              },
-            },
-          ],
         },
       },
     },
@@ -239,6 +249,34 @@ export class BookingController {
     };
   }
 
+  @Get('reservation/:code')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Look up your booking by reservation code',
+    description:
+      'Returns booking details for the given reservation code. ' +
+      'Only returns the booking if it belongs to the authenticated user.',
+  })
+  @ApiParam({
+    name: 'code',
+    description: 'Reservation code (e.g. HLX-A3K9)',
+    example: 'HLX-A3K9',
+  })
+  @ApiResponse({ status: 200, description: 'Booking retrieved successfully' })
+  @ApiResponse({
+    status: 403,
+    description: 'Reservation does not belong to you',
+  })
+  @ApiResponse({ status: 404, description: 'Reservation code not found' })
+  async findByReservationCode(
+    @Param('code') code: string,
+    @GetUser('id') userId: string,
+  ) {
+    const data = await this.bookingService.findByReservationCode(code, userId);
+    return { success: true, message: 'Booking retrieved successfully', data };
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
@@ -284,7 +322,6 @@ export class BookingController {
             latitude: 6.4541,
             longitude: 3.3947,
           },
-          staff: null,
         },
       },
     },

@@ -111,6 +111,7 @@ export class MailService {
       totalAmount: number;
       paymentMethod: 'WALLET' | 'CASH';
       bookingIds: string[];
+      reservationCode: string;
     },
   ) {
     try {
@@ -118,7 +119,7 @@ export class MailService {
         'send',
         {
           to: email,
-          subject: 'Booking Confirmed — HairLux',
+          subject: `Booking Confirmed [${bookingDetails.reservationCode}] — HairLux`,
           html: bookingConfirmationTemplate(firstName, bookingDetails),
         },
         {

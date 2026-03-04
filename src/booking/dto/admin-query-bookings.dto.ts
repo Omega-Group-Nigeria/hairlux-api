@@ -46,14 +46,6 @@ export class AdminQueryBookingsDto {
   userId?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter by service ID',
-    example: 'clx9876543210',
-  })
-  @IsOptional()
-  @IsString()
-  serviceId?: string;
-
-  @ApiPropertyOptional({
     description: 'Search by user name or email',
     example: 'john',
   })

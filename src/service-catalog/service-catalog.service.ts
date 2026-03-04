@@ -321,24 +321,10 @@ export class ServiceCatalogService {
     // Check if service exists
     const existingService = await this.prisma.service.findUnique({
       where: { id },
-      include: {
-        _count: {
-          select: {
-            bookings: true,
-          },
-        },
-      },
     });
 
     if (!existingService) {
       throw new NotFoundException('Service not found');
-    }
-
-    // Check if service has bookings
-    if (existingService._count.bookings > 0) {
-      throw new ConflictException(
-        'Cannot delete service with existing bookings. Consider deactivating it instead.',
-      );
     }
 
     await this.prisma.service.delete({ where: { id } });

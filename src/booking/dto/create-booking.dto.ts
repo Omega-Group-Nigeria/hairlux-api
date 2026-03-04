@@ -8,10 +8,12 @@ import {
   ValidateNested,
   ArrayMinSize,
   IsEnum,
+  ValidateIf,
+  Matches,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaymentMethod } from '@prisma/client';
+import { BookingType, PaymentMethod } from '@prisma/client';
 
 export class ServiceBookingItemDto {
   @ApiProperty({
@@ -67,12 +69,45 @@ export class CreateBookingDto {
 
   @ApiProperty({
     description:
-      'Address ID from user saved addresses (must have latitude and longitude)',
+      'Booking type. HOME_SERVICE requires an addressId. WALK_IN is an in-store reservation — no address needed.',
+    enum: BookingType,
+    example: 'HOME_SERVICE',
+  })
+  @IsEnum(BookingType, {
+    message: 'bookingType must be HOME_SERVICE or WALK_IN',
+  })
+  bookingType: BookingType;
+
+  @ApiPropertyOptional({
+    description:
+      'Address ID from user saved addresses (required when bookingType is HOME_SERVICE; ignored for WALK_IN)',
     example: '123e4567-e89b-12d3-a456-426614174002',
   })
-  @IsNotEmpty()
+  @ValidateIf((o) => o.bookingType === BookingType.HOME_SERVICE)
+  @IsNotEmpty({ message: 'addressId is required for HOME_SERVICE bookings' })
   @IsUUID()
-  addressId: string;
+  addressId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Name of the person the booking is for (leave empty if booking for yourself)',
+    example: 'Amara Okafor',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => value?.trim())
+  guestName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Phone number of the guest (Nigerian format)',
+    example: '+2348012345678',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^(\+234|0)[789]\d{9}$/, {
+    message: 'guestPhone must be a valid Nigerian phone number',
+  })
+  guestPhone?: string;
 
   @ApiProperty({
     description:
@@ -82,4 +117,13 @@ export class CreateBookingDto {
   })
   @IsEnum(PaymentMethod, { message: 'paymentMethod must be WALLET or CASH' })
   paymentMethod: PaymentMethod;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional discount code to apply at checkout. The code must be active and not expired.',
+    example: 'JANE20',
+  })
+  @IsOptional()
+  @IsString()
+  discountCode?: string;
 }

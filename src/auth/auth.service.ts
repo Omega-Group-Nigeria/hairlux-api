@@ -21,6 +21,7 @@ import { randomBytes } from 'crypto';
 import { UserRole, UserStatus } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
 import { ReferralService } from '../referral/referral.service';
+import { RedisService } from '../redis/redis.service';
 import { JwtPayload } from './types/jwt-payload.interface';
 
 @Injectable()
@@ -33,6 +34,7 @@ export class AuthService {
     private configService: ConfigService,
     private mailService: MailService,
     private referralService: ReferralService,
+    private redis: RedisService,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -148,6 +150,11 @@ export class AuthService {
     // Find user
     const user = await this.prisma.user.findUnique({
       where: { email: email.toLowerCase() },
+      include: {
+        adminRole: {
+          select: { id: true, name: true },
+        },
+      },
     });
 
     if (!user) {
@@ -176,6 +183,12 @@ export class AuthService {
     // Generate tokens
     const tokens = await this.generateTokens(user.id, user.email, user.role);
 
+    // Fetch permissions for the response
+    const permissions = await this.getPermissionsForUser(
+      user.role,
+      user.adminRoleId ?? null,
+    );
+
     // Remove sensitive fields from response
     const {
       password: _,
@@ -187,7 +200,11 @@ export class AuthService {
     } = user;
 
     return {
-      user: userWithoutSensitiveData,
+      user: {
+        ...userWithoutSensitiveData,
+        adminRole: user.adminRole ?? null,
+        permissions,
+      },
       ...tokens,
     };
   }
@@ -366,28 +383,81 @@ export class AuthService {
   }
 
   async validateUser(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        role: true,
-        status: true,
-      },
-    });
+    const profileKey = `user:profile:${userId}`;
+    const cached = await this.redis.get<{
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+      phone: string | null;
+      role: UserRole;
+      status: UserStatus;
+      adminRoleId: string | null;
+      adminRole: { id: string; name: string } | null;
+    }>(profileKey);
 
-    if (!user) {
-      throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    let user: NonNullable<typeof cached>;
+
+    if (cached) {
+      user = cached;
+    } else {
+      const dbUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          role: true,
+          status: true,
+          adminRoleId: true,
+          adminRole: {
+            select: { id: true, name: true },
+          },
+        },
+      });
+
+      if (!dbUser) {
+        throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+      }
+
+      user = dbUser;
+      // Cache for 5 min — invalidated on status change, role reassign, or delete
+      await this.redis.set(profileKey, user, 300);
     }
 
     if (user.status === UserStatus.INACTIVE) {
       throw new UnauthorizedException(ErrorMessages.ACCOUNT_INACTIVE);
     }
 
-    return user;
+    const permissions = await this.getPermissionsForUser(
+      user.role,
+      user.adminRoleId ?? null,
+    );
+
+    return { ...user, permissions };
+  }
+
+  private async getPermissionsForUser(
+    role: UserRole,
+    adminRoleId: string | null,
+  ): Promise<string[]> {
+    if (role === UserRole.SUPER_ADMIN) return ['*'];
+    if (!adminRoleId) return [];
+
+    const cacheKey = `permissions:adminrole:${adminRoleId}`;
+    const cached = await this.redis.get<string[]>(cacheKey);
+    if (cached) return cached;
+
+    const rolePerms = await this.prisma.adminRolePermission.findMany({
+      where: { adminRoleId },
+      select: { permission: true },
+    });
+
+    const permissions = rolePerms.map((p) => p.permission);
+    await this.redis.set(cacheKey, permissions, 300); // 5 min TTL
+    return permissions;
   }
 
   async verifyOtp(verifyOtpDto: VerifyOtpDto) {

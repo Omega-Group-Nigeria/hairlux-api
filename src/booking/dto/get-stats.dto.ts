@@ -1,18 +1,22 @@
-import { IsDateString } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsDateString, IsOptional } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class GetStatsDto {
-  @ApiProperty({
-    description: 'Start date (YYYY-MM-DD)',
+  @ApiPropertyOptional({
+    description:
+      'Start date (YYYY-MM-DD). Omit both startDate and endDate to get all-time stats.',
     example: '2026-02-01',
   })
+  @IsOptional()
   @IsDateString()
-  startDate: string;
+  startDate?: string;
 
-  @ApiProperty({
-    description: 'End date (YYYY-MM-DD)',
+  @ApiPropertyOptional({
+    description:
+      'End date (YYYY-MM-DD). Omit both startDate and endDate to get all-time stats.',
     example: '2026-02-28',
   })
+  @IsOptional()
   @IsDateString()
-  endDate: string;
+  endDate?: string;
 }

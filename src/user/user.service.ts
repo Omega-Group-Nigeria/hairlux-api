@@ -42,6 +42,8 @@ export class UserService {
         role: true,
         status: true,
         emailVerified: true,
+        adminRoleId: true,
+        adminRole: { select: { id: true, name: true } },
         createdAt: true,
         updatedAt: true,
       },
@@ -215,6 +217,19 @@ export class UserService {
       throw new ConflictException('An account with this email already exists');
     }
 
+    // Validate the assigned role exists and is active (lookup by id or name)
+    const role = await (dto.adminRoleId
+      ? this.prisma.adminRole.findUnique({ where: { id: dto.adminRoleId } })
+      : this.prisma.adminRole.findFirst({
+          where: { name: { equals: dto.role, mode: 'insensitive' } },
+        }));
+    if (!role) {
+      throw new NotFoundException('The specified admin role does not exist');
+    }
+    if (!role.isActive) {
+      throw new BadRequestException(`Admin role "${role.name}" is inactive`);
+    }
+
     const hashedPassword = await argon2.hash(dto.password, {
       type: argon2.argon2id,
       memoryCost: 65536,
@@ -232,6 +247,7 @@ export class UserService {
         role: UserRole.ADMIN,
         emailVerified: true,
         status: UserStatus.ACTIVE,
+        adminRoleId: role.id,
       },
       select: {
         id: true,
@@ -242,6 +258,8 @@ export class UserService {
         role: true,
         status: true,
         emailVerified: true,
+        adminRoleId: true,
+        adminRole: { select: { id: true, name: true } },
         createdAt: true,
         updatedAt: true,
       },
@@ -250,13 +268,65 @@ export class UserService {
     return user;
   }
 
+  async assignAdminRole(userId: string, adminRoleId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    if (user.role !== UserRole.ADMIN) {
+      throw new BadRequestException(
+        'Role assignment is only applicable to ADMIN users',
+      );
+    }
+
+    const role = await this.prisma.adminRole.findUnique({
+      where: { id: adminRoleId },
+    });
+    if (!role)
+      throw new NotFoundException('The specified admin role does not exist');
+    if (!role.isActive) {
+      throw new BadRequestException(`Admin role "${role.name}" is inactive`);
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { adminRoleId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        adminRoleId: true,
+        adminRole: { select: { id: true, name: true } },
+        updatedAt: true,
+      },
+    });
+    void this.redis.del(`user:profile:${userId}`);
+    return updated;
+  }
+
+  async deleteAdminUser(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    if (user.role !== UserRole.ADMIN) {
+      throw new BadRequestException(
+        'Only ADMIN users can be deleted via this endpoint',
+      );
+    }
+    await this.prisma.user.delete({ where: { id: userId } });
+    void this.redis.del(`user:profile:${userId}`);
+  }
+
   async findAllUsers(queryDto: AdminQueryUsersDto) {
-    const { search, status, page = 1, limit = 20 } = queryDto;
+    const { search, status, role, page = 1, limit = 20 } = queryDto;
 
     const where: any = {};
 
     if (status) {
       where.status = status;
+    }
+
+    if (role) {
+      where.role = role;
     }
 
     if (search) {
@@ -284,6 +354,9 @@ export class UserService {
           status: true,
           createdAt: true,
           updatedAt: true,
+          adminRole: {
+            select: { name: true },
+          },
           _count: {
             select: {
               bookings: true,
@@ -307,6 +380,8 @@ export class UserService {
     return {
       data: users.map((u) => ({
         ...u,
+        role: u.role === 'ADMIN' && u.adminRole ? u.adminRole.name : u.role,
+        adminRole: undefined,
         walletBalance: Number(u.wallet?.balance ?? 0),
         transactionCount: u.wallet?._count.transactions ?? 0,
         wallet: undefined,
@@ -390,13 +465,7 @@ export class UserService {
         totalAmount: true,
         paymentMethod: true,
         createdAt: true,
-        service: {
-          select: {
-            id: true,
-            name: true,
-            price: true,
-          },
-        },
+        services: true,
       },
       orderBy: {
         createdAt: 'desc',
@@ -455,10 +524,6 @@ export class UserService {
       bookings: bookings.map((booking) => ({
         ...booking,
         totalAmount: Number(booking.totalAmount),
-        service: {
-          ...booking.service,
-          price: Number(booking.service.price),
-        },
       })),
       addresses,
       transactions: transactions.map((transaction) => ({
@@ -537,6 +602,7 @@ export class UserService {
     });
 
     void Promise.all([
+      this.redis.del(`user:profile:${userId}`),
       this.redis.del('analytics:users'),
       this.redis.del('analytics:dashboard'),
     ]);

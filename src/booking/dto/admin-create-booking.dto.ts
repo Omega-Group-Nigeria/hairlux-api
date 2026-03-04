@@ -1,6 +1,19 @@
-import { IsString, IsDateString, IsEnum, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  ValidateIf,
+  IsUUID,
+  Matches,
+  IsArray,
+  ValidateNested,
+  ArrayMinSize,
+} from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaymentMethod } from '@prisma/client';
+import { BookingType, PaymentMethod } from '@prisma/client';
+import { ServiceBookingItemDto } from './create-booking.dto';
 
 export class AdminCreateBookingDto {
   @ApiProperty({
@@ -11,18 +24,59 @@ export class AdminCreateBookingDto {
   userId: string;
 
   @ApiProperty({
-    description: 'Service ID',
-    example: 'clx9876543210',
+    description: 'One or more services to book in this appointment',
+    type: [ServiceBookingItemDto],
+    example: [
+      { serviceId: '123e4567-e89b-12d3-a456-426614174001' },
+      {
+        serviceId: '123e4567-e89b-12d3-a456-426614174002',
+        notes: 'Extra time needed',
+      },
+    ],
   })
-  @IsString()
-  serviceId: string;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @ArrayMinSize(1)
+  @Type(() => ServiceBookingItemDto)
+  services: ServiceBookingItemDto[];
 
   @ApiProperty({
-    description: 'Address ID for service delivery',
+    description:
+      'Booking type. HOME_SERVICE requires an addressId; WALK_IN does not.',
+    enum: BookingType,
+    example: 'WALK_IN',
+  })
+  @IsEnum(BookingType)
+  bookingType: BookingType;
+
+  @ApiPropertyOptional({
+    description: 'Address ID — required when bookingType is HOME_SERVICE',
     example: 'clx1112223334',
   })
+  @ValidateIf((o) => o.bookingType === BookingType.HOME_SERVICE)
   @IsString()
-  addressId: string;
+  addressId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Name of the guest the booking is for (leave empty if booking for user themselves)',
+    example: 'Amara Okafor',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => value?.trim())
+  guestName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Guest phone number (Nigerian format)',
+    example: '+2348012345678',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^(\+234|0)[789]\d{9}$/, {
+    message: 'guestPhone must be a valid Nigerian phone number',
+  })
+  guestPhone?: string;
 
   @ApiProperty({
     description: 'Booking date (YYYY-MM-DD)',
@@ -39,7 +93,7 @@ export class AdminCreateBookingDto {
   bookingTime: string;
 
   @ApiPropertyOptional({
-    description: 'Payment method for walk-in booking',
+    description: 'Payment method',
     enum: PaymentMethod,
     example: 'CASH',
   })

@@ -40,22 +40,34 @@ export class UserController {
       message: 'Profile retrieved successfully',
       data: {
         id: '550e8400-e29b-41d4-a716-446655440000',
-        email: 'john.doe@example.com',
-        firstName: 'John',
+        email: 'jane@hairlux.com',
+        firstName: 'Jane',
         lastName: 'Doe',
         phone: '+2348012345678',
         role: 'USER',
         status: 'ACTIVE',
-        emailVerified: false,
+        emailVerified: true,
+        adminRoleId: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
+        adminRole: {
+          id: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
+          name: 'Receptionist',
+        },
+        permissions: ['bookings:read', 'users:read'],
         createdAt: '2026-01-25T12:00:00.000Z',
         updatedAt: '2026-01-25T12:00:00.000Z',
       },
     },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getProfile(@GetUser('id') userId: string) {
+  async getProfile(
+    @GetUser('id') userId: string,
+    @GetUser('permissions') permissions: string[],
+  ) {
     const user = await this.userService.getProfile(userId);
-    return ResponseUtil.success(user, 'Profile retrieved successfully');
+    return ResponseUtil.success(
+      { ...user, permissions },
+      'Profile retrieved successfully',
+    );
   }
 
   @Put('profile')

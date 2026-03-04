@@ -38,10 +38,6 @@ export const ErrorMessages = {
   SERVICE_NOT_FOUND: 'Service not found',
   SERVICE_INACTIVE: 'Service is currently inactive',
 
-  // Staff errors
-  STAFF_NOT_FOUND: 'Staff member not found',
-  STAFF_UNAVAILABLE: 'Staff member is not available',
-
   // Review errors
   REVIEW_NOT_FOUND: 'Review not found',
   ALREADY_REVIEWED: 'You have already reviewed this booking',

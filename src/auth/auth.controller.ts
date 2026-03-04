@@ -1,5 +1,18 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  HttpCode,
+  HttpStatus,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -9,6 +22,8 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { ResponseUtil } from '../common/utils/response.util';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { GetUser } from './decorators/get-user.decorator';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -58,12 +73,21 @@ export class AuthController {
       data: {
         user: {
           id: '550e8400-e29b-41d4-a716-446655440000',
-          email: 'john.doe@example.com',
-          firstName: 'John',
+          email: 'jane@hairlux.com',
+          firstName: 'Jane',
           lastName: 'Doe',
           phone: '+2348012345678',
           role: 'USER',
           status: 'ACTIVE',
+          adminRole: {
+            id: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
+            name: 'Receptionist',
+          },
+          permissions: [
+            'bookings:read',
+            'bookings:verify_reservation',
+            'users:read',
+          ],
         },
         accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
         refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -74,6 +98,49 @@ export class AuthController {
   async login(@Body() loginDto: LoginDto) {
     const result = await this.authService.login(loginDto);
     return ResponseUtil.success(result, 'Login successful');
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Get current user',
+    description:
+      'Returns the authenticated user with their admin role and full permissions array. Call this on page load/refresh to restore frontend auth state.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Current user retrieved successfully',
+    example: {
+      success: true,
+      message: 'User retrieved successfully',
+      data: {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        email: 'jane@hairlux.com',
+        firstName: 'Jane',
+        lastName: 'Doe',
+        phone: '+2348012345678',
+        role: 'USER',
+        status: 'ACTIVE',
+        adminRoleId: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
+        adminRole: {
+          id: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
+          name: 'Receptionist',
+        },
+        permissions: [
+          'bookings:read',
+          'bookings:verify_reservation',
+          'users:read',
+        ],
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized — token missing or expired',
+  })
+  getMe(@GetUser() user: Express.User) {
+    return ResponseUtil.success(user, 'User retrieved successfully');
   }
 
   @Post('refresh-token')

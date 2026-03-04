@@ -113,6 +113,9 @@ export class ReferralService {
       this.logger.log(
         `Referral linked: referrer=${referralCode.userId}, referred=${referredUserId}`,
       );
+
+      // Immediately process reward (non-fatal — PERCENTAGE type defers to deposit webhook)
+      void this.processReward(referredUserId);
     } catch (err) {
       // P2002 = unique violation on referredId (already referred) — silent ignore
       if (
@@ -128,11 +131,14 @@ export class ReferralService {
     }
   }
 
-  // ─── Called from PaystackWebhookProcessor after deposit verified ──────────
+  // ─── Called at signup (linkReferral) or after deposit (Paystack webhook) ──
+  // depositAmount is undefined when called at signup — skips min-deposit check.
+  // PERCENTAGE reward type requires a real depositAmount; it stays PENDING at
+  // signup and is resolved by the Paystack webhook on first deposit instead.
 
   async processReward(
     referredUserId: string,
-    depositAmount: number,
+    depositAmount?: number,
   ): Promise<void> {
     // Find pending referral for this user
     const referral = await this.prisma.referral.findUnique({
@@ -151,8 +157,18 @@ export class ReferralService {
       return;
     }
 
-    // Enforce minimum deposit amount
-    if (depositAmount < Number(settings.minDepositAmount)) {
+    const isSignup = depositAmount === undefined;
+
+    // PERCENTAGE type needs a real deposit amount — defer to deposit webhook
+    if (isSignup && settings.rewardType === ReferralRewardType.PERCENTAGE) {
+      this.logger.log(
+        'PERCENTAGE reward type — deferring to deposit webhook for reward calculation',
+      );
+      return;
+    }
+
+    // Enforce minimum deposit amount only when triggered by a deposit
+    if (!isSignup && depositAmount! < Number(settings.minDepositAmount)) {
       this.logger.log(
         `Deposit ₦${depositAmount} below min ₦${settings.minDepositAmount} — skipping referral reward`,
       );
@@ -166,8 +182,8 @@ export class ReferralService {
     } else {
       // PERCENTAGE — cap at deposit amount to avoid crediting more than deposited
       rewardAmount = Math.min(
-        (depositAmount * Number(settings.rewardValue)) / 100,
-        depositAmount,
+        (depositAmount! * Number(settings.rewardValue)) / 100,
+        depositAmount!,
       );
     }
 

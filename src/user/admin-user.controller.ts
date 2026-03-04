@@ -3,6 +3,8 @@ import {
   Get,
   Post,
   Put,
+  Patch,
+  Delete,
   Param,
   Query,
   Body,
@@ -15,6 +17,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiParam,
 } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -25,6 +28,7 @@ import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { GetTransactionsDto } from '../wallet/dto/get-transactions.dto';
 import { CreateAdminUserDto } from './dto/create-admin-user.dto';
+import { AssignAdminRoleDto } from './dto/assign-admin-role.dto';
 
 @ApiTags('Admin - Users')
 @ApiBearerAuth('JWT-auth')
@@ -39,7 +43,8 @@ export class AdminUserController {
   @Roles(UserRole.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Create admin user',
-    description: 'Create a new admin account. Only accessible by Super Admin.',
+    description:
+      'Create a new admin account and assign a role immediately. Only accessible by Super Admin.',
   })
   @ApiResponse({
     status: 201,
@@ -50,20 +55,26 @@ export class AdminUserController {
         message: 'Admin user created successfully',
         data: {
           id: '123e4567-e89b-12d3-a456-426614174001',
-          email: 'admin@hairlux.com',
-          firstName: 'Admin',
-          lastName: 'User',
+          email: 'jane@hairlux.com',
+          firstName: 'Jane',
+          lastName: 'Doe',
           phone: '+2348012345678',
           role: 'ADMIN',
           status: 'ACTIVE',
           emailVerified: true,
-          createdAt: '2026-02-22T10:00:00.000Z',
-          updatedAt: '2026-02-22T10:00:00.000Z',
+          adminRoleId: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
+          adminRole: {
+            id: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
+            name: 'Receptionist',
+          },
+          createdAt: '2026-03-03T10:00:00.000Z',
+          updatedAt: '2026-03-03T10:00:00.000Z',
         },
       },
     },
   })
   @ApiResponse({ status: 409, description: 'Email already in use' })
+  @ApiResponse({ status: 404, description: 'Admin role not found' })
   @ApiResponse({ status: 403, description: 'Forbidden - Super Admin only' })
   async createAdminUser(@Body() dto: CreateAdminUserDto) {
     const data = await this.userService.createAdminUser(dto);
@@ -74,11 +85,73 @@ export class AdminUserController {
     };
   }
 
+  @Patch(':id/role')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Reassign admin role',
+    description:
+      'Change the admin role assigned to an existing ADMIN user. Permissions update immediately (cache invalidated on next request).',
+  })
+  @ApiParam({ name: 'id', description: 'Admin user ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Role reassigned successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Admin role reassigned successfully',
+        data: {
+          id: 'uuid',
+          email: 'jane@hairlux.com',
+          firstName: 'Jane',
+          lastName: 'Doe',
+          role: 'ADMIN',
+          adminRoleId: 'new-role-uuid',
+          adminRole: { id: 'new-role-uuid', name: 'Senior Manager' },
+          updatedAt: '2026-03-03T12:00:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'User or admin role not found' })
+  @ApiResponse({ status: 400, description: 'User is not an ADMIN' })
+  async assignRole(@Param('id') id: string, @Body() dto: AssignAdminRoleDto) {
+    const data = await this.userService.assignAdminRole(id, dto.adminRoleId);
+    return {
+      success: true,
+      message: 'Admin role reassigned successfully',
+      data,
+    };
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Delete admin user',
+    description:
+      'Permanently removes an ADMIN user. Cannot be used on SUPER_ADMIN or USER accounts.',
+  })
+  @ApiParam({ name: 'id', description: 'Admin user ID' })
+  @ApiResponse({ status: 200, description: 'Admin user deleted successfully' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({ status: 400, description: 'User is not an ADMIN' })
+  async deleteAdminUser(@Param('id') id: string) {
+    await this.userService.deleteAdminUser(id);
+    return {
+      success: true,
+      message: 'Admin user deleted successfully',
+    };
+  }
+
   @Get()
   @ApiOperation({
     summary: 'Get all users',
     description:
-      'Retrieve all users with optional filters for search and status, includes pagination',
+      'Retrieve users with optional filters for search, status, and role. ' +
+      'Pass `role=USER` for customers, `role=ADMIN` for staff, `role=SUPER_ADMIN` for super admins. ' +
+      'Omit `role` to fetch all. ' +
+      'For users with role=ADMIN, the `role` field in the response is replaced with their admin role name (e.g. "CASHIER").',
   })
   @ApiResponse({
     status: 200,
@@ -95,25 +168,23 @@ export class AdminUserController {
           status: 'ACTIVE',
           createdAt: '2026-01-15T10:30:00.000Z',
           updatedAt: '2026-02-17T10:30:00.000Z',
-          _count: {
-            bookings: 5,
-            addresses: 2,
-          },
+          walletBalance: 5000,
+          transactionCount: 3,
+          _count: { bookings: 5, addresses: 2 },
         },
         {
           id: 'clx0987654321',
-          email: 'jane@example.com',
+          email: 'admin@example.com',
           firstName: 'Jane',
           lastName: 'Smith',
           phone: '+2348098765432',
-          role: 'USER',
+          role: 'CASHIER',
           status: 'ACTIVE',
           createdAt: '2026-02-01T14:20:00.000Z',
           updatedAt: '2026-02-10T09:15:00.000Z',
-          _count: {
-            bookings: 3,
-            addresses: 1,
-          },
+          walletBalance: 0,
+          transactionCount: 0,
+          _count: { bookings: 0, addresses: 0 },
         },
       ],
       meta: {

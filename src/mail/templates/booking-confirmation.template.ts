@@ -8,6 +8,7 @@ export interface BookingConfirmationData {
   totalAmount: number;
   paymentMethod: 'WALLET' | 'CASH';
   bookingIds: string[];
+  reservationCode: string;
 }
 
 export function bookingConfirmationTemplate(
@@ -50,6 +51,17 @@ export function bookingConfirmationTemplate(
     <p style="margin:0 0 24px;text-align:center;">
       <span style="display:inline-block;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;background-color:${statusBg};color:${statusColor};">${statusLabel}</span>
     </p>
+
+    <!-- Reservation Code Block -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+      <tr>
+        <td style="background-color:#1A1A1A;border-radius:12px;padding:20px 24px;text-align:center;">
+          <p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:#C9A872;">Reservation Code</p>
+          <p style="margin:0 0 8px;font-size:32px;font-weight:700;letter-spacing:6px;color:#FFFFFF;font-family:monospace,monospace;">${booking.reservationCode}</p>
+          <p style="margin:0;font-size:12px;color:#888888;">Present this code at the salon or to your stylist</p>
+        </td>
+      </tr>
+    </table>
 
     <!-- Booking details card -->
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:20px;border:1px solid #EEEEEE;border-radius:10px;overflow:hidden;">

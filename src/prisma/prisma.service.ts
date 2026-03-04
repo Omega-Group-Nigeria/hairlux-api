@@ -11,7 +11,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private configService: ConfigService) {
     const databaseUrl = this.configService.get<string>('DATABASE_URL');
-    this.pool = new Pool({ connectionString: databaseUrl });
+    this.pool = new Pool({
+      connectionString: databaseUrl,
+      max: 5,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
     const adapter = new PrismaPg(this.pool);
 
     this.client = new PrismaClient({
@@ -48,14 +53,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   get service() {
     return this.client.service;
-  }
-
-  get staff() {
-    return this.client.staff;
-  }
-
-  get staffAvailability() {
-    return this.client.staffAvailability;
   }
 
   get booking() {
@@ -100,6 +97,34 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   get referral() {
     return this.client.referral;
+  }
+
+  get discountUsage() {
+    return this.client.discountUsage;
+  }
+
+  get influencerRewardSettings() {
+    return this.client.influencerRewardSettings;
+  }
+
+  get influencerReward() {
+    return this.client.influencerReward;
+  }
+
+  get influencer() {
+    return this.client.influencer;
+  }
+
+  get jobPosting() {
+    return this.client.jobPosting;
+  }
+
+  get adminRole() {
+    return this.client.adminRole;
+  }
+
+  get adminRolePermission() {
+    return this.client.adminRolePermission;
   }
 
   get $transaction() {

@@ -12,6 +12,7 @@ import { Transform, Type } from 'class-transformer';
 export class QueryDiscountsDto {
   @ApiPropertyOptional({ description: 'Page number', example: 1, minimum: 1 })
   @IsOptional()
+  @Transform(({ value }) => (Array.isArray(value) ? value[0] : value))
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -24,6 +25,7 @@ export class QueryDiscountsDto {
     maximum: 100,
   })
   @IsOptional()
+  @Transform(({ value }) => (Array.isArray(value) ? value[0] : value))
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -35,7 +37,10 @@ export class QueryDiscountsDto {
     example: true,
   })
   @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
+  @Transform(({ value }) => {
+    if (value === undefined || value === null) return undefined;
+    return value === 'true' || value === true;
+  })
   @IsBoolean()
   isActive?: boolean;
 

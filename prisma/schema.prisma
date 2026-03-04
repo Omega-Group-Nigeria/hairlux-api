@@ -20,11 +20,6 @@ enum UserStatus {
   INACTIVE
 }
 
-enum StaffStatus {
-  ACTIVE
-  INACTIVE
-}
-
 enum BookingStatus {
   PENDING
   CONFIRMED
@@ -73,6 +68,23 @@ enum ReferralStatus {
   FAILED
 }
 
+enum DiscountType {
+  GENERAL
+  INFLUENCER
+}
+
+enum BookingType {
+  HOME_SERVICE
+  WALK_IN
+}
+
+enum JobType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  FREELANCE
+}
+
 model User {
   id               String    @id @default(uuid())
   email            String    @unique
@@ -90,6 +102,8 @@ model User {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
+  adminRoleId      String?    @map("admin_role_id")
+
   // Relations
   addresses       Address[]
   bookings        Booking[]
@@ -99,6 +113,8 @@ model User {
   referralCode    ReferralCode?
   referrals       Referral[]     @relation("ReferrerUser")
   referredBy      Referral?      @relation("ReferredUser")
+  discountUsages  DiscountUsage[] @relation("UserDiscountUsages")
+  adminRole       AdminRole?     @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
 
   @@map("users")
 }
@@ -166,71 +182,39 @@ model Service {
 
   // Relations
   category ServiceCategory @relation(fields: [categoryId], references: [id])
-  bookings Booking[]
   reviews  Review[]
 
   @@map("services")
 }
 
-model Staff {
-  id          String      @id @default(uuid())
-  firstName   String      @map("first_name")
-  lastName    String      @map("last_name")
-  email       String      @unique
-  phone       String
-  bio         String?
-  imageUrl    String?     @map("image_url")
-  status      StaffStatus @default(ACTIVE)
-  createdAt   DateTime    @default(now()) @map("created_at")
-  updatedAt   DateTime    @updatedAt @map("updated_at")
-
-  // Relations
-  bookings       Booking[]
-  availability   StaffAvailability[]
-
-  @@map("staff")
-}
-
-model StaffAvailability {
-  id        String   @id @default(uuid())
-  staffId   String   @map("staff_id")
-  dayOfWeek Int      @map("day_of_week") // 0 = Sunday, 6 = Saturday
-  startTime String   @map("start_time") // Format: "HH:mm"
-  endTime   String   @map("end_time")   // Format: "HH:mm"
-  isAvailable Boolean @default(true) @map("is_available")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
-
-  @@unique([staffId, dayOfWeek])
-  @@map("staff_availability")
-}
-
 model Booking {
-  id            String        @id @default(uuid())
-  userId        String        @map("user_id")
-  serviceId     String        @map("service_id")
-  staffId       String?       @map("staff_id")
-  addressId     String        @map("address_id")
-  bookingDate   DateTime      @map("booking_date")
-  bookingTime   String        @map("booking_time") // Format: "HH:mm"
-  status        BookingStatus @default(PENDING)
-  paymentMethod PaymentMethod @map("payment_method")
-  totalAmount   Decimal       @db.Decimal(10, 2) @map("total_amount")
-  notes         String?
-  cancelReason  String?       @map("cancel_reason")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
+  id               String        @id @default(uuid())
+  userId           String        @map("user_id")
+  // services is a JSON array: [{serviceId, name, price, duration, notes?}]
+  services         Json          @map("services")
+  addressId        String?       @map("address_id")  // null for WALK_IN bookings
+  bookingDate      DateTime      @map("booking_date")
+  bookingTime      String        @map("booking_time") // Format: "HH:mm"
+  bookingType      BookingType   @default(HOME_SERVICE) @map("booking_type")
+  reservationCode  String        @unique @map("reservation_code")
+  reservationUsed  Boolean       @default(false) @map("reservation_used")
+  guestName        String?       @map("guest_name")   // null = booking for self
+  guestPhone       String?       @map("guest_phone")  // null = booking for self
+  status           BookingStatus @default(PENDING)
+  paymentMethod    PaymentMethod @map("payment_method")
+  totalAmount      Decimal       @db.Decimal(10, 2) @map("total_amount")
+  notes            String?
+  cancelReason     String?       @map("cancel_reason")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
 
   // Relations
   user    User     @relation(fields: [userId], references: [id])
-  service Service  @relation(fields: [serviceId], references: [id])
-  staff   Staff?   @relation(fields: [staffId], references: [id])
-  address Address  @relation(fields: [addressId], references: [id])
+  address Address? @relation(fields: [addressId], references: [id])
   review  Review?
+  discountUsage DiscountUsage?
 
+  @@index([reservationCode])
   @@map("bookings")
 }
 
@@ -329,20 +313,92 @@ model BusinessException {
   @@map("business_exceptions")
 }
 
-model DiscountCode {
+model Influencer {
   id          String    @id @default(uuid())
-  code        String    @unique              // e.g. "SUMMER20" — case-insensitive at app level
-  name        String                         // e.g. "Summer Sale"
-  percentage  Float                          // e.g. 20.0 (represents 20%)
+  name        String
+  phone       String    @unique
+  email       String?
+  notes       String?   // internal admin notes
   isActive    Boolean   @default(true) @map("is_active")
-  startsAt    DateTime? @map("starts_at")    // null = active immediately
-  expiresAt   DateTime? @map("expires_at")   // null = never expires
-  maxUses     Int?      @map("max_uses")     // null = unlimited
-  usedCount   Int       @default(0) @map("used_count")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
+  // Relations
+  discountCodes    DiscountCode[]
+  influencerRewards InfluencerReward[]
+
+  @@map("influencers")
+}
+
+model DiscountCode {
+  id              String       @id @default(uuid())
+  code            String       @unique              // e.g. "SUMMER20" — case-insensitive at app level
+  name            String                            // e.g. "Summer Sale"
+  percentage      Float                             // e.g. 20.0 (represents 20%)
+  type            DiscountType @default(GENERAL) @map("type")
+  influencerId    String?      @map("influencer_id")   // null for GENERAL codes
+  isActive        Boolean      @default(true) @map("is_active")
+  startsAt        DateTime?    @map("starts_at")    // null = active immediately
+  expiresAt       DateTime?    @map("expires_at")   // null = never expires
+  maxUses         Int?         @map("max_uses")     // null = unlimited
+  usedCount       Int          @default(0) @map("used_count")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  influencer Influencer?   @relation(fields: [influencerId], references: [id], onDelete: SetNull)
+  usages     DiscountUsage[]
+
+  @@index([influencerId])
   @@map("discount_codes")
+}
+
+model DiscountUsage {
+  id             String   @id @default(uuid())
+  discountCodeId String   @map("discount_code_id")
+  userId         String   @map("user_id")
+  bookingId      String   @unique @map("booking_id")
+  discountAmount Decimal  @db.Decimal(10, 2) @map("discount_amount")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  discountCode     DiscountCode      @relation(fields: [discountCodeId], references: [id], onDelete: Cascade)
+  user             User              @relation("UserDiscountUsages", fields: [userId], references: [id])
+  booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  influencerReward InfluencerReward?
+
+  @@index([discountCodeId])
+  @@index([userId])
+  @@map("discount_usages")
+}
+
+model InfluencerRewardSettings {
+  id                String             @id @default(uuid())
+  isActive          Boolean            @default(false) @map("is_active")
+  rewardType        ReferralRewardType @default(FIXED) @map("reward_type")
+  rewardValue       Decimal            @default(0) @db.Decimal(10, 2) @map("reward_value")
+  minPurchaseAmount Decimal            @default(0) @db.Decimal(10, 2) @map("min_purchase_amount")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  @@map("influencer_reward_settings")
+}
+
+model InfluencerReward {
+  id           String         @id @default(uuid())
+  influencerId String         @map("influencer_id")
+  usageId      String         @unique @map("usage_id")
+  rewardAmount Decimal        @db.Decimal(10, 2) @map("reward_amount")
+  status       ReferralStatus @default(REWARDED)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  influencer Influencer    @relation(fields: [influencerId], references: [id])
+  usage      DiscountUsage @relation(fields: [usageId], references: [id], onDelete: Cascade)
+
+  @@index([influencerId])
+  @@map("influencer_rewards")
 }
 
 // ─── Referral System ─────────────────────────────────────────────────────────
@@ -391,4 +447,48 @@ model Referral {
   referralCode ReferralCode @relation("ReferrerCode", fields: [code], references: [code])
 
   @@map("referrals")
+}
+
+// ─── Admin Roles & Permissions ──────────────────────────────────────────────────
+
+model AdminRole {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions AdminRolePermission[]
+  users       User[]
+
+  @@map("admin_roles")
+}
+
+model AdminRolePermission {
+  id          String    @id @default(uuid())
+  adminRoleId String    @map("admin_role_id")
+  permission  String
+
+  adminRole AdminRole @relation(fields: [adminRoleId], references: [id], onDelete: Cascade)
+
+  @@unique([adminRoleId, permission])
+  @@map("admin_role_permissions")
+}
+
+// ─── Job Postings ─────────────────────────────────────────────────────────────
+
+model JobPosting {
+  id               String    @id @default(uuid())
+  title            String
+  type             JobType
+  location         String
+  description      String    @db.Text
+  responsibilities Json                       // string[] — array of bullet points
+  isActive         Boolean   @default(false) @map("is_active")
+  closingDate      DateTime? @map("closing_date")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@map("job_postings")
 }

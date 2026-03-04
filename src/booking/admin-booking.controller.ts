@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -16,6 +17,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiParam,
 } from '@nestjs/swagger';
 import { BookingService } from './booking.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -45,7 +47,7 @@ export class AdminBookingController {
   @ApiOperation({
     summary: 'Get all bookings with filters',
     description:
-      'Admin endpoint to retrieve all bookings with optional filters for date, status, user, service, and search',
+      'Admin endpoint to retrieve all bookings with optional filters for date, status, user, and search',
   })
   @ApiResponse({
     status: 200,
@@ -53,38 +55,46 @@ export class AdminBookingController {
     example: {
       data: [
         {
-          id: 'clx1234567890',
-          userId: 'clx0987654321',
-          serviceId: 'clx5555555555',
-          addressId: 'clx6666666666',
+          id: 'booking-uuid-1',
+          userId: 'user-uuid',
+          bookingType: 'HOME_SERVICE',
           bookingDate: '2026-02-20T00:00:00.000Z',
           bookingTime: '10:00',
-          totalAmount: 15000,
+          totalAmount: 45000,
           status: 'CONFIRMED',
+          reservationCode: 'HLX-A3K9',
+          reservationUsed: false,
+          guestName: null,
+          guestPhone: null,
           notes: null,
           createdAt: '2026-02-17T10:00:00.000Z',
           updatedAt: '2026-02-17T10:00:00.000Z',
           user: {
-            id: 'clx0987654321',
-            firstName: 'John',
-            lastName: 'Doe',
-            email: 'john@example.com',
+            id: 'user-uuid',
+            firstName: 'Amara',
+            lastName: 'Okafor',
+            email: 'amara@example.com',
             phone: '+2348012345678',
           },
-          service: {
-            id: 'clx5555555555',
-            name: 'Premium Hair Treatment',
-            price: 15000,
-            duration: 90,
-          },
+          services: [
+            {
+              serviceId: 'svc-uuid-1',
+              name: 'Box Braids',
+              price: 25000,
+              duration: 180,
+            },
+            {
+              serviceId: 'svc-uuid-2',
+              name: 'Deep Conditioning',
+              price: 20000,
+              duration: 60,
+            },
+          ],
           address: {
-            id: 'clx6666666666',
-            street: '123 Main St',
+            id: 'addr-uuid',
+            addressLine: '15 Lekki Phase 1',
             city: 'Lagos',
             state: 'Lagos',
-            country: 'Nigeria',
-            latitude: 6.5244,
-            longitude: 3.3792,
           },
         },
       ],
@@ -114,62 +124,55 @@ export class AdminBookingController {
       bookings: {
         '2026-02-15': [
           {
-            id: 'clx1234567890',
+            id: 'booking-uuid-1',
             time: '10:00',
             status: 'CONFIRMED',
             user: {
-              id: 'clx0987654321',
-              firstName: 'John',
-              lastName: 'Doe',
-              email: 'john@example.com',
+              id: 'user-uuid-1',
+              firstName: 'Amara',
+              lastName: 'Okafor',
+              email: 'amara@example.com',
             },
-            service: {
-              id: 'clx5555555555',
-              name: 'Premium Hair Treatment',
-              duration: 90,
-            },
+            services: [
+              {
+                serviceId: 'svc-uuid-1',
+                name: 'Box Braids',
+                price: 25000,
+                duration: 180,
+              },
+            ],
           },
           {
-            id: 'clx1234567891',
+            id: 'booking-uuid-2',
             time: '14:00',
             status: 'PENDING',
             user: {
-              id: 'clx0987654322',
+              id: 'user-uuid-2',
               firstName: 'Jane',
               lastName: 'Smith',
               email: 'jane@example.com',
             },
-            service: {
-              id: 'clx5555555556',
-              name: 'Bridal Makeup',
-              duration: 120,
-            },
-          },
-        ],
-        '2026-02-16': [],
-        '2026-02-17': [
-          {
-            id: 'clx1234567892',
-            time: '11:00',
-            status: 'CONFIRMED',
-            user: {
-              id: 'clx0987654323',
-              firstName: 'Mike',
-              lastName: 'Johnson',
-              email: 'mike@example.com',
-            },
-            service: {
-              id: 'clx5555555557',
-              name: 'Spa Treatment',
-              duration: 60,
-            },
+            services: [
+              {
+                serviceId: 'svc-uuid-2',
+                name: 'Bridal Styling',
+                price: 50000,
+                duration: 240,
+              },
+              {
+                serviceId: 'svc-uuid-3',
+                name: 'Deep Conditioning',
+                price: 20000,
+                duration: 60,
+              },
+            ],
           },
         ],
       },
       summary: {
-        totalBookings: 3,
+        totalBookings: 2,
         pending: 1,
-        confirmed: 2,
+        confirmed: 1,
         completed: 0,
         cancelled: 0,
       },
@@ -183,13 +186,15 @@ export class AdminBookingController {
   @ApiOperation({
     summary: 'Get booking statistics',
     description:
-      'Get comprehensive booking statistics for a date range including revenue, popular services, and status breakdown',
+      'Get comprehensive booking statistics including revenue, popular services, and status breakdown. ' +
+      'Pass `startDate` + `endDate` for a specific range, or omit both to get all-time stats.',
   })
   @ApiResponse({
     status: 200,
     description: 'Statistics retrieved successfully',
     example: {
       period: {
+        allTime: false,
         startDate: '2026-02-01',
         endDate: '2026-02-28',
       },
@@ -201,40 +206,165 @@ export class AdminBookingController {
       byStatus: {
         pending: 15,
         confirmed: 45,
+        inProgress: 5,
         completed: 50,
         cancelled: 10,
       },
       topServices: [
         {
-          serviceId: 'clx5555555555',
-          serviceName: 'Premium Hair Treatment',
+          serviceId: 'svc-uuid-1',
+          serviceName: 'Box Braids',
           count: 35,
           revenue: 525000,
         },
         {
-          serviceId: 'clx5555555556',
-          serviceName: 'Bridal Makeup',
+          serviceId: 'svc-uuid-2',
+          serviceName: 'Bridal Styling',
           count: 28,
           revenue: 560000,
-        },
-        {
-          serviceId: 'clx5555555557',
-          serviceName: 'Spa Treatment',
-          count: 25,
-          revenue: 250000,
         },
       ],
     },
   })
+  @ApiResponse({
+    status: 400,
+    description: 'Only one of startDate/endDate provided',
+  })
   async getStats(@Query() statsDto: GetStatsDto) {
     return this.bookingService.getStats(statsDto);
+  }
+
+  // ─── Reservation Code ─────────────────────────────────────────────────────
+
+  @Get('reservation/:code')
+  @ApiOperation({
+    summary: 'Look up a booking by reservation code',
+    description:
+      'Returns full booking details and a validity flag. ' +
+      'isValid is false if the reservation has already been used or the booking is cancelled.',
+  })
+  @ApiParam({
+    name: 'code',
+    description: 'Reservation code (e.g. HLX-A3K9)',
+    example: 'HLX-A3K9',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Reservation found',
+    example: {
+      success: true,
+      message: 'Reservation found',
+      data: {
+        id: 'booking-uuid',
+        reservationCode: 'HLX-A3K9',
+        reservationUsed: false,
+        isValid: true,
+        bookingType: 'HOME_SERVICE',
+        bookingDate: '2026-03-10T10:00:00.000Z',
+        bookingTime: '10:00',
+        status: 'CONFIRMED',
+        totalAmount: 45000,
+        paymentMethod: 'WALLET',
+        guestName: null,
+        guestPhone: null,
+        services: [
+          {
+            serviceId: 'svc-uuid-1',
+            name: 'Box Braids',
+            price: 25000,
+            duration: 180,
+          },
+          {
+            serviceId: 'svc-uuid-2',
+            name: 'Deep Conditioning',
+            price: 20000,
+            duration: 60,
+          },
+        ],
+        user: {
+          id: 'user-uuid',
+          firstName: 'Amara',
+          lastName: 'Okafor',
+          email: 'amara@example.com',
+          phone: '+2348012345678',
+        },
+        address: {
+          id: 'addr-uuid',
+          addressLine: '15 Lekki Phase 1',
+          city: 'Lagos',
+          state: 'Lagos',
+        },
+        createdAt: '2026-03-01T09:00:00.000Z',
+        updatedAt: '2026-03-01T09:00:00.000Z',
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Reservation code not found' })
+  async adminFindByReservationCode(@Param('code') code: string) {
+    const data = await this.bookingService.adminFindByReservationCode(code);
+    return { success: true, message: 'Reservation found', data };
+  }
+
+  @Patch('reservation/:code/use')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Mark a reservation as used',
+    description:
+      'Marks the reservation as used. ' +
+      'WALK_IN bookings → status set to COMPLETED (service rendered on the spot). ' +
+      'HOME_SERVICE bookings → status set to IN_PROGRESS (stylist en route / arrived). ' +
+      'Returns 409 if already used or booking is cancelled.',
+  })
+  @ApiParam({
+    name: 'code',
+    description: 'Reservation code',
+    example: 'HLX-A3K9',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Reservation marked as used',
+    example: {
+      success: true,
+      message: 'Reservation marked as used',
+      data: {
+        id: 'booking-uuid',
+        reservationCode: 'HLX-A3K9',
+        reservationUsed: true,
+        status: 'COMPLETED',
+        bookingType: 'WALK_IN',
+        totalAmount: 45000,
+        services: [
+          {
+            serviceId: 'svc-uuid-1',
+            name: 'Box Braids',
+            price: 25000,
+            duration: 180,
+          },
+        ],
+        user: {
+          id: 'user-uuid',
+          firstName: 'Amara',
+          lastName: 'Okafor',
+          phone: '+2348012345678',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Reservation code not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'Already used or booking is cancelled',
+  })
+  async useReservation(@Param('code') code: string) {
+    const data = await this.bookingService.useReservation(code);
+    return { success: true, message: 'Reservation marked as used', data };
   }
 
   @Get(':id')
   @ApiOperation({
     summary: 'Get detailed booking information',
     description:
-      'Get complete details of a specific booking including user, service, and address information',
+      'Get complete details of a specific booking including user, services array, and address information',
   })
   @ApiResponse({
     status: 200,
@@ -243,42 +373,46 @@ export class AdminBookingController {
       success: true,
       message: 'Booking details retrieved successfully',
       data: {
-        id: 'clx1234567890',
-        userId: 'clx0987654321',
-        serviceId: 'clx5555555555',
-        addressId: 'clx6666666666',
+        id: 'booking-uuid',
+        userId: 'user-uuid',
+        bookingType: 'HOME_SERVICE',
         bookingDate: '2026-02-20T00:00:00.000Z',
         bookingTime: '10:00',
-        totalAmount: 15000,
+        totalAmount: 45000,
         status: 'CONFIRMED',
+        reservationCode: 'HLX-A3K9',
+        reservationUsed: false,
+        guestName: null,
+        guestPhone: null,
         notes: 'Prefers afternoon appointments',
-        discountCode: null,
         createdAt: '2026-02-17T10:00:00.000Z',
         updatedAt: '2026-02-17T10:00:00.000Z',
         user: {
-          id: 'clx0987654321',
-          firstName: 'Jane',
-          lastName: 'Doe',
-          email: 'jane@example.com',
+          id: 'user-uuid',
+          firstName: 'Amara',
+          lastName: 'Okafor',
+          email: 'amara@example.com',
           phone: '+2348012345678',
         },
-        service: {
-          id: 'clx5555555555',
-          name: 'Premium Hair Treatment',
-          description: 'Deep conditioning and styling session',
-          price: 15000,
-          duration: 90,
-          category: {
-            id: 'clxcat111',
-            name: 'Hair Treatments',
+        services: [
+          {
+            serviceId: 'svc-uuid-1',
+            name: 'Box Braids',
+            price: 25000,
+            duration: 180,
           },
-        },
+          {
+            serviceId: 'svc-uuid-2',
+            name: 'Deep Conditioning',
+            price: 20000,
+            duration: 60,
+          },
+        ],
         address: {
-          id: 'clx6666666666',
-          street: '12 Adeola Odeku St',
-          city: 'Victoria Island',
+          id: 'addr-uuid',
+          addressLine: '15 Lekki Phase 1',
+          city: 'Lagos',
           state: 'Lagos',
-          country: 'Nigeria',
         },
       },
     },
@@ -306,37 +440,43 @@ export class AdminBookingController {
     status: 201,
     description: 'Booking created successfully',
     example: {
-      id: 'clx1234567890',
-      userId: 'clx0987654321',
-      serviceId: 'clx5555555555',
-      addressId: 'clx6666666666',
+      id: 'booking-uuid',
+      userId: 'user-uuid',
+      bookingType: 'WALK_IN',
       bookingDate: '2026-02-20T00:00:00.000Z',
       bookingTime: '10:00',
-      totalAmount: 15000,
+      totalAmount: 45000,
       status: 'CONFIRMED',
+      reservationCode: 'HLX-B7XQ',
+      reservationUsed: false,
+      guestName: 'Amara Okafor',
+      guestPhone: '+2348012345678',
       notes: 'Walk-in customer, paid in cash',
+      paymentMethod: 'CASH',
       createdAt: '2026-02-17T10:00:00.000Z',
       updatedAt: '2026-02-17T10:00:00.000Z',
       user: {
-        id: 'clx0987654321',
-        firstName: 'John',
-        lastName: 'Doe',
-        email: 'john@example.com',
+        id: 'user-uuid',
+        firstName: 'Amara',
+        lastName: 'Okafor',
+        email: 'amara@example.com',
         phone: '+2348012345678',
       },
-      service: {
-        id: 'clx5555555555',
-        name: 'Premium Hair Treatment',
-        price: 15000,
-        duration: 90,
-      },
-      address: {
-        id: 'clx6666666666',
-        street: '123 Main St',
-        city: 'Lagos',
-        state: 'Lagos',
-        country: 'Nigeria',
-      },
+      services: [
+        {
+          serviceId: 'svc-uuid-1',
+          name: 'Box Braids',
+          price: 25000,
+          duration: 180,
+        },
+        {
+          serviceId: 'svc-uuid-2',
+          name: 'Deep Conditioning',
+          price: 20000,
+          duration: 60,
+        },
+      ],
+      address: null,
     },
   })
   @ApiResponse({
@@ -361,22 +501,33 @@ export class AdminBookingController {
     status: 200,
     description: 'Booking status updated successfully',
     example: {
-      id: 'clx1234567890',
+      id: 'booking-uuid',
       status: 'COMPLETED',
-      totalAmount: 15000,
+      bookingType: 'HOME_SERVICE',
+      totalAmount: 45000,
+      reservationCode: 'HLX-A3K9',
+      reservationUsed: true,
       user: {
-        id: 'clx0987654321',
-        firstName: 'John',
-        lastName: 'Doe',
-        email: 'john@example.com',
+        id: 'user-uuid',
+        firstName: 'Amara',
+        lastName: 'Okafor',
+        email: 'amara@example.com',
         phone: '+2348012345678',
       },
-      service: {
-        id: 'clx5555555555',
-        name: 'Premium Hair Treatment',
-        price: 15000,
-        duration: 90,
-      },
+      services: [
+        {
+          serviceId: 'svc-uuid-1',
+          name: 'Box Braids',
+          price: 25000,
+          duration: 180,
+        },
+        {
+          serviceId: 'svc-uuid-2',
+          name: 'Deep Conditioning',
+          price: 20000,
+          duration: 60,
+        },
+      ],
     },
   })
   @ApiResponse({

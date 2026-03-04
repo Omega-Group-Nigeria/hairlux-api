@@ -4,11 +4,13 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from '../payment/paystack.service';
 import { MailService } from '../mail/mail.service';
 import { RedisService } from '../redis/redis.service';
+import { DiscountService } from '../discount/discount.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { CheckAvailabilityDto } from './dto/check-availability.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
@@ -24,16 +26,44 @@ import {
   PaymentMethod,
   TransactionType,
   TransactionStatus,
+  BookingType,
 } from '@prisma/client';
 
 @Injectable()
 export class BookingService {
+  private readonly logger = new Logger(BookingService.name);
+
   constructor(
     private prisma: PrismaService,
     private paystackService: PaystackService,
     private mailService: MailService,
     private redis: RedisService,
+    private discountService: DiscountService,
   ) {}
+
+  // ─── Reservation code generator ─────────────────────────────────────────
+  // Avoids visually ambiguous chars (0, O, 1, I)
+  private readonly CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+  private generateCode(length = 4): string {
+    let code = '';
+    for (let i = 0; i < length; i++) {
+      code +=
+        this.CODE_CHARS[Math.floor(Math.random() * this.CODE_CHARS.length)];
+    }
+    return `HLX-${code}`;
+  }
+
+  private async generateReservationCode(): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const code = this.generateCode();
+      const existing = await this.prisma.booking.findUnique({
+        where: { reservationCode: code },
+      });
+      if (!existing) return code;
+    }
+    throw new Error('Could not generate a unique reservation code');
+  }
 
   async checkAvailability(queryDto: CheckAvailabilityDto) {
     const { serviceId, date } = queryDto;
@@ -99,10 +129,6 @@ export class BookingService {
         status: {
           in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
         },
-        ...(serviceId && { serviceId }),
-      },
-      include: {
-        service: true,
       },
     });
 
@@ -122,21 +148,36 @@ export class BookingService {
   }
 
   async create(userId: string, createBookingDto: CreateBookingDto) {
-    const { services, date, time, addressId, paymentMethod } = createBookingDto;
+    const {
+      services,
+      date,
+      time,
+      addressId,
+      bookingType,
+      guestName,
+      guestPhone,
+      paymentMethod,
+      discountCode,
+    } = createBookingDto;
 
-    // Validate address
-    const address = await this.prisma.address.findFirst({
-      where: { id: addressId, userId },
-    });
+    // Validate address — only required for HOME_SERVICE
+    let address: Awaited<
+      ReturnType<typeof this.prisma.address.findFirst>
+    > | null = null;
+    if (bookingType === BookingType.HOME_SERVICE) {
+      address = await this.prisma.address.findFirst({
+        where: { id: addressId, userId },
+      });
 
-    if (!address) {
-      throw new NotFoundException('Address not found');
-    }
+      if (!address) {
+        throw new NotFoundException('Address not found');
+      }
 
-    if (!address.latitude || !address.longitude) {
-      throw new BadRequestException(
-        'Address must have location coordinates (latitude and longitude)',
-      );
+      if (!address.latitude || !address.longitude) {
+        throw new BadRequestException(
+          'Address must have location coordinates (latitude and longitude)',
+        );
+      }
     }
 
     // Fetch user once for confirmation email
@@ -150,9 +191,10 @@ export class BookingService {
     // Validate every service up-front before touching anything
     const serviceRecords: {
       serviceId: string;
-      notes?: string;
-      price: any;
       name: string;
+      price: number;
+      duration: number;
+      notes?: string;
     }[] = [];
 
     for (const item of services) {
@@ -172,9 +214,10 @@ export class BookingService {
 
       serviceRecords.push({
         serviceId: service.id,
-        notes: item.notes,
-        price: service.price,
         name: service.name,
+        price: Number(service.price),
+        duration: service.duration ?? 0,
+        ...(item.notes ? { notes: item.notes } : {}),
       });
     }
 
@@ -191,10 +234,30 @@ export class BookingService {
       throw new ConflictException('This time slot is already booked');
     }
 
-    const totalAmount = serviceRecords.reduce(
-      (sum, s) => sum + Number(s.price),
-      0,
-    );
+    // ONE reservation code for the entire booking
+    const reservationCode = await this.generateReservationCode();
+
+    const totalAmount = serviceRecords.reduce((sum, s) => sum + s.price, 0);
+
+    // ── Discount code validation ──────────────────────────────────────────────
+    let validatedDiscount: {
+      id: string;
+      code: string;
+      name: string;
+      percentage: number;
+    } | null = null;
+    let discountAmount = 0;
+    let finalAmount = totalAmount;
+
+    if (discountCode) {
+      validatedDiscount = await this.discountService.validate(discountCode);
+      discountAmount =
+        Math.round(((totalAmount * validatedDiscount.percentage) / 100) * 100) /
+        100;
+      finalAmount = Math.max(0, totalAmount - discountAmount);
+    }
+
+    const serviceNames = serviceRecords.map((s) => s.name).join(', ');
 
     // ── WALLET: check balance then create + pay atomically ───────────────────
     if (paymentMethod === PaymentMethod.WALLET) {
@@ -204,74 +267,70 @@ export class BookingService {
         throw new NotFoundException('Wallet not found');
       }
 
-      if (Number(wallet.balance) < totalAmount) {
+      if (Number(wallet.balance) < finalAmount) {
         throw new BadRequestException(
-          `Insufficient wallet balance. Required: ${totalAmount}, Available: ${Number(wallet.balance)}`,
+          `Insufficient wallet balance. Required: ${finalAmount}, Available: ${Number(wallet.balance)}`,
         );
       }
 
-      const serviceNames = serviceRecords.map((s) => s.name).join(', ');
-
-      const bookings = await this.prisma.$transaction(async (tx) => {
+      const walletResult = await this.prisma.$transaction(async (tx) => {
         // Debit wallet
         await tx.wallet.update({
           where: { userId },
-          data: { balance: { decrement: totalAmount } },
+          data: { balance: { decrement: finalAmount } },
         });
 
-        // Create all bookings as CONFIRMED
-        const created = await Promise.all(
-          serviceRecords.map((s) =>
-            tx.booking.create({
-              data: {
-                userId,
-                serviceId: s.serviceId,
-                addressId,
-                bookingDate,
-                bookingTime: time,
-                totalAmount: s.price,
-                paymentMethod: PaymentMethod.WALLET,
-                status: BookingStatus.CONFIRMED,
-                notes: s.notes,
-              },
-              include: {
-                service: {
-                  select: {
-                    id: true,
-                    name: true,
-                    description: true,
-                    price: true,
-                    duration: true,
-                  },
-                },
-                address: true,
-                staff: {
-                  select: {
-                    id: true,
-                    firstName: true,
-                    lastName: true,
-                    phone: true,
-                  },
-                },
-              },
-            }),
-          ),
-        );
+        // Create ONE booking record with all services as JSON
+        const booking = await tx.booking.create({
+          data: {
+            userId,
+            services: serviceRecords,
+            addressId: addressId ?? null,
+            bookingDate,
+            bookingTime: time,
+            bookingType,
+            reservationCode,
+            guestName: guestName ?? null,
+            guestPhone: guestPhone ?? null,
+            totalAmount: finalAmount,
+            paymentMethod: PaymentMethod.WALLET,
+            status: BookingStatus.CONFIRMED,
+          },
+          include: {
+            address: true,
+          },
+        });
 
-        // Single transaction record for the whole group
+        // Single transaction record for the whole booking
         await tx.transaction.create({
           data: {
             walletId: wallet.id,
-            amount: totalAmount,
+            amount: finalAmount,
             type: TransactionType.DEBIT,
-            description: `Payment for: ${serviceNames}`,
-            reference: `BOOK-${created[0].id}-${Date.now()}`,
+            description: `Payment for: ${serviceNames}${validatedDiscount ? ` (${validatedDiscount.percentage}% discount applied)` : ''}`,
+            reference: `BOOK-${booking.id}-${Date.now()}`,
             status: TransactionStatus.COMPLETED,
           },
         });
 
-        return created;
+        // Track discount usage
+        let discountUsageId: string | null = null;
+        if (validatedDiscount) {
+          const usage = await tx.discountUsage.create({
+            data: {
+              discountCodeId: validatedDiscount.id,
+              userId,
+              bookingId: booking.id,
+              discountAmount,
+            },
+          });
+          discountUsageId = usage.id;
+        }
+
+        return { booking, discountUsageId };
       });
+
+      const { booking, discountUsageId } = walletResult;
 
       // Fire booking confirmation email (non-fatal)
       if (user) {
@@ -280,17 +339,20 @@ export class BookingService {
             user.email,
             user.firstName,
             {
-              services: bookings.map((b) => ({
-                name: b.service.name,
-                price: Number(b.service.price),
-                duration: b.service.duration ?? 0,
+              services: serviceRecords.map((s) => ({
+                name: s.name,
+                price: s.price,
+                duration: s.duration,
               })),
               date,
               time,
-              address: `${address.addressLine}, ${address.city}, ${address.state}`,
-              totalAmount,
+              address: address
+                ? `${address.addressLine}, ${address.city}, ${address.state}`
+                : 'In-store (Walk-in)',
+              totalAmount: finalAmount,
               paymentMethod: 'WALLET',
-              bookingIds: bookings.map((b) => b.id),
+              bookingIds: [booking.id],
+              reservationCode,
             },
           );
         } catch (_) {}
@@ -302,52 +364,72 @@ export class BookingService {
         this.redis.del(`wallet:balance:${userId}`),
       ]);
 
+      // Non-fatal: increment usage count + process influencer reward
+      if (validatedDiscount && discountUsageId) {
+        void (async () => {
+          try {
+            await this.discountService.incrementUsage(validatedDiscount!.code);
+          } catch (e) {
+            this.logger.warn(
+              `incrementUsage failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+          try {
+            await this.discountService.processInfluencerReward(
+              discountUsageId!,
+              finalAmount,
+            );
+          } catch (e) {
+            this.logger.warn(
+              `processInfluencerReward failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        })();
+      }
+
       return {
-        bookings,
-        totalAmount,
+        booking: {
+          ...booking,
+          services: serviceRecords,
+          totalAmount: finalAmount,
+        },
+        reservationCode,
+        totalAmount: finalAmount,
+        originalAmount: validatedDiscount ? totalAmount : undefined,
+        discountApplied: validatedDiscount
+          ? {
+              code: validatedDiscount.code,
+              percentage: validatedDiscount.percentage,
+              amount: discountAmount,
+            }
+          : undefined,
         paymentMethod: PaymentMethod.WALLET,
         message: 'Payment successful. Booking confirmed.',
       };
     }
 
-    // ── CASH: create bookings as PENDING, collect on delivery ────────────────
-    const bookings = await this.prisma.$transaction(
-      serviceRecords.map((s) =>
-        this.prisma.booking.create({
-          data: {
-            userId,
-            serviceId: s.serviceId,
-            addressId,
-            bookingDate,
-            bookingTime: time,
-            totalAmount: s.price,
-            paymentMethod: PaymentMethod.CASH,
-            status: BookingStatus.PENDING,
-            notes: s.notes,
-          },
-          include: {
-            service: {
-              select: {
-                id: true,
-                name: true,
-                description: true,
-                price: true,
-                duration: true,
-              },
-            },
-            address: true,
-            staff: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                phone: true,
-              },
-            },
-          },
-        }),
-      ),
-    );
+    // ── CASH: create booking as PENDING, collect on delivery ─────────────────
+    const booking = await this.prisma.$transaction(async (tx) => {
+      return tx.booking.create({
+        data: {
+          userId,
+          services: serviceRecords,
+          addressId: addressId ?? null,
+          bookingDate,
+          bookingTime: time,
+          bookingType,
+          reservationCode,
+          guestName: guestName ?? null,
+          guestPhone: guestPhone ?? null,
+          totalAmount: finalAmount,
+          paymentMethod: PaymentMethod.CASH,
+          status: BookingStatus.PENDING,
+        },
+        include: {
+          address: true,
+        },
+      });
+    });
 
     // Fire booking confirmation email (non-fatal)
     if (user) {
@@ -356,28 +438,69 @@ export class BookingService {
           user.email,
           user.firstName,
           {
-            services: bookings.map((b) => ({
-              name: b.service.name,
-              price: Number(b.service.price),
-              duration: b.service.duration ?? 0,
+            services: serviceRecords.map((s) => ({
+              name: s.name,
+              price: s.price,
+              duration: s.duration,
             })),
             date,
             time,
-            address: `${address.addressLine}, ${address.city}, ${address.state}`,
-            totalAmount,
+            address: address
+              ? `${address.addressLine}, ${address.city}, ${address.state}`
+              : 'In-store (Walk-in)',
+            totalAmount: finalAmount,
             paymentMethod: 'CASH',
-            bookingIds: bookings.map((b) => b.id),
+            bookingIds: [booking.id],
+            reservationCode,
           },
         );
       } catch (_) {}
+    }
+
+    // Non-fatal: track discount usage + process influencer reward (CASH path)
+    if (validatedDiscount) {
+      void (async () => {
+        try {
+          const usage = await this.prisma.discountUsage.create({
+            data: {
+              discountCodeId: validatedDiscount!.id,
+              userId,
+              bookingId: booking.id,
+              discountAmount,
+            },
+          });
+          await this.discountService.incrementUsage(validatedDiscount!.code);
+          await this.discountService.processInfluencerReward(
+            usage.id,
+            finalAmount,
+          );
+        } catch (e) {
+          this.logger.warn(
+            `Discount post-processing failed (CASH, non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      })();
     }
 
     // Invalidate analytics (new booking added)
     void this.redis.delByPattern('analytics:*');
 
     return {
-      bookings,
-      totalAmount,
+      booking: {
+        ...booking,
+        services: serviceRecords,
+        totalAmount: finalAmount,
+      },
+      reservationCode,
+      totalAmount: finalAmount,
+      originalAmount: validatedDiscount ? totalAmount : undefined,
+      discountApplied: validatedDiscount
+        ? {
+            code: validatedDiscount.code,
+            percentage: validatedDiscount.percentage,
+            amount: discountAmount,
+          }
+        : undefined,
       paymentMethod: PaymentMethod.CASH,
       message: 'Booking reserved. Payment will be collected on delivery.',
     };
@@ -409,22 +532,7 @@ export class BookingService {
     const bookings = await this.prisma.booking.findMany({
       where,
       include: {
-        service: {
-          select: {
-            id: true,
-            name: true,
-            price: true,
-            duration: true,
-          },
-        },
         address: true,
-        staff: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
       },
       orderBy: {
         bookingDate: 'desc',
@@ -438,16 +546,7 @@ export class BookingService {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
-        service: true,
         address: true,
-        staff: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            phone: true,
-          },
-        },
         user: {
           select: {
             id: true,
@@ -527,15 +626,7 @@ export class BookingService {
         notes: reason ? `Rescheduled: ${reason}` : booking.notes,
       },
       include: {
-        service: true,
         address: true,
-        staff: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
       },
     });
 
@@ -586,7 +677,6 @@ export class BookingService {
           cancelReason: reason,
         },
         include: {
-          service: true,
           address: true,
         },
       });
@@ -673,7 +763,6 @@ export class BookingService {
       startDate,
       endDate,
       userId,
-      serviceId,
       search,
       page = 1,
       limit = 20,
@@ -697,10 +786,6 @@ export class BookingService {
 
     if (userId) {
       where.userId = userId;
-    }
-
-    if (serviceId) {
-      where.serviceId = serviceId;
     }
 
     if (search) {
@@ -730,14 +815,6 @@ export class BookingService {
               phone: true,
             },
           },
-          service: {
-            select: {
-              id: true,
-              name: true,
-              price: true,
-              duration: true,
-            },
-          },
           address: true,
         },
         orderBy: {
@@ -751,10 +828,6 @@ export class BookingService {
       data: bookings.map((booking) => ({
         ...booking,
         totalAmount: Number(booking.totalAmount),
-        service: {
-          ...booking.service,
-          price: Number(booking.service.price),
-        },
       })),
       meta: {
         total,
@@ -778,16 +851,6 @@ export class BookingService {
             phone: true,
           },
         },
-        service: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            price: true,
-            duration: true,
-            category: true,
-          },
-        },
         address: true,
       },
     });
@@ -799,18 +862,17 @@ export class BookingService {
     return {
       ...booking,
       totalAmount: Number(booking.totalAmount),
-      service: {
-        ...booking.service,
-        price: Number(booking.service.price),
-      },
     };
   }
 
   async createAdminBooking(createDto: AdminCreateBookingDto) {
     const {
       userId,
-      serviceId,
+      services,
       addressId,
+      bookingType,
+      guestName,
+      guestPhone,
       bookingDate,
       bookingTime,
       paymentMethod,
@@ -826,37 +888,63 @@ export class BookingService {
       throw new NotFoundException('User not found');
     }
 
-    // Verify service exists and is active
-    const service = await this.prisma.service.findUnique({
-      where: { id: serviceId },
-    });
+    // Validate all requested services and build JSON records
+    const serviceRecords: {
+      serviceId: string;
+      name: string;
+      price: number;
+      duration: number;
+      notes?: string;
+    }[] = [];
 
-    if (!service) {
-      throw new NotFoundException('Service not found');
+    for (const item of services) {
+      const service = await this.prisma.service.findUnique({
+        where: { id: item.serviceId },
+      });
+
+      if (!service) {
+        throw new NotFoundException(`Service ${item.serviceId} not found`);
+      }
+
+      if (service.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          `Service "${service.name}" is not available`,
+        );
+      }
+
+      serviceRecords.push({
+        serviceId: service.id,
+        name: service.name,
+        price: Number(service.price),
+        duration: service.duration,
+        ...(item.notes ? { notes: item.notes } : {}),
+      });
     }
 
-    if (service.status !== 'ACTIVE') {
-      throw new BadRequestException('Service is not available');
-    }
+    const totalAmount = serviceRecords.reduce((sum, s) => sum + s.price, 0);
 
-    // Verify address exists and belongs to user
-    const address = await this.prisma.address.findUnique({
-      where: { id: addressId },
-    });
+    // Verify address — only required for HOME_SERVICE
+    let address: Awaited<
+      ReturnType<typeof this.prisma.address.findUnique>
+    > | null = null;
+    if (bookingType === BookingType.HOME_SERVICE) {
+      address = await this.prisma.address.findUnique({
+        where: { id: addressId },
+      });
 
-    if (!address) {
-      throw new NotFoundException('Address not found');
-    }
+      if (!address) {
+        throw new NotFoundException('Address not found');
+      }
 
-    if (address.userId !== userId) {
-      throw new BadRequestException('Address does not belong to user');
-    }
+      if (address.userId !== userId) {
+        throw new BadRequestException('Address does not belong to user');
+      }
 
-    // Verify address has coordinates
-    if (!address.latitude || !address.longitude) {
-      throw new BadRequestException(
-        'Address must have latitude and longitude coordinates',
-      );
+      if (!address.latitude || !address.longitude) {
+        throw new BadRequestException(
+          'Address must have latitude and longitude coordinates',
+        );
+      }
     }
 
     // Check if slot is available
@@ -883,19 +971,23 @@ export class BookingService {
       );
     }
 
-    // Create booking with payment if method specified
-    const totalAmount = service.price;
     const status = paymentMethod
       ? BookingStatus.CONFIRMED
       : BookingStatus.PENDING;
 
+    const reservationCode = await this.generateReservationCode();
+
     const booking = await this.prisma.booking.create({
       data: {
         userId,
-        serviceId,
-        addressId,
+        services: serviceRecords,
+        addressId: addressId ?? null,
         bookingDate: new Date(bookingDate),
         bookingTime,
+        bookingType,
+        reservationCode,
+        guestName: guestName ?? null,
+        guestPhone: guestPhone ?? null,
         totalAmount,
         status,
         paymentMethod: paymentMethod || PaymentMethod.CASH,
@@ -911,7 +1003,6 @@ export class BookingService {
             phone: true,
           },
         },
-        service: true,
         address: true,
       },
     });
@@ -919,23 +1010,24 @@ export class BookingService {
     // Process payment if method specified (walk-in)
     if (paymentMethod) {
       if (paymentMethod === PaymentMethod.WALLET) {
-        // Process wallet payment
         const wallet = await this.prisma.wallet.findUnique({
           where: { userId },
         });
 
-        if (!wallet || wallet.balance < totalAmount) {
-          throw new BadRequestException('Insufficient wallet balance');
+        if (!wallet) {
+          throw new NotFoundException('Wallet not found');
+        }
+
+        if (Number(wallet.balance) < totalAmount) {
+          throw new BadRequestException(
+            `Insufficient wallet balance. Required: ${totalAmount}, Available: ${Number(wallet.balance)}`,
+          );
         }
 
         await this.prisma.$transaction([
           this.prisma.wallet.update({
             where: { userId },
-            data: {
-              balance: {
-                decrement: totalAmount,
-              },
-            },
+            data: { balance: { decrement: totalAmount } },
           }),
           this.prisma.transaction.create({
             data: {
@@ -955,10 +1047,8 @@ export class BookingService {
     return {
       ...booking,
       totalAmount: Number(booking.totalAmount),
-      service: {
-        ...booking.service,
-        price: Number(booking.service.price),
-      },
+      services: serviceRecords,
+      reservationCode,
     };
   }
 
@@ -967,7 +1057,6 @@ export class BookingService {
       where: { id },
       include: {
         user: true,
-        service: true,
       },
     });
 
@@ -997,14 +1086,6 @@ export class BookingService {
               lastName: true,
               email: true,
               phone: true,
-            },
-          },
-          service: {
-            select: {
-              id: true,
-              name: true,
-              price: true,
-              duration: true,
             },
           },
           address: true,
@@ -1059,10 +1140,6 @@ export class BookingService {
     return {
       ...result,
       totalAmount: Number(result.totalAmount),
-      service: {
-        ...result.service,
-        price: Number(result.service.price),
-      },
     };
   }
 
@@ -1095,13 +1172,6 @@ export class BookingService {
             email: true,
           },
         },
-        service: {
-          select: {
-            id: true,
-            name: true,
-            duration: true,
-          },
-        },
       },
       orderBy: [
         {
@@ -1126,7 +1196,7 @@ export class BookingService {
         time: booking.bookingTime,
         status: booking.status,
         user: booking.user,
-        service: booking.service,
+        services: booking.services,
       });
     });
 
@@ -1151,30 +1221,29 @@ export class BookingService {
   async getStats(statsDto: GetStatsDto) {
     const { startDate, endDate } = statsDto;
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const allTime = !startDate && !endDate;
 
-    if (start > end) {
-      throw new BadRequestException('Start date must be before end date');
+    let start: Date | undefined;
+    let end: Date | undefined;
+
+    if (!allTime) {
+      if (!startDate || !endDate) {
+        throw new BadRequestException(
+          'Both startDate and endDate are required, or omit both for all-time stats',
+        );
+      }
+      start = new Date(startDate);
+      end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+
+      if (start > end) {
+        throw new BadRequestException('Start date must be before end date');
+      }
     }
 
-    // Get bookings in date range
+    // Get bookings — full table scan when allTime, date-filtered otherwise
     const bookings = await this.prisma.booking.findMany({
-      where: {
-        bookingDate: {
-          gte: start,
-          lte: end,
-        },
-      },
-      include: {
-        service: {
-          select: {
-            id: true,
-            name: true,
-            price: true,
-          },
-        },
-      },
+      where: allTime ? {} : { bookingDate: { gte: start, lte: end } },
     });
 
     // Calculate stats
@@ -1182,7 +1251,17 @@ export class BookingService {
     const completedBookings = bookings.filter(
       (b) => b.status === BookingStatus.COMPLETED,
     );
-    const totalRevenue = completedBookings.reduce(
+    // Revenue = any booking that has been paid (CONFIRMED, IN_PROGRESS, COMPLETED)
+    // PENDING = cash not yet collected; CANCELLED = refunded / never paid
+    const paidStatuses: BookingStatus[] = [
+      BookingStatus.CONFIRMED,
+      BookingStatus.IN_PROGRESS,
+      BookingStatus.COMPLETED,
+    ];
+    const paidBookings = bookings.filter((b) =>
+      paidStatuses.includes(b.status),
+    );
+    const totalRevenue = paidBookings.reduce(
       (sum, b) => sum + Number(b.totalAmount),
       0,
     );
@@ -1193,26 +1272,31 @@ export class BookingService {
         .length,
       confirmed: bookings.filter((b) => b.status === BookingStatus.CONFIRMED)
         .length,
+      inProgress: bookings.filter((b) => b.status === BookingStatus.IN_PROGRESS)
+        .length,
       completed: completedBookings.length,
       cancelled: bookings.filter((b) => b.status === BookingStatus.CANCELLED)
         .length,
     };
 
-    // Group by service
+    // Group by service — count all bookings; revenue only from paid ones
     const serviceStats: Record<string, any> = {};
     bookings.forEach((booking) => {
-      const serviceId = booking.service.id;
-      if (!serviceStats[serviceId]) {
-        serviceStats[serviceId] = {
-          serviceName: booking.service.name,
-          count: 0,
-          revenue: 0,
-        };
-      }
-      serviceStats[serviceId].count++;
-      if (booking.status === BookingStatus.COMPLETED) {
-        serviceStats[serviceId].revenue += Number(booking.totalAmount);
-      }
+      const isPaid = paidBookings.includes(booking);
+      (booking.services as any[]).forEach((svc) => {
+        const svcId = svc.serviceId;
+        if (!serviceStats[svcId]) {
+          serviceStats[svcId] = {
+            serviceName: svc.name,
+            count: 0,
+            revenue: 0,
+          };
+        }
+        serviceStats[svcId].count++;
+        if (isPaid) {
+          serviceStats[svcId].revenue += Number(svc.price);
+        }
+      });
     });
 
     // Get most popular service
@@ -1221,17 +1305,14 @@ export class BookingService {
       .sort((a, b) => b.count - a.count);
 
     return {
-      period: {
-        startDate,
-        endDate,
-      },
+      period: allTime
+        ? { allTime: true }
+        : { allTime: false, startDate, endDate },
       overview: {
         totalBookings,
         totalRevenue,
         averageBookingValue:
-          completedBookings.length > 0
-            ? totalRevenue / completedBookings.length
-            : 0,
+          paidBookings.length > 0 ? totalRevenue / paidBookings.length : 0,
       },
       byStatus,
       topServices: popularServices.slice(0, 5),
@@ -1360,5 +1441,107 @@ export class BookingService {
     if (!existing) throw new NotFoundException('Exception not found');
     await this.prisma.businessException.delete({ where: { id } });
     await this.redis.del('booking:business-exceptions');
+  }
+
+  // ─── Reservation Code Lookup ───────────────────────────────────────────────
+
+  /**
+   * User-facing: look up a booking by reservation code.
+   * Only returns the booking if it belongs to the requesting user.
+   */
+  async findByReservationCode(code: string, userId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { reservationCode: code.toUpperCase() },
+      include: {
+        address: true,
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Reservation code not found');
+    }
+
+    if (booking.userId !== userId) {
+      throw new ForbiddenException('This reservation does not belong to you');
+    }
+
+    return booking;
+  }
+
+  /**
+   * Admin-facing: look up a booking by reservation code with full validity info.
+   */
+  async adminFindByReservationCode(code: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { reservationCode: code.toUpperCase() },
+      include: {
+        address: true,
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Reservation code not found');
+    }
+
+    return {
+      ...booking,
+      isValid:
+        !booking.reservationUsed && booking.status !== BookingStatus.CANCELLED,
+    };
+  }
+
+  /**
+   * Admin-facing: mark a reservation as used. Irreversible.
+   * Returns 409 if already used or cancelled.
+   */
+  async useReservation(code: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { reservationCode: code.toUpperCase() },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Reservation code not found');
+    }
+
+    if (booking.reservationUsed) {
+      throw new ConflictException('This reservation has already been used');
+    }
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      throw new ConflictException(
+        'This reservation is cancelled and cannot be used',
+      );
+    }
+
+    const updated = await this.prisma.booking.update({
+      where: { reservationCode: code.toUpperCase() },
+      data: {
+        reservationUsed: true,
+        // WALK_IN: customer is present, service rendered immediately → COMPLETED
+        // HOME_SERVICE: stylist is on the way / just arrived → IN_PROGRESS
+        status:
+          booking.bookingType === BookingType.WALK_IN
+            ? BookingStatus.COMPLETED
+            : BookingStatus.IN_PROGRESS,
+      },
+      include: {
+        user: {
+          select: { id: true, firstName: true, lastName: true, phone: true },
+        },
+      },
+    });
+
+    void this.redis.delByPattern('analytics:*');
+
+    return updated;
   }
 }

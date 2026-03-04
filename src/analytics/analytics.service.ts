@@ -155,7 +155,7 @@ export class AnalyticsService {
       select: {
         totalAmount: true,
         createdAt: true,
-        service: { select: { name: true } },
+        services: true,
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -172,12 +172,14 @@ export class AnalyticsService {
       revenueByDate[key] = (revenueByDate[key] || 0) + Number(b.totalAmount);
     });
 
-    // Group by service name
+    // Group by service name (services is a JSON array per booking)
     const revenueByService: Record<string, number> = {};
     paidBookings.forEach((b) => {
-      const name = b.service.name;
-      revenueByService[name] =
-        (revenueByService[name] || 0) + Number(b.totalAmount);
+      const svcs = b.services as { name: string; price: number }[];
+      svcs.forEach((svc) => {
+        revenueByService[svc.name] =
+          (revenueByService[svc.name] || 0) + Number(svc.price);
+      });
     });
 
     const revenueResult = {
@@ -220,12 +222,7 @@ export class AnalyticsService {
         bookingDate: true,
         bookingTime: true,
         status: true,
-        service: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        services: true,
       },
       orderBy: {
         bookingDate: 'asc',
@@ -256,16 +253,18 @@ export class AnalyticsService {
       }
       bookingsByStatus[booking.status]++;
 
-      // By service
-      const serviceId = booking.service.id;
-      if (!bookingsByService[serviceId]) {
-        bookingsByService[serviceId] = {
-          serviceId,
-          serviceName: booking.service.name,
-          count: 0,
-        };
-      }
-      bookingsByService[serviceId].count++;
+      // By service (iterate JSON array)
+      const svcs = booking.services as { serviceId: string; name: string }[];
+      svcs.forEach((svc) => {
+        if (!bookingsByService[svc.serviceId]) {
+          bookingsByService[svc.serviceId] = {
+            serviceId: svc.serviceId,
+            serviceName: svc.name,
+            count: 0,
+          };
+        }
+        bookingsByService[svc.serviceId].count++;
+      });
 
       // By time slot (group into hour blocks)
       const hour = booking.bookingTime.split(':')[0];

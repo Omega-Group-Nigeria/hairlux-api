@@ -16,7 +16,10 @@ import { WalletModule } from './wallet/wallet.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { DiscountModule } from './discount/discount.module';
 import { ReferralModule } from './referral/referral.module';
+import { InfluencerModule } from './influencer/influencer.module';
 import { RedisModule } from './redis/redis.module';
+import { JobsModule } from './jobs/jobs.module';
+import { RolesModule } from './roles/roles.module';
 
 @Module({
   imports: [
@@ -47,6 +50,9 @@ import { RedisModule } from './redis/redis.module';
     AnalyticsModule,
     DiscountModule,
     ReferralModule,
+    InfluencerModule,
+    JobsModule,
+    RolesModule,
   ],
   controllers: [AppController],
   providers: [
