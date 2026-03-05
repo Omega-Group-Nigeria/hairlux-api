@@ -609,4 +609,26 @@ export class UserService {
 
     return updatedUser;
   }
+
+  async searchByEmail(email: string) {
+    const users = await this.prisma.user.findMany({
+      where: { email: { contains: email.trim(), mode: 'insensitive' } },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        influencer: {
+          select: { id: true, isActive: true },
+        },
+      },
+      take: 20,
+      orderBy: { createdAt: 'desc' },
+    });
+    return users;
+  }
 }

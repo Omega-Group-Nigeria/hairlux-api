@@ -6,6 +6,7 @@ import {
   otpTemplate,
   resetPasswordTemplate,
   bookingConfirmationTemplate,
+  guestBookingNotificationTemplate,
   depositSuccessTemplate,
   referralRewardTemplate,
 } from './templates';
@@ -134,6 +135,44 @@ export class MailService {
         error instanceof Error ? error.message : String(error);
       this.logger.error(
         `Error queuing booking confirmation email:`,
+        errorMessage,
+      );
+    }
+  }
+
+  async sendGuestBookingEmail(
+    guestEmail: string,
+    guestName: string,
+    data: {
+      services: { name: string; price: number; duration: number }[];
+      date: string;
+      time: string;
+      address: string;
+      totalAmount: number;
+      reservationCode: string;
+      bookedByName: string;
+    },
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: guestEmail,
+          subject: `A booking was made for you [${data.reservationCode}] — HairLux`,
+          html: guestBookingNotificationTemplate(guestName, data),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`Guest booking notification queued for ${guestEmail}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Error queuing guest booking notification email:`,
         errorMessage,
       );
     }

@@ -4,6 +4,7 @@ import {
   IsDateString,
   IsOptional,
   IsString,
+  IsEmail,
   IsArray,
   ValidateNested,
   ArrayMinSize,
@@ -126,4 +127,13 @@ export class CreateBookingDto {
   @IsOptional()
   @IsString()
   discountCode?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Email address of the guest this booking is for. If provided, a notification email with the reservation code will be sent to the guest after successful booking.',
+    example: 'amara.okafor@example.com',
+  })
+  @IsOptional()
+  @IsEmail({}, { message: 'guestEmail must be a valid email address' })
+  guestEmail?: string;
 }

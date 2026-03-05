@@ -10,6 +10,8 @@ import {
   InfluencerRewardSettings,
   ReferralRewardType,
   ReferralStatus,
+  TransactionType,
+  TransactionStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
@@ -183,23 +185,43 @@ export class DiscountService {
   // ─── Influencer Discount CRUD (Admin) ─────────────────────────────────────
 
   async createInfluencerDiscount(dto: CreateInfluencerDiscountDto) {
-    // Resolve influencer ID from either field
-    const resolvedInfluencerId = dto.influencerId ?? dto.influencerUserId;
-    if (!resolvedInfluencerId) {
+    if (!dto.influencerId && !dto.influencerUserId) {
       throw new BadRequestException(
         'Either influencerId or influencerUserId must be provided',
       );
     }
 
-    // Validate influencer exists
-    const influencer = await this.prisma.influencer.findUnique({
-      where: { id: resolvedInfluencerId },
-    });
-    if (!influencer) {
-      throw new NotFoundException(
-        `Influencer with id "${resolvedInfluencerId}" not found`,
-      );
+    // Resolve to Influencer record: influencerId is the Influencer PK,
+    // influencerUserId is the linked User's ID
+    let influencer: {
+      id: string;
+      userId: string;
+      notes: string | null;
+      isActive: boolean;
+      user: { firstName: string; lastName: string };
+    } | null = null;
+
+    if (dto.influencerId) {
+      influencer = await this.prisma.influencer.findUnique({
+        where: { id: dto.influencerId },
+        include: { user: { select: { firstName: true, lastName: true } } },
+      });
+      if (!influencer)
+        throw new NotFoundException(
+          `Influencer with id "${dto.influencerId}" not found`,
+        );
+    } else {
+      influencer = await this.prisma.influencer.findUnique({
+        where: { userId: dto.influencerUserId },
+        include: { user: { select: { firstName: true, lastName: true } } },
+      });
+      if (!influencer)
+        throw new NotFoundException(
+          `No influencer found for user id "${dto.influencerUserId}"`,
+        );
     }
+
+    const resolvedInfluencerId = influencer.id;
 
     // Case-insensitive uniqueness check
     const normalizedCode = dto.code.trim().toUpperCase();
@@ -221,10 +243,13 @@ export class DiscountService {
       throw new BadRequestException('startsAt must be before expiresAt');
     }
 
+    const influencerDisplayName =
+      `${influencer.user.firstName} ${influencer.user.lastName}`.trim();
+
     const discount = await this.prisma.discountCode.create({
       data: {
         code: normalizedCode,
-        name: dto.name ?? `${influencer.name} ${dto.percentage}% Off`,
+        name: dto.name ?? `${influencerDisplayName} ${dto.percentage}% Off`,
         percentage: dto.percentage,
         type: DiscountType.INFLUENCER,
         influencerId: resolvedInfluencerId,
@@ -233,11 +258,17 @@ export class DiscountService {
         expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
         maxUses: dto.maxUses ?? null,
       },
-      include: { influencer: true },
+      include: {
+        influencer: {
+          include: {
+            user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+          },
+        },
+      },
     });
 
     this.logger.log(
-      `Influencer discount created: ${discount.code} for influencer ${influencer.name} (${influencer.id})`,
+      `Influencer discount created: ${discount.code} for influencer ${influencerDisplayName} (${influencer.id})`,
     );
     return discount;
   }
@@ -477,17 +508,6 @@ export class DiscountService {
         return;
       }
 
-      // Idempotency guard
-      const existing = await this.prisma.influencerReward.findUnique({
-        where: { usageId },
-      });
-      if (existing) {
-        this.logger.log(
-          `Reward for usage ${usageId} already exists — skipping`,
-        );
-        return;
-      }
-
       const discountAmount = Number(usage.discountAmount);
       let rewardAmount: number;
       if (settings.rewardType === ReferralRewardType.FIXED) {
@@ -508,18 +528,84 @@ export class DiscountService {
         return;
       }
 
-      // Record reward as REWARDED immediately on booking confirmation
-      await this.prisma.influencerReward.create({
-        data: {
-          influencerId,
-          usageId,
-          rewardAmount,
-          status: ReferralStatus.REWARDED,
-        },
+      // Look up influencer user link and their wallet
+      const influencer = await this.prisma.influencer.findUnique({
+        where: { id: usage.discountCode.influencerId! },
+        select: { id: true, userId: true },
       });
 
+      if (!influencer) {
+        this.logger.warn(
+          `processInfluencerReward: influencer ${influencerId} not found`,
+        );
+        return;
+      }
+
+      const wallet = await this.prisma.wallet.findUnique({
+        where: { userId: influencer.userId },
+      });
+
+      if (!wallet) {
+        this.logger.warn(
+          `processInfluencerReward: no wallet for influencer user ${influencer.userId}`,
+        );
+        return;
+      }
+
+      // Atomic: create reward + credit wallet + create transaction, then link
+      // The DB unique constraint on usageId is the idempotency guard — if two
+      // concurrent calls race past the early-return checks, only one will
+      // succeed; the other gets a P2002 unique-constraint violation which we
+      // treat as "already processed" (not an error).
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          const txRecord = await tx.transaction.create({
+            data: {
+              walletId: wallet.id,
+              type: TransactionType.INFLUENCER_REWARD,
+              status: TransactionStatus.COMPLETED,
+              amount: rewardAmount,
+              reference: `INFL-REWARD-${usageId}`,
+              description: `Influencer reward for discount usage`,
+            },
+          });
+
+          await tx.influencerReward.create({
+            data: {
+              influencerId,
+              usageId,
+              rewardAmount,
+              status: ReferralStatus.REWARDED,
+              walletTransactionId: txRecord.id,
+            },
+          });
+
+          await tx.wallet.update({
+            where: { id: wallet.id },
+            data: { balance: { increment: rewardAmount } },
+          });
+        });
+      } catch (txErr: unknown) {
+        // P2002 = unique constraint violation — reward already exists (race condition)
+        if (
+          typeof txErr === 'object' &&
+          txErr !== null &&
+          'code' in txErr &&
+          (txErr as { code: string }).code === 'P2002'
+        ) {
+          this.logger.log(
+            `Reward for usage ${usageId} already exists (race condition caught at DB) — skipping`,
+          );
+          return;
+        }
+        throw txErr; // re-throw any other DB error to the outer catch
+      }
+
+      // Awaited (not fire-and-forget) so cache is always cleared before logging
+      await this.redis.del(`wallet:balance:${influencer.userId}`);
+
       this.logger.log(
-        `Influencer reward confirmed: ₦${rewardAmount} rewarded to influencer ${influencerId} (usage ${usageId})`,
+        `Influencer reward: ₦${rewardAmount} credited to wallet of user ${influencer.userId} (usage ${usageId})`,
       );
     } catch (err) {
       this.logger.error(

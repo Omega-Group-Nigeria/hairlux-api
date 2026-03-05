@@ -24,8 +24,9 @@ export class CreateInfluencerDiscountDto {
   influencerId?: string;
 
   @ApiPropertyOptional({
-    description: 'Alias for influencerId — either field is accepted',
-    example: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    description:
+      'The User ID of the influencer. Pass this instead of influencerId — the system will look up the Influencer record by userId.',
+    example: 'u1b2c3d4-e5f6-7890-abcd-ef1234567890',
   })
   @IsOptional()
   @IsUUID()

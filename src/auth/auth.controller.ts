@@ -79,15 +79,36 @@ export class AuthController {
           phone: '+2348012345678',
           role: 'USER',
           status: 'ACTIVE',
-          adminRole: {
-            id: 'b2f7e1a0-3c14-4f2b-9e8d-1a2b3c4d5e6f',
-            name: 'Receptionist',
+          adminRole: null,
+          permissions: [],
+          influencer: null,
+        },
+        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Login successful — user is an influencer',
+    example: {
+      success: true,
+      message: 'Login successful',
+      data: {
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          email: 'amara@example.com',
+          firstName: 'Amara',
+          lastName: 'Okafor',
+          phone: '+2348012345678',
+          role: 'USER',
+          status: 'ACTIVE',
+          adminRole: null,
+          permissions: [],
+          influencer: {
+            id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+            isActive: true,
           },
-          permissions: [
-            'bookings:read',
-            'bookings:verify_reservation',
-            'users:read',
-          ],
         },
         accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
         refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',

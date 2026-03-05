@@ -156,6 +156,7 @@ export class BookingService {
       bookingType,
       guestName,
       guestPhone,
+      guestEmail,
       paymentMethod,
       discountCode,
     } = createBookingDto;
@@ -183,7 +184,7 @@ export class BookingService {
     // Fetch user once for confirmation email
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { email: true, firstName: true },
+      select: { email: true, firstName: true, lastName: true },
     });
 
     const bookingDate = new Date(`${date}T${time}`);
@@ -292,6 +293,7 @@ export class BookingService {
             reservationCode,
             guestName: guestName ?? null,
             guestPhone: guestPhone ?? null,
+            guestEmail: guestEmail ?? null,
             totalAmount: finalAmount,
             paymentMethod: PaymentMethod.WALLET,
             status: BookingStatus.CONFIRMED,
@@ -332,30 +334,43 @@ export class BookingService {
 
       const { booking, discountUsageId } = walletResult;
 
-      // Fire booking confirmation email (non-fatal)
+      // Queue emails (non-blocking — void fires and forgets into Bull queue)
+      const addressStr = address
+        ? `${address.addressLine}, ${address.city}, ${address.state}`
+        : 'In-store (Walk-in)';
+      const emailServices = serviceRecords.map((s) => ({
+        name: s.name,
+        price: s.price,
+        duration: s.duration,
+      }));
+
       if (user) {
-        try {
-          await this.mailService.sendBookingConfirmationEmail(
-            user.email,
-            user.firstName,
-            {
-              services: serviceRecords.map((s) => ({
-                name: s.name,
-                price: s.price,
-                duration: s.duration,
-              })),
-              date,
-              time,
-              address: address
-                ? `${address.addressLine}, ${address.city}, ${address.state}`
-                : 'In-store (Walk-in)',
-              totalAmount: finalAmount,
-              paymentMethod: 'WALLET',
-              bookingIds: [booking.id],
-              reservationCode,
-            },
-          );
-        } catch (_) {}
+        void this.mailService.sendBookingConfirmationEmail(
+          user.email,
+          user.firstName,
+          {
+            services: emailServices,
+            date,
+            time,
+            address: addressStr,
+            totalAmount: finalAmount,
+            paymentMethod: 'WALLET',
+            bookingIds: [booking.id],
+            reservationCode,
+          },
+        );
+      }
+
+      if (guestEmail && guestName && user) {
+        void this.mailService.sendGuestBookingEmail(guestEmail, guestName, {
+          services: emailServices,
+          date,
+          time,
+          address: addressStr,
+          totalAmount: finalAmount,
+          reservationCode,
+          bookedByName: `${user.firstName} ${user.lastName}`.trim(),
+        });
       }
 
       // Invalidate analytics + wallet balance (wallet debited)
@@ -364,7 +379,7 @@ export class BookingService {
         this.redis.del(`wallet:balance:${userId}`),
       ]);
 
-      // Non-fatal: increment usage count + process influencer reward
+      // Non-fatal: increment usage count (reward triggered on COMPLETED, not on create)
       if (validatedDiscount && discountUsageId) {
         void (async () => {
           try {
@@ -372,16 +387,6 @@ export class BookingService {
           } catch (e) {
             this.logger.warn(
               `incrementUsage failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
-          try {
-            await this.discountService.processInfluencerReward(
-              discountUsageId!,
-              finalAmount,
-            );
-          } catch (e) {
-            this.logger.warn(
-              `processInfluencerReward failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
             );
           }
         })();
@@ -421,6 +426,7 @@ export class BookingService {
           reservationCode,
           guestName: guestName ?? null,
           guestPhone: guestPhone ?? null,
+          guestEmail: guestEmail ?? null,
           totalAmount: finalAmount,
           paymentMethod: PaymentMethod.CASH,
           status: BookingStatus.PENDING,
@@ -431,37 +437,50 @@ export class BookingService {
       });
     });
 
-    // Fire booking confirmation email (non-fatal)
+    // Queue emails (non-blocking — void fires and forgets into Bull queue)
+    const addressStr = address
+      ? `${address.addressLine}, ${address.city}, ${address.state}`
+      : 'In-store (Walk-in)';
+    const emailServices = serviceRecords.map((s) => ({
+      name: s.name,
+      price: s.price,
+      duration: s.duration,
+    }));
+
     if (user) {
-      try {
-        await this.mailService.sendBookingConfirmationEmail(
-          user.email,
-          user.firstName,
-          {
-            services: serviceRecords.map((s) => ({
-              name: s.name,
-              price: s.price,
-              duration: s.duration,
-            })),
-            date,
-            time,
-            address: address
-              ? `${address.addressLine}, ${address.city}, ${address.state}`
-              : 'In-store (Walk-in)',
-            totalAmount: finalAmount,
-            paymentMethod: 'CASH',
-            bookingIds: [booking.id],
-            reservationCode,
-          },
-        );
-      } catch (_) {}
+      void this.mailService.sendBookingConfirmationEmail(
+        user.email,
+        user.firstName,
+        {
+          services: emailServices,
+          date,
+          time,
+          address: addressStr,
+          totalAmount: finalAmount,
+          paymentMethod: 'CASH',
+          bookingIds: [booking.id],
+          reservationCode,
+        },
+      );
     }
 
-    // Non-fatal: track discount usage + process influencer reward (CASH path)
+    if (guestEmail && guestName && user) {
+      void this.mailService.sendGuestBookingEmail(guestEmail, guestName, {
+        services: emailServices,
+        date,
+        time,
+        address: addressStr,
+        totalAmount: finalAmount,
+        reservationCode,
+        bookedByName: `${user.firstName} ${user.lastName}`.trim(),
+      });
+    }
+
+    // Non-fatal: track discount usage + increment (reward triggered on COMPLETED, not on create)
     if (validatedDiscount) {
       void (async () => {
         try {
-          const usage = await this.prisma.discountUsage.create({
+          await this.prisma.discountUsage.create({
             data: {
               discountCodeId: validatedDiscount!.id,
               userId,
@@ -470,10 +489,6 @@ export class BookingService {
             },
           });
           await this.discountService.incrementUsage(validatedDiscount!.code);
-          await this.discountService.processInfluencerReward(
-            usage.id,
-            finalAmount,
-          );
         } catch (e) {
           this.logger.warn(
             `Discount post-processing failed (CASH, non-fatal): ${e instanceof Error ? e.message : String(e)}`,
@@ -1137,6 +1152,27 @@ export class BookingService {
         : []),
     ]);
 
+    // Trigger influencer reward when booking reaches COMPLETED
+    if (status === BookingStatus.COMPLETED) {
+      void (async () => {
+        try {
+          const usage = await this.prisma.discountUsage.findUnique({
+            where: { bookingId: id },
+          });
+          if (usage) {
+            await this.discountService.processInfluencerReward(
+              usage.id,
+              Number(booking.totalAmount),
+            );
+          }
+        } catch (e) {
+          this.logger.warn(
+            `processInfluencerReward (COMPLETED) failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      })();
+    }
+
     return {
       ...result,
       totalAmount: Number(result.totalAmount),
@@ -1541,6 +1577,30 @@ export class BookingService {
     });
 
     void this.redis.delByPattern('analytics:*');
+
+    // For WALK_IN bookings, status becomes COMPLETED immediately — trigger reward
+    if (
+      booking.bookingType === BookingType.WALK_IN &&
+      updated.status === BookingStatus.COMPLETED
+    ) {
+      void (async () => {
+        try {
+          const usage = await this.prisma.discountUsage.findUnique({
+            where: { bookingId: booking.id },
+          });
+          if (usage) {
+            await this.discountService.processInfluencerReward(
+              usage.id,
+              Number(booking.totalAmount),
+            );
+          }
+        } catch (e) {
+          this.logger.warn(
+            `processInfluencerReward (useReservation) failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      })();
+    }
 
     return updated;
   }

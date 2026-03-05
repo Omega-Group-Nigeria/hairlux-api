@@ -117,7 +117,8 @@ export class BookingController {
       'Book one or more services in a single appointment. All services are stored under ONE booking record with a single reservation code. ' +
       '`bookingType` must be `HOME_SERVICE` (requires `addressId` — stylist visits you) or `WALK_IN` (in-store, no address needed). ' +
       'Payment: WALLET deducts the full total from your wallet immediately — booking is only created if balance is sufficient. ' +
-      'CASH: slot is reserved and payment is collected on the day.',
+      'CASH: slot is reserved and payment is collected on the day. ' +
+      'If `guestEmail` is provided, a notification email with the reservation code is sent to the guest after successful booking.',
   })
   @ApiResponse({
     status: 201,
@@ -135,6 +136,9 @@ export class BookingController {
             bookingTime: '14:00',
             totalAmount: 45000,
             reservationCode: 'HLX-A3K9',
+            guestName: 'Amara Okafor',
+            guestPhone: '+2348012345678',
+            guestEmail: 'amara.okafor@example.com',
             services: [
               {
                 serviceId: 'svc-uuid-1',
@@ -263,7 +267,43 @@ export class BookingController {
     description: 'Reservation code (e.g. HLX-A3K9)',
     example: 'HLX-A3K9',
   })
-  @ApiResponse({ status: 200, description: 'Booking retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Booking retrieved successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Booking retrieved successfully',
+        data: {
+          id: 'booking-uuid',
+          reservationCode: 'HLX-A3K9',
+          reservationUsed: false,
+          bookingType: 'HOME_SERVICE',
+          bookingDate: '2026-03-10T10:00:00.000Z',
+          bookingTime: '10:00',
+          status: 'CONFIRMED',
+          totalAmount: 45000,
+          paymentMethod: 'WALLET',
+          guestName: 'Amara Okafor',
+          guestPhone: '+2348012345678',
+          guestEmail: 'amara.okafor@example.com',
+          services: [
+            {
+              serviceId: 'svc-uuid-1',
+              name: 'Box Braids',
+              price: 25000,
+              duration: 180,
+            },
+          ],
+          address: {
+            addressLine: '15 Lekki Phase 1',
+            city: 'Lagos',
+            state: 'Lagos',
+          },
+        },
+      },
+    },
+  })
   @ApiResponse({
     status: 403,
     description: 'Reservation does not belong to you',
@@ -302,6 +342,9 @@ export class BookingController {
           totalAmount: 25000,
           status: 'CONFIRMED',
           paymentMethod: 'WALLET',
+          guestName: null,
+          guestPhone: null,
+          guestEmail: null,
           notes: 'Please bring extension hair',
           cancelReason: null,
           createdAt: '2026-02-24T09:00:00.000Z',

@@ -11,6 +11,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -29,6 +30,8 @@ import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { GetTransactionsDto } from '../wallet/dto/get-transactions.dto';
 import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import { AssignAdminRoleDto } from './dto/assign-admin-role.dto';
+import { InfluencerService } from '../influencer/influencer.service';
+import { PromoteInfluencerDto } from '../influencer/dto/promote-influencer.dto';
 
 @ApiTags('Admin - Users')
 @ApiBearerAuth('JWT-auth')
@@ -36,7 +39,10 @@ import { AssignAdminRoleDto } from './dto/assign-admin-role.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminUserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly influencerService: InfluencerService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -205,6 +211,40 @@ export class AdminUserController {
   })
   async getAllUsers(@Query() queryDto: AdminQueryUsersDto) {
     return this.userService.findAllUsers(queryDto);
+  }
+
+  // ─── Search (must be declared before :id to prevent route shadowing) ─────
+
+  @Get('search')
+  @ApiOperation({
+    summary: 'Search users by email',
+    description:
+      'Search for users by partial email match. Shows influencer status to help admin decide whether to promote.',
+  })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        success: true,
+        message: 'Users found',
+        data: [
+          {
+            id: 'u1b2c3d4',
+            email: 'amara@example.com',
+            firstName: 'Amara',
+            lastName: 'Okafor',
+            phone: '+2348012345678',
+            role: 'USER',
+            status: 'ACTIVE',
+            influencer: null,
+          },
+        ],
+      },
+    },
+  })
+  async searchUsers(@Query('email') email: string) {
+    const data = await this.userService.searchByEmail(email ?? '');
+    return { success: true, message: 'Users found', data };
   }
 
   @Get(':id')
@@ -383,5 +423,70 @@ export class AdminUserController {
     @Body() updateStatusDto: UpdateUserStatusDto,
   ) {
     return this.userService.updateUserStatus(id, updateStatusDto.status);
+  }
+
+  // ─── Influencer Management ────────────────────────────────────────────────
+
+  @Post(':userId/make-influencer')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Promote user to influencer',
+    description:
+      'Links the user account as an influencer. If already an inactive influencer, they are re-activated.',
+  })
+  @ApiParam({ name: 'userId', description: 'User ID (UUID)' })
+  @ApiResponse({
+    status: 201,
+    description: 'User promoted to influencer',
+    schema: {
+      example: {
+        success: true,
+        message: 'User promoted to influencer successfully',
+        data: {
+          id: 'inf-uuid',
+          userId: 'u1b2c3d4',
+          notes: null,
+          isActive: true,
+          user: {
+            id: 'u1b2c3d4',
+            firstName: 'Amara',
+            lastName: 'Okafor',
+            email: 'amara@example.com',
+            phone: '+2348012345678',
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'User is already an active influencer',
+  })
+  async makeInfluencer(
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: PromoteInfluencerDto,
+  ) {
+    const data = await this.influencerService.promoteUser(userId, dto);
+    return {
+      success: true,
+      message: 'User promoted to influencer successfully',
+      data,
+    };
+  }
+
+  @Delete(':userId/remove-influencer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Demote user from influencer',
+    description:
+      'Deactivates the influencer record and all their discount codes. The user account and rewards are retained.',
+  })
+  @ApiParam({ name: 'userId', description: 'User ID (UUID)' })
+  @ApiResponse({ status: 200, description: 'Influencer demoted successfully' })
+  @ApiResponse({ status: 404, description: 'User is not an influencer' })
+  async removeInfluencer(@Param('userId', ParseUUIDPipe) userId: string) {
+    await this.influencerService.demoteUser(userId);
+    return { success: true, message: 'Influencer demoted successfully' };
   }
 }

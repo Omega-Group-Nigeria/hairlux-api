@@ -154,6 +154,9 @@ export class AuthService {
         adminRole: {
           select: { id: true, name: true },
         },
+        influencer: {
+          select: { id: true, isActive: true },
+        },
       },
     });
 

@@ -66,6 +66,7 @@ export class AdminBookingController {
           reservationUsed: false,
           guestName: null,
           guestPhone: null,
+          guestEmail: null,
           notes: null,
           createdAt: '2026-02-17T10:00:00.000Z',
           updatedAt: '2026-02-17T10:00:00.000Z',
@@ -265,8 +266,9 @@ export class AdminBookingController {
         status: 'CONFIRMED',
         totalAmount: 45000,
         paymentMethod: 'WALLET',
-        guestName: null,
-        guestPhone: null,
+        guestName: 'Amara Okafor',
+        guestPhone: '+2348012345678',
+        guestEmail: 'amara.okafor@example.com',
         services: [
           {
             serviceId: 'svc-uuid-1',
@@ -384,6 +386,7 @@ export class AdminBookingController {
         reservationUsed: false,
         guestName: null,
         guestPhone: null,
+        guestEmail: null,
         notes: 'Prefers afternoon appointments',
         createdAt: '2026-02-17T10:00:00.000Z',
         updatedAt: '2026-02-17T10:00:00.000Z',

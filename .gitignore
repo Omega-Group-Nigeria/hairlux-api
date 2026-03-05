@@ -57,3 +57,4 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /generated/prisma
 guides/admin-rbac-integration.md
+guides/influencer-system.md
