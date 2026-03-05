@@ -2,6 +2,7 @@ import {
   IsBoolean,
   IsDateString,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -13,6 +14,20 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 
 export class UpdateDiscountDto {
+  @ApiPropertyOptional({
+    description: 'The discount code (auto-uppercased)',
+    example: 'EMEKA50',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value?.trim().toUpperCase())
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[A-Z0-9\-]{3,20}$/, {
+    message:
+      'Code must be 3-20 characters: uppercase letters, numbers, and hyphens only',
+  })
+  code?: string;
+
   @ApiPropertyOptional({
     description: 'Display name for the discount',
     example: 'Summer Sale 2026',

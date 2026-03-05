@@ -11,17 +11,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   constructor(private configService: ConfigService) {
     const databaseUrl = this.configService.get<string>('DATABASE_URL');
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+
     this.pool = new Pool({
       connectionString: databaseUrl,
-      max: 5,
+      max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      ssl: isProduction ? { rejectUnauthorized: false } : undefined,
     });
     const adapter = new PrismaPg(this.pool);
 
     this.client = new PrismaClient({
       adapter,
-      log: ['query', 'info', 'warn', 'error'],
+      log: isProduction ? ['warn', 'error'] : ['query', 'info', 'warn', 'error'],
     });
   }
 

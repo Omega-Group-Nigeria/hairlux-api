@@ -96,9 +96,22 @@ export class DiscountService {
   async update(id: string, dto: UpdateDiscountDto) {
     await this.findOne(id); // ensures it exists
 
+    // Uniqueness check if code is being changed
+    if (dto.code !== undefined) {
+      const conflict = await this.prisma.discountCode.findUnique({
+        where: { code: dto.code },
+      });
+      if (conflict && conflict.id !== id) {
+        throw new ConflictException(
+          `Discount code "${dto.code}" already exists`,
+        );
+      }
+    }
+
     const discount = await this.prisma.discountCode.update({
       where: { id },
       data: {
+        ...(dto.code !== undefined && { code: dto.code }),
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.percentage !== undefined && { percentage: dto.percentage }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
