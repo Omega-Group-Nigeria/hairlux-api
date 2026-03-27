@@ -133,6 +133,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.adminRolePermission;
   }
 
+  get staff() {
+    return this.client.staff;
+  }
+
+  get staffEmploymentHistory() {
+    return this.client.staffEmploymentHistory;
+  }
+
+  get staffLocation() {
+    return this.client.staffLocation;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }

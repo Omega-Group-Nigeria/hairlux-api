@@ -11,6 +11,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 import { AdminQueryTransactionsDto } from './dto/admin-query-transactions.dto';
+import { AdminWalletStatsDto } from './dto/admin-wallet-stats.dto';
 
 @ApiTags('Admin - Wallets')
 @ApiBearerAuth('JWT-auth')
@@ -54,8 +55,8 @@ export class AdminWalletController {
     status: 403,
     description: 'Forbidden - Admin access required',
   })
-  async getStats() {
-    const data = await this.walletService.adminGetWalletStats();
+  async getStats(@Query() query: AdminWalletStatsDto) {
+    const data = await this.walletService.adminGetWalletStats(query);
     return {
       success: true,
       message: 'Wallet statistics retrieved successfully',

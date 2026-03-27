@@ -20,6 +20,7 @@ import { InfluencerModule } from './influencer/influencer.module';
 import { RedisModule } from './redis/redis.module';
 import { JobsModule } from './jobs/jobs.module';
 import { RolesModule } from './roles/roles.module';
+import { StaffModule } from './staff/staff.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { RolesModule } from './roles/roles.module';
     InfluencerModule,
     JobsModule,
     RolesModule,
+    StaffModule,
   ],
   controllers: [AppController],
   providers: [

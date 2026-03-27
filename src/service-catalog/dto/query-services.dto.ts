@@ -1,6 +1,6 @@
 import { IsOptional, IsString, IsEnum } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { BookingType } from '@prisma/client';
 
 export class QueryServicesDto {
   @ApiPropertyOptional({
@@ -27,4 +27,14 @@ export class QueryServicesDto {
   @IsOptional()
   @IsEnum(['ACTIVE', 'INACTIVE'])
   status?: 'ACTIVE' | 'INACTIVE';
+
+  @ApiPropertyOptional({
+    description:
+      'Resolve and filter services by booking type. Only services available for this type are returned.',
+    enum: BookingType,
+    example: BookingType.WALK_IN,
+  })
+  @IsOptional()
+  @IsEnum(BookingType)
+  bookingType?: BookingType;
 }

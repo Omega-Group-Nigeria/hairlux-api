@@ -9,6 +9,7 @@ import {
   guestBookingNotificationTemplate,
   depositSuccessTemplate,
   referralRewardTemplate,
+  staffBirthdayTemplate,
 } from './templates';
 
 @Injectable()
@@ -206,6 +207,29 @@ export class MailService {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Error queuing referral reward email:`, errorMessage);
+    }
+  }
+
+  async sendStaffBirthdayEmail(email: string, firstName: string) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Happy Birthday from HairLux',
+          html: staffBirthdayTemplate(firstName),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`Staff birthday email queued for ${email}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing staff birthday email:`, errorMessage);
     }
   }
 }

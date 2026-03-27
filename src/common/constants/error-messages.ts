@@ -4,6 +4,8 @@ export const ErrorMessages = {
   USER_ALREADY_EXISTS: 'User with this email already exists',
   USER_NOT_FOUND: 'User not found',
   INVALID_TOKEN: 'Invalid or expired token',
+  SESSION_REVOKED:
+    'Your session has expired because your account was signed in on another device. Please log in again.',
   UNAUTHORIZED: 'Unauthorized access',
   FORBIDDEN: 'Forbidden resource',
   ACCOUNT_INACTIVE: 'Your account is inactive. Please contact support.',

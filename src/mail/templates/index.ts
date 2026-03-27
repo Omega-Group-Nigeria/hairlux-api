@@ -5,6 +5,7 @@ export { bookingConfirmationTemplate } from './booking-confirmation.template';
 export { guestBookingNotificationTemplate } from './guest-booking-notification.template';
 export { depositSuccessTemplate } from './deposit-success.template';
 export { referralRewardTemplate } from './referral-reward.template';
+export { staffBirthdayTemplate } from './staff-birthday.template';
 export type { BaseEmailOptions } from './base.template';
 export type { BookingConfirmationData } from './booking-confirmation.template';
 export type { GuestBookingNotificationData } from './guest-booking-notification.template';

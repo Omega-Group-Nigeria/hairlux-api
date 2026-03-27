@@ -9,6 +9,7 @@ import {
 import { ServiceCatalogService } from './service-catalog.service';
 import { QueryServicesDto } from './dto/query-services.dto';
 import { ServiceResponseDto } from './dto/service-response.dto';
+import { BookingType } from '@prisma/client';
 
 @ApiTags('Services')
 @Controller('services')
@@ -38,6 +39,14 @@ export class ServiceCatalogController {
     description: 'Filter by status (ACTIVE/INACTIVE)',
     example: 'ACTIVE',
   })
+  @ApiQuery({
+    name: 'bookingType',
+    required: false,
+    description:
+      'Optional booking type filter. Returns only services available for this type and includes effectivePrice.',
+    enum: ['HOME_SERVICE', 'WALK_IN'],
+    example: 'WALK_IN',
+  })
   @ApiResponse({
     status: 200,
     description: 'Services retrieved successfully',
@@ -52,7 +61,11 @@ export class ServiceCatalogController {
             name: 'Box Braids',
             description:
               'Beautiful long-lasting box braids styled to perfection',
-            price: 25000,
+            walkInPrice: 25000,
+            homeServicePrice: 30000,
+            isWalkInAvailable: true,
+            isHomeServiceAvailable: true,
+            effectivePrice: 25000,
             duration: 180,
             status: 'ACTIVE',
             imageUrl:
@@ -144,6 +157,14 @@ export class ServiceCatalogController {
     description: 'Service ID',
     example: '123e4567-e89b-12d3-a456-426614174001',
   })
+  @ApiQuery({
+    name: 'bookingType',
+    required: false,
+    description:
+      'Optional booking type to resolve effectivePrice and enforce type-specific availability.',
+    enum: ['HOME_SERVICE', 'WALK_IN'],
+    example: 'HOME_SERVICE',
+  })
   @ApiResponse({
     status: 200,
     description: 'Service retrieved successfully',
@@ -156,7 +177,11 @@ export class ServiceCatalogController {
           categoryId: '123e4567-e89b-12d3-a456-426614174000',
           name: 'Box Braids',
           description: 'Beautiful long-lasting box braids styled to perfection',
-          price: 25000,
+          walkInPrice: 25000,
+          homeServicePrice: 30000,
+          isWalkInAvailable: true,
+          isHomeServiceAvailable: true,
+          effectivePrice: 30000,
           duration: 180,
           status: 'ACTIVE',
           imageUrl:
@@ -184,8 +209,11 @@ export class ServiceCatalogController {
       },
     },
   })
-  async findOne(@Param('id') id: string) {
-    const service = await this.serviceCatalogService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @Query('bookingType') bookingType?: BookingType,
+  ) {
+    const service = await this.serviceCatalogService.findOne(id, bookingType);
     return {
       success: true,
       message: 'Service retrieved successfully',

@@ -11,7 +11,7 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
-import { ServiceStatus } from '@prisma/client';
+import { BookingType, ServiceStatus } from '@prisma/client';
 import { RedisService } from '../redis/redis.service';
 
 const TTL = 300; // 5 minutes
@@ -24,17 +24,70 @@ export class ServiceCatalogService {
     private redis: RedisService,
   ) {}
 
+  private mapPublicService(
+    service: {
+      walkInPrice: { toNumber: () => number } | number;
+      homeServicePrice: { toNumber: () => number } | number;
+      isWalkInAvailable: boolean;
+      isHomeServiceAvailable: boolean;
+      imagePublicId?: string | null;
+      [key: string]: unknown;
+    },
+    bookingType?: BookingType,
+  ) {
+    const walkInPrice =
+      typeof service.walkInPrice === 'number'
+        ? service.walkInPrice
+        : service.walkInPrice.toNumber();
+    const homeServicePrice =
+      typeof service.homeServicePrice === 'number'
+        ? service.homeServicePrice
+        : service.homeServicePrice.toNumber();
+
+    const {
+      imagePublicId: _pid,
+      ...rest
+    } = service as typeof service & { imagePublicId?: string | null };
+
+    return {
+      ...rest,
+      walkInPrice,
+      homeServicePrice,
+      ...(bookingType
+        ? {
+            effectivePrice:
+              bookingType === BookingType.WALK_IN
+                ? walkInPrice
+                : homeServicePrice,
+          }
+        : {}),
+    };
+  }
+
+  private ensureAtLeastOneReservationType(
+    isWalkInAvailable: boolean,
+    isHomeServiceAvailable: boolean,
+  ) {
+    if (!isWalkInAvailable && !isHomeServiceAvailable) {
+      throw new BadRequestException(
+        'At least one reservation type must be enabled for a service',
+      );
+    }
+  }
+
   async findAll(queryDto: QueryServicesDto) {
     const cacheKey = `services:list:${JSON.stringify(queryDto)}`;
     const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
 
-    const { categoryId, search, status } = queryDto;
+    const { categoryId, search, status, bookingType } = queryDto;
 
     // Build where clause
     const where: {
       status?: ServiceStatus;
       categoryId?: string;
+      isWalkInAvailable?: boolean;
+      isHomeServiceAvailable?: boolean;
       OR?: Array<{ name: { contains: string; mode: 'insensitive' } }>;
     } = {};
 
@@ -47,6 +100,14 @@ export class ServiceCatalogService {
 
     if (search) {
       where.OR = [{ name: { contains: search, mode: 'insensitive' as const } }];
+    }
+
+    if (bookingType === BookingType.WALK_IN) {
+      where.isWalkInAvailable = true;
+    }
+
+    if (bookingType === BookingType.HOME_SERVICE) {
+      where.isHomeServiceAvailable = true;
     }
 
     const services = await this.prisma.service.findMany({
@@ -67,15 +128,15 @@ export class ServiceCatalogService {
       },
     });
 
-    const result = services.map(
-      ({ imagePublicId: _pid, ...service }) => service,
+    const result = services.map((service) =>
+      this.mapPublicService(service, bookingType),
     );
     await this.redis.set(cacheKey, result, TTL);
     return result;
   }
 
-  async findOne(id: string) {
-    const cacheKey = `services:one:${id}`;
+  async findOne(id: string, bookingType?: BookingType) {
+    const cacheKey = `services:one:${id}:${bookingType ?? 'all'}`;
     const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
 
@@ -103,7 +164,18 @@ export class ServiceCatalogService {
       throw new NotFoundException('Service not found');
     }
 
-    const { imagePublicId: _pid, ...publicService } = service;
+    if (bookingType === BookingType.WALK_IN && !service.isWalkInAvailable) {
+      throw new NotFoundException('Service not available for WALK_IN');
+    }
+
+    if (
+      bookingType === BookingType.HOME_SERVICE &&
+      !service.isHomeServiceAvailable
+    ) {
+      throw new NotFoundException('Service not available for HOME_SERVICE');
+    }
+
+    const publicService = this.mapPublicService(service, bookingType);
     await this.redis.set(cacheKey, publicService, TTL);
     return publicService;
   }
@@ -151,7 +223,21 @@ export class ServiceCatalogService {
     createServiceDto: CreateServiceDto,
     imageFile: Express.Multer.File,
   ) {
-    const { categoryId, name, description, price, duration } = createServiceDto;
+    const {
+      categoryId,
+      name,
+      description,
+      walkInPrice,
+      homeServicePrice,
+      isWalkInAvailable,
+      isHomeServiceAvailable,
+      duration,
+    } = createServiceDto;
+
+    this.ensureAtLeastOneReservationType(
+      isWalkInAvailable,
+      isHomeServiceAvailable,
+    );
 
     if (!imageFile) {
       throw new BadRequestException('A service image is required.');
@@ -184,7 +270,10 @@ export class ServiceCatalogService {
         categoryId,
         name,
         description,
-        price,
+        walkInPrice,
+        homeServicePrice,
+        isWalkInAvailable,
+        isHomeServiceAvailable,
         duration,
         imageUrl: secureUrl,
         imagePublicId: publicId,
@@ -241,6 +330,16 @@ export class ServiceCatalogService {
       }
     }
 
+    const nextIsWalkInAvailable =
+      updateServiceDto.isWalkInAvailable ?? existingService.isWalkInAvailable;
+    const nextIsHomeServiceAvailable =
+      updateServiceDto.isHomeServiceAvailable ??
+      existingService.isHomeServiceAvailable;
+    this.ensureAtLeastOneReservationType(
+      nextIsWalkInAvailable,
+      nextIsHomeServiceAvailable,
+    );
+
     // Handle image replacement
     let imageUrl: string | undefined;
     let imagePublicId: string | undefined;
@@ -279,7 +378,7 @@ export class ServiceCatalogService {
 
     await Promise.all([
       this.redis.delByPattern('services:list:*'),
-      this.redis.del(`services:one:${id}`),
+      this.redis.delByPattern(`services:one:${id}:*`),
     ]);
     return service;
   }
@@ -312,7 +411,7 @@ export class ServiceCatalogService {
 
     await Promise.all([
       this.redis.delByPattern('services:list:*'),
-      this.redis.del(`services:one:${id}`),
+      this.redis.delByPattern(`services:one:${id}:*`),
     ]);
     return service;
   }
@@ -336,7 +435,7 @@ export class ServiceCatalogService {
 
     await Promise.all([
       this.redis.delByPattern('services:list:*'),
-      this.redis.del(`services:one:${id}`),
+      this.redis.delByPattern(`services:one:${id}:*`),
     ]);
     return { message: 'Service deleted successfully' };
   }

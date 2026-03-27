@@ -73,9 +73,6 @@ export class AdminCreateBookingDto {
   })
   @IsOptional()
   @IsString()
-  @Matches(/^(\+234|0)[789]\d{9}$/, {
-    message: 'guestPhone must be a valid Nigerian phone number',
-  })
   guestPhone?: string;
 
   @ApiProperty({

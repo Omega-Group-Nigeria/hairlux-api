@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  UnauthorizedException,
   Logger,
 } from '@nestjs/common';
 import {
@@ -139,9 +140,12 @@ export class DiscountService {
 
   // ─── Public (authenticated) ───────────────────────────────────────────────────
 
-  async validate(code: string) {
+  async validate(code: string, userId?: string) {
     const discount = await this.prisma.discountCode.findUnique({
       where: { code: code.trim().toUpperCase() },
+      include: {
+        influencer: true, // Needed to check ownership
+      },
     });
 
     if (!discount) {
@@ -150,6 +154,13 @@ export class DiscountService {
 
     if (!discount.isActive) {
       throw new BadRequestException('This discount code is no longer active');
+    }
+
+    // Influencer self-usage check
+    if (userId && discount.influencer && discount.influencer.userId === userId) {
+      throw new UnauthorizedException(
+        'Influencers cannot use their own discount codes',
+      );
     }
 
     if (discount.startsAt && discount.startsAt > new Date()) {
@@ -261,7 +272,15 @@ export class DiscountService {
       include: {
         influencer: {
           include: {
-            user: { select: { id: true, firstName: true, lastName: true, email: true, phone: true } },
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+              },
+            },
           },
         },
       },

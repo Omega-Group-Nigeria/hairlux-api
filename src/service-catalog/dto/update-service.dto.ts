@@ -5,10 +5,18 @@ import {
   Min,
   IsUUID,
   IsEnum,
+  IsBoolean,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { ServiceStatus } from '@prisma/client';
+
+const toBoolean = (value: unknown): boolean | undefined => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  return Boolean(value);
+};
 
 export class UpdateServiceDto {
   @ApiPropertyOptional({
@@ -35,14 +43,42 @@ export class UpdateServiceDto {
   description?: string;
 
   @ApiPropertyOptional({
-    description: 'Service price in Naira',
+    description: 'Walk-in service price in Naira',
     example: 25000,
   })
   @IsOptional()
   @Transform(({ value }) => (value !== undefined ? Number(value) : undefined))
   @IsNumber()
   @Min(0)
-  price?: number;
+  walkInPrice?: number;
+
+  @ApiPropertyOptional({
+    description: 'Home service price in Naira',
+    example: 30000,
+  })
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined ? Number(value) : undefined))
+  @IsNumber()
+  @Min(0)
+  homeServicePrice?: number;
+
+  @ApiPropertyOptional({
+    description: 'Whether this service can be booked as WALK_IN',
+    example: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  isWalkInAvailable?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Whether this service can be booked as HOME_SERVICE',
+    example: true,
+  })
+  @IsOptional()
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  isHomeServiceAvailable?: boolean;
 
   @ApiPropertyOptional({
     description: 'Service duration in minutes',

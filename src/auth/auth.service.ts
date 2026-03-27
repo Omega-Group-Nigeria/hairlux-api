@@ -133,8 +133,14 @@ export class AuthService {
     // Send OTP email
     await this.mailService.sendOtpEmail(user.email, otpCode, user.firstName);
 
-    // Generate tokens
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
+    // Start a fresh single-device session and generate tokens
+    const sessionId = await this.rotateActiveSession(user.id);
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      sessionId,
+    );
 
     return {
       user,
@@ -183,33 +189,7 @@ export class AuthService {
       throw new UnauthorizedException(ErrorMessages.INVALID_CREDENTIALS);
     }
 
-    // Generate tokens
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-
-    // Fetch permissions for the response
-    const permissions = await this.getPermissionsForUser(
-      user.role,
-      user.adminRoleId ?? null,
-    );
-
-    // Remove sensitive fields from response
-    const {
-      password: _,
-      otpCode,
-      otpExpiry,
-      resetToken,
-      resetTokenExpiry,
-      ...userWithoutSensitiveData
-    } = user;
-
-    return {
-      user: {
-        ...userWithoutSensitiveData,
-        adminRole: user.adminRole ?? null,
-        permissions,
-      },
-      ...tokens,
-    };
+    return this.buildAuthenticatedResponse(user);
   }
 
   async refreshToken(refreshToken: string) {
@@ -219,6 +199,10 @@ export class AuthService {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
       });
 
+      if (!payload.sessionId) {
+        throw new UnauthorizedException(ErrorMessages.INVALID_TOKEN);
+      }
+
       // Check if refresh token exists in database
       const storedToken = await this.prisma.refreshToken.findUnique({
         where: { token: refreshToken },
@@ -227,6 +211,11 @@ export class AuthService {
 
       if (!storedToken || storedToken.userId !== payload.sub) {
         throw new UnauthorizedException(ErrorMessages.INVALID_TOKEN);
+      }
+
+      // Reject refresh tokens from replaced sessions
+      if (storedToken.user.currentSessionId !== payload.sessionId) {
+        throw new UnauthorizedException(ErrorMessages.SESSION_REVOKED);
       }
 
       // Check if token is expired
@@ -247,6 +236,7 @@ export class AuthService {
         storedToken.userId,
         storedToken.user.email,
         storedToken.user.role,
+        payload.sessionId,
       );
 
       // Delete old refresh token
@@ -256,6 +246,9 @@ export class AuthService {
 
       return tokens;
     } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
       throw new UnauthorizedException(ErrorMessages.INVALID_TOKEN);
     }
   }
@@ -351,8 +344,13 @@ export class AuthService {
     };
   }
 
-  private async generateTokens(userId: string, email: string, role: UserRole) {
-    const payload = { sub: userId, email, role };
+  private async generateTokens(
+    userId: string,
+    email: string,
+    role: UserRole,
+    sessionId: string,
+  ) {
+    const payload = { sub: userId, email, role, sessionId };
 
     const accessToken = this.jwtService.sign({ ...payload }, {
       secret: this.configService.get<string>('JWT_SECRET') || 'default-secret',
@@ -385,7 +383,11 @@ export class AuthService {
     };
   }
 
-  async validateUser(userId: string) {
+  async validateUser(userId: string, sessionId?: string) {
+    if (!sessionId) {
+      throw new UnauthorizedException(ErrorMessages.INVALID_TOKEN);
+    }
+
     const profileKey = `user:profile:${userId}`;
     const cached = await this.redis.get<{
       id: string;
@@ -396,6 +398,7 @@ export class AuthService {
       role: UserRole;
       status: UserStatus;
       adminRoleId: string | null;
+      currentSessionId: string | null;
       adminRole: { id: string; name: string } | null;
     }>(profileKey);
 
@@ -415,6 +418,7 @@ export class AuthService {
           role: true,
           status: true,
           adminRoleId: true,
+          currentSessionId: true,
           adminRole: {
             select: { id: true, name: true },
           },
@@ -432,6 +436,10 @@ export class AuthService {
 
     if (user.status === UserStatus.INACTIVE) {
       throw new UnauthorizedException(ErrorMessages.ACCOUNT_INACTIVE);
+    }
+
+    if (!user.currentSessionId || user.currentSessionId !== sessionId) {
+      throw new UnauthorizedException(ErrorMessages.SESSION_REVOKED);
     }
 
     const permissions = await this.getPermissionsForUser(
@@ -463,11 +471,65 @@ export class AuthService {
     return permissions;
   }
 
+  private async buildAuthenticatedResponse(user: {
+    id: string;
+    email: string;
+    role: UserRole;
+    adminRoleId: string | null;
+    adminRole?: { id: string; name: string } | null;
+    influencer?: { id: string; isActive: boolean } | null;
+    password: string;
+    otpCode: string | null;
+    otpExpiry: Date | null;
+    resetToken: string | null;
+    resetTokenExpiry: Date | null;
+    [key: string]: unknown;
+  }) {
+    const sessionId = await this.rotateActiveSession(user.id);
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      sessionId,
+    );
+
+    const permissions = await this.getPermissionsForUser(
+      user.role,
+      user.adminRoleId ?? null,
+    );
+
+    const {
+      password: _,
+      otpCode,
+      otpExpiry,
+      resetToken,
+      resetTokenExpiry,
+      ...userWithoutSensitiveData
+    } = user;
+
+    return {
+      user: {
+        ...userWithoutSensitiveData,
+        adminRole: user.adminRole ?? null,
+        permissions,
+      },
+      ...tokens,
+    };
+  }
+
   async verifyOtp(verifyOtpDto: VerifyOtpDto) {
     const { email, otpCode } = verifyOtpDto;
 
     const user = await this.prisma.user.findUnique({
       where: { email: email.toLowerCase() },
+      include: {
+        adminRole: {
+          select: { id: true, name: true },
+        },
+        influencer: {
+          select: { id: true, isActive: true },
+        },
+      },
     });
 
     if (!user) {
@@ -502,9 +564,23 @@ export class AuthService {
       },
     });
 
-    return {
-      message: 'Email verified successfully',
-    };
+    const verifiedUser = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        adminRole: {
+          select: { id: true, name: true },
+        },
+        influencer: {
+          select: { id: true, isActive: true },
+        },
+      },
+    });
+
+    if (!verifiedUser) {
+      throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    }
+
+    return this.buildAuthenticatedResponse(verifiedUser);
   }
 
   async resendOtp(resendOtpDto: ResendOtpDto) {
@@ -546,5 +622,27 @@ export class AuthService {
   private generateOtpCode(): string {
     // Generate 6-digit OTP
     return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private generateSessionId(): string {
+    return randomBytes(32).toString('hex');
+  }
+
+  private async rotateActiveSession(userId: string): Promise<string> {
+    const sessionId = this.generateSessionId();
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { currentSessionId: sessionId },
+      }),
+      this.prisma.refreshToken.deleteMany({
+        where: { userId },
+      }),
+    ]);
+
+    await this.redis.del(`user:profile:${userId}`);
+
+    return sessionId;
   }
 }

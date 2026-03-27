@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, UnauthorizedException } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -8,6 +8,7 @@ import {
 } from '@nestjs/swagger';
 import { DiscountService } from './discount.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { GetUser } from '../auth/decorators/get-user.decorator';
 
 @ApiTags('Discounts')
 @ApiBearerAuth('JWT-auth')
@@ -21,7 +22,7 @@ export class DiscountController {
     summary: 'Validate a discount code',
     description:
       'Check if a discount code is valid at checkout. Returns the percentage discount if valid. ' +
-      'Rejects expired, disabled, or exhausted codes.',
+      'Rejects expired, disabled, or exhausted codes. Prevents influencers from using their own codes.',
   })
   @ApiParam({
     name: 'code',
@@ -46,10 +47,10 @@ export class DiscountController {
     status: 400,
     description: 'Code is expired, inactive, or usage limit reached',
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — Influencers cannot use their own codes' })
   @ApiResponse({ status: 404, description: 'Discount code not found' })
-  async validate(@Param('code') code: string) {
-    const data = await this.discountService.validate(code);
+  async validate(@Param('code') code: string, @GetUser('id') userId: string) {
+    const data = await this.discountService.validate(code, userId);
     return { success: true, message: 'Discount code is valid', data };
   }
 }

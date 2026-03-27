@@ -12,16 +12,22 @@ import { Transform, Type } from 'class-transformer';
 export class QueryInfluencersDto {
   @ApiPropertyOptional({ example: 1, minimum: 1, default: 1 })
   @IsOptional()
-  @Transform(({ value }) => (Array.isArray(value) ? value[0] : value))
-  @Type(() => Number)
+  @Transform(({ value, obj, key }) => {
+    const rawValue = obj && obj[key] !== undefined ? obj[key] : value;
+    const val = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+    return val ? parseInt(val, 10) : 1;
+  })
   @IsInt()
   @Min(1)
   page?: number = 1;
 
   @ApiPropertyOptional({ example: 20, minimum: 1, maximum: 100, default: 20 })
   @IsOptional()
-  @Transform(({ value }) => (Array.isArray(value) ? value[0] : value))
-  @Type(() => Number)
+  @Transform(({ value, obj, key }) => {
+    const rawValue = obj && obj[key] !== undefined ? obj[key] : value;
+    const val = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+    return val ? parseInt(val, 10) : 20;
+  })
   @IsInt()
   @Min(1)
   @Max(100)
@@ -32,6 +38,9 @@ export class QueryInfluencersDto {
     description: 'Search by name, phone, or email (case-insensitive)',
   })
   @IsOptional()
+  @Transform(({ value }) => {
+    return typeof value === 'string' ? value.trim() : value;
+  })
   @IsString()
   search?: string;
 
@@ -41,9 +50,12 @@ export class QueryInfluencersDto {
     description: 'Filter by active status',
   })
   @IsOptional()
-  @Transform(({ value }) => {
-    if (value === undefined || value === null) return undefined;
-    return value === 'true' || value === true;
+  @Transform(({ value, obj, key }) => {
+    const rawValue = obj && obj[key] !== undefined ? obj[key] : value;
+    const val = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+    if (val === 'true' || val === true) return true;
+    if (val === 'false' || val === false) return false;
+    return val;
   })
   @IsBoolean()
   isActive?: boolean;

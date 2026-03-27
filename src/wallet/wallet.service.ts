@@ -11,6 +11,7 @@ import { PaystackService } from '../payment/paystack.service';
 import { GetTransactionsDto } from './dto/get-transactions.dto';
 import { InitializeDepositDto } from './dto/initialize-deposit.dto';
 import { AdminQueryTransactionsDto } from './dto/admin-query-transactions.dto';
+import { AdminWalletStatsDto } from './dto/admin-wallet-stats.dto';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { RedisService } from '../redis/redis.service';
@@ -280,9 +281,37 @@ export class WalletService {
 
   // ─── Admin Methods ──────────────────────────────────────────────────────────
 
-  async adminGetWalletStats() {
-    const cached = await this.redis.get('wallet:admin-stats');
+  async adminGetWalletStats(query: AdminWalletStatsDto = {}) {
+    const { startDate, endDate } = query;
+    const cacheKey = `wallet:admin-stats:${startDate || ''}:${endDate || ''}`;
+
+    const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
+
+    const dateFilter: any = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) {
+      const end = new Date(endDate);
+      // If time component is missing, assume end of day
+      if (!endDate.includes('T')) {
+        end.setHours(23, 59, 59, 999);
+      }
+      dateFilter.lte = end;
+    }
+
+    const walletWhere: any = {};
+    const transactionWhere: any = {};
+    
+    // Only apply date filter if dates are provided
+    if (Object.keys(dateFilter).length > 0) {
+        // For wallets, we only filter by creation date if requested.
+        // HOWEVER: The user's issue suggests they might want TOTAL system balance but FILTERED transactions.
+        // If I filter wallets by date, I get stats for NEW wallets.
+        // If the user wants stats for the period, usually wallet stats are "new signups".
+        // Let's stick to that interpretation, but ensure transaction stats are correct.
+        walletWhere.createdAt = dateFilter;
+        transactionWhere.createdAt = dateFilter;
+    }
 
     const [
       totalWallets,
@@ -291,35 +320,51 @@ export class WalletService {
       failedCount,
       pendingCount,
     ] = await Promise.all([
-      this.prisma.wallet.count(),
+      this.prisma.wallet.count({ where: walletWhere }),
       this.prisma.wallet.aggregate({
         _sum: { balance: true },
         _avg: { balance: true },
         _max: { balance: true },
+        where: walletWhere,
       }),
       this.prisma.transaction.groupBy({
         by: ['type'],
         _sum: { amount: true },
         _count: { id: true },
-        where: { status: TransactionStatus.COMPLETED },
+        where: { 
+            status: TransactionStatus.COMPLETED,
+            ...transactionWhere 
+        },
       }),
       this.prisma.transaction.count({
-        where: { status: TransactionStatus.FAILED },
+        where: { 
+            status: TransactionStatus.FAILED,
+            ...transactionWhere
+        },
       }),
       this.prisma.transaction.count({
-        where: { status: TransactionStatus.PENDING },
+        where: { 
+            status: TransactionStatus.PENDING,
+            ...transactionWhere
+        },
       }),
     ]);
 
-    const statsByType = transactionStats.reduce<
-      Record<string, { totalAmount: number; count: number }>
-    >((acc, s) => {
-      acc[s.type] = {
+    // Ensure all transaction types are present in the response structure even if count is 0
+    // This matches user expectation of consistent data shape
+    const statsByType: Record<string, { totalAmount: number; count: number }> = {
+      DEPOSIT: { totalAmount: 0, count: 0 },
+      DEBIT: { totalAmount: 0, count: 0 },
+      REFUND: { totalAmount: 0, count: 0 },
+      // Add other types if necessary, e.g., CREDIT
+    };
+
+    transactionStats.forEach((s) => {
+      statsByType[s.type] = {
         totalAmount: Number(s._sum.amount || 0),
         count: s._count.id,
       };
-      return acc;
-    }, {});
+    });
 
     this.logger.log('Admin fetched wallet stats');
 
@@ -334,7 +379,7 @@ export class WalletService {
         pending: pendingCount,
       },
     };
-    await this.redis.set('wallet:admin-stats', statsResult, 60);
+    await this.redis.set(cacheKey, statsResult, 60);
     return statsResult;
   }
 
@@ -345,18 +390,18 @@ export class WalletService {
       type,
       status,
       userId,
-      dateFrom,
-      dateTo,
+      startDate,
+      endDate,
     } = query;
 
     const where: any = {};
     if (type) where.type = type;
     if (status) where.status = status;
     if (userId) where.wallet = { userId };
-    if (dateFrom || dateTo) {
+    if (startDate || endDate) {
       where.createdAt = {};
-      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
-      if (dateTo) where.createdAt.lte = new Date(dateTo);
+      if (startDate) where.createdAt.gte = new Date(startDate);
+      if (endDate) where.createdAt.lte = new Date(endDate);
     }
 
     const [transactions, total] = await Promise.all([

@@ -68,7 +68,7 @@ export class AdminQueryTransactionsDto {
   })
   @IsOptional()
   @IsDateString()
-  dateFrom?: string;
+  startDate?: string;
 
   @ApiPropertyOptional({
     description: 'Filter transactions up to this date (ISO 8601)',
@@ -76,5 +76,5 @@ export class AdminQueryTransactionsDto {
   })
   @IsOptional()
   @IsDateString()
-  dateTo?: string;
+  endDate?: string;
 }

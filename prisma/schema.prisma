@@ -86,6 +86,22 @@ enum JobType {
   FREELANCE
 }
 
+enum StaffEmploymentStatus {
+  ACTIVE
+  ON_LEAVE
+  SUSPENDED
+  EXITED
+  ARCHIVED
+}
+
+enum StaffEmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+  TEMPORARY
+}
+
 model User {
   id               String    @id @default(uuid())
   email            String    @unique
@@ -100,6 +116,7 @@ model User {
   otpExpiry        DateTime? @map("otp_expiry")
   resetToken       String?   @map("reset_token")
   resetTokenExpiry DateTime? @map("reset_token_expiry")
+  currentSessionId String?   @map("current_session_id")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
@@ -178,7 +195,10 @@ model Service {
   categoryId  String        @map("category_id")
   name        String
   description String?
-  price       Decimal       @db.Decimal(10, 2)
+  walkInPrice Decimal       @db.Decimal(10, 2) @map("walk_in_price")
+  homeServicePrice Decimal  @db.Decimal(10, 2) @map("home_service_price")
+  isWalkInAvailable Boolean @default(true) @map("is_walk_in_available")
+  isHomeServiceAvailable Boolean @default(true) @map("is_home_service_available")
   duration    Int           // Duration in minutes
   imageUrl    String?       @map("image_url")
   imagePublicId String?     @map("image_public_id")
@@ -511,4 +531,63 @@ model JobPosting {
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
   @@map("job_postings")
+}
+
+model Staff {
+  id                      String                @id @default(uuid())
+  name                    String
+  staffCode               String                @unique @map("staff_code")
+  currentRole             String                @map("current_role")
+  locationId              String                @map("location_id")
+  email                   String?               @unique
+  phone                   String?
+  dateOfBirth             DateTime?             @map("date_of_birth")
+  employmentStatus        StaffEmploymentStatus @default(ACTIVE) @map("employment_status")
+  reasonForExit           String?               @map("reason_for_exit")
+  exitDate                DateTime?             @map("exit_date")
+  archivedAt              DateTime?             @map("archived_at")
+  birthdayLastEmailedYear Int?                 @map("birthday_last_emailed_year")
+  createdAt               DateTime              @default(now()) @map("created_at")
+  updatedAt               DateTime              @updatedAt @map("updated_at")
+
+  location  StaffLocation            @relation(fields: [locationId], references: [id])
+  histories StaffEmploymentHistory[]
+
+  @@index([employmentStatus])
+  @@index([locationId])
+  @@map("staff")
+}
+
+model StaffEmploymentHistory {
+  id               String              @id @default(uuid())
+  staffId          String              @map("staff_id")
+  roleTitle        String              @map("role_title")
+  locationId       String              @map("location_id")
+  employmentType   StaffEmploymentType @default(FULL_TIME) @map("employment_type")
+  startDate        DateTime            @map("start_date")
+  endDate          DateTime?           @map("end_date")
+  reasonForChange  String?             @map("reason_for_change")
+  notes            String?
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  staff    Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  location StaffLocation @relation(fields: [locationId], references: [id])
+
+  @@index([staffId, startDate])
+  @@index([locationId])
+  @@map("staff_employment_history")
+}
+
+model StaffLocation {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  staff     Staff[]
+  histories StaffEmploymentHistory[]
+
+  @@map("staff_locations")
 }

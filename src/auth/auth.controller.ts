@@ -228,7 +228,11 @@ export class AuthController {
 
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify email with OTP code' })
+  @ApiOperation({
+    summary: 'Verify email with OTP code',
+    description:
+      'Verifies the OTP and signs the user in immediately, returning the same auth payload shape as /login.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Email verified successfully',
@@ -236,7 +240,20 @@ export class AuthController {
       success: true,
       message: 'Email verified successfully',
       data: {
-        message: 'Email verified successfully',
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          email: 'jane@hairlux.com',
+          firstName: 'Jane',
+          lastName: 'Doe',
+          phone: '+2348012345678',
+          role: 'USER',
+          status: 'ACTIVE',
+          adminRole: null,
+          permissions: [],
+          influencer: null,
+        },
+        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
       },
     },
   })
@@ -244,7 +261,7 @@ export class AuthController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     const result = await this.authService.verifyOtp(verifyOtpDto);
-    return ResponseUtil.success(result, result.message);
+    return ResponseUtil.success(result, 'Email verified successfully');
   }
 
   @Post('resend-otp')

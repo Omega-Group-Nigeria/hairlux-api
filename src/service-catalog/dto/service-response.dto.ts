@@ -33,7 +33,24 @@ export class ServiceResponseDto {
   description: string;
 
   @ApiProperty({ example: 25000 })
-  price: number;
+  walkInPrice: number;
+
+  @ApiProperty({ example: 30000 })
+  homeServicePrice: number;
+
+  @ApiProperty({ example: true })
+  isWalkInAvailable: boolean;
+
+  @ApiProperty({ example: true })
+  isHomeServiceAvailable: boolean;
+
+  @ApiProperty({
+    example: 25000,
+    required: false,
+    description:
+      'Resolved price for the requested bookingType when that query parameter is supplied',
+  })
+  effectivePrice?: number;
 
   @ApiProperty({ example: 180 })
   duration: number;

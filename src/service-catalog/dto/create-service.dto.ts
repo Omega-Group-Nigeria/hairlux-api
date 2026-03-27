@@ -1,6 +1,20 @@
-import { IsString, IsNotEmpty, IsNumber, Min, IsUUID } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  Min,
+  IsUUID,
+  IsBoolean,
+  ValidateIf,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
+
+const toBoolean = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  return Boolean(value);
+};
 
 export class CreateServiceDto {
   @ApiProperty({
@@ -26,11 +40,39 @@ export class CreateServiceDto {
   @Transform(({ value }) => value?.trim())
   description: string;
 
-  @ApiProperty({ description: 'Service price in Naira', example: 25000 })
+  @ApiProperty({ description: 'Walk-in service price in Naira', example: 25000 })
   @Transform(({ value }) => Number(value))
   @IsNumber()
   @Min(0)
-  price: number;
+  walkInPrice: number;
+
+  @ApiProperty({
+    description: 'Home service price in Naira',
+    example: 30000,
+  })
+  @Transform(({ value }) => Number(value))
+  @IsNumber()
+  @Min(0)
+  homeServicePrice: number;
+
+  @ApiProperty({
+    description: 'Whether this service can be booked as WALK_IN',
+    example: true,
+    default: true,
+  })
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  isWalkInAvailable: boolean = true;
+
+  @ApiProperty({
+    description: 'Whether this service can be booked as HOME_SERVICE',
+    example: true,
+    default: true,
+  })
+  @Transform(({ value }) => toBoolean(value))
+  @IsBoolean()
+  @ValidateIf((o) => o.isWalkInAvailable === false || o.isHomeServiceAvailable !== undefined)
+  isHomeServiceAvailable: boolean = true;
 
   @ApiProperty({ description: 'Service duration in minutes', example: 180 })
   @Transform(({ value }) => Number(value))

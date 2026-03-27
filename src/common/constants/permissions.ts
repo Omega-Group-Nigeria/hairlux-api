@@ -49,6 +49,14 @@ export const PERMISSIONS = {
   INFLUENCERS_UPDATE: 'influencers:update', // Edit influencer details
   INFLUENCERS_DELETE: 'influencers:delete', // Remove influencers
 
+  // ── Staff ───────────────────────────────────────────────────────────────────
+  STAFF_READ: 'staff:read', // View staff records
+  STAFF_CREATE: 'staff:create', // Create staff records
+  STAFF_UPDATE: 'staff:update', // Edit staff profile and history
+  STAFF_ARCHIVE: 'staff:archive', // Archive / restore staff
+  STAFF_MANAGE_STATUS: 'staff:manage_status', // Update employment status
+  STAFF_MANAGE_LOCATIONS: 'staff:manage_locations', // Manage staff locations
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
@@ -175,6 +183,26 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.INFLUENCERS_CREATE, label: 'Add influencers' },
       { key: PERMISSIONS.INFLUENCERS_UPDATE, label: 'Edit influencer details' },
       { key: PERMISSIONS.INFLUENCERS_DELETE, label: 'Remove influencers' },
+    ],
+  },
+  {
+    group: 'Staff',
+    permissions: [
+      { key: PERMISSIONS.STAFF_READ, label: 'View staff records' },
+      { key: PERMISSIONS.STAFF_CREATE, label: 'Create staff records' },
+      {
+        key: PERMISSIONS.STAFF_UPDATE,
+        label: 'Edit staff profile and employment history',
+      },
+      { key: PERMISSIONS.STAFF_ARCHIVE, label: 'Archive and restore staff' },
+      {
+        key: PERMISSIONS.STAFF_MANAGE_STATUS,
+        label: 'Update employment status',
+      },
+      {
+        key: PERMISSIONS.STAFF_MANAGE_LOCATIONS,
+        label: 'Manage staff locations',
+      },
     ],
   },
   {

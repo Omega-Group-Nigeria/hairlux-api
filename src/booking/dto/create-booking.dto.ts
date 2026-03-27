@@ -100,14 +100,11 @@ export class CreateBookingDto {
   guestName?: string;
 
   @ApiPropertyOptional({
-    description: 'Phone number of the guest (Nigerian format)',
+    description: 'Phone number of the guest',
     example: '+2348012345678',
   })
   @IsOptional()
   @IsString()
-  @Matches(/^(\+234|0)[789]\d{9}$/, {
-    message: 'guestPhone must be a valid Nigerian phone number',
-  })
   guestPhone?: string;
 
   @ApiProperty({

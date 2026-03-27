@@ -65,6 +65,39 @@ export class BookingService {
     throw new Error('Could not generate a unique reservation code');
   }
 
+  private resolvePriceForBookingType(
+    service: {
+      name: string;
+      walkInPrice: { toNumber: () => number } | number;
+      homeServicePrice: { toNumber: () => number } | number;
+      isWalkInAvailable: boolean;
+      isHomeServiceAvailable: boolean;
+    },
+    bookingType: BookingType,
+  ): number {
+    if (bookingType === BookingType.WALK_IN) {
+      if (!service.isWalkInAvailable) {
+        throw new BadRequestException(
+          `Service "${service.name}" is not available for WALK_IN bookings`,
+        );
+      }
+
+      return typeof service.walkInPrice === 'number'
+        ? service.walkInPrice
+        : service.walkInPrice.toNumber();
+    }
+
+    if (!service.isHomeServiceAvailable) {
+      throw new BadRequestException(
+        `Service "${service.name}" is not available for HOME_SERVICE bookings`,
+      );
+    }
+
+    return typeof service.homeServicePrice === 'number'
+      ? service.homeServicePrice
+      : service.homeServicePrice.toNumber();
+  }
+
   async checkAvailability(queryDto: CheckAvailabilityDto) {
     const { serviceId, date } = queryDto;
 
@@ -216,7 +249,7 @@ export class BookingService {
       serviceRecords.push({
         serviceId: service.id,
         name: service.name,
-        price: Number(service.price),
+        price: this.resolvePriceForBookingType(service, bookingType),
         duration: service.duration ?? 0,
         ...(item.notes ? { notes: item.notes } : {}),
       });
@@ -251,7 +284,10 @@ export class BookingService {
     let finalAmount = totalAmount;
 
     if (discountCode) {
-      validatedDiscount = await this.discountService.validate(discountCode);
+      validatedDiscount = await this.discountService.validate(
+        discountCode,
+        userId,
+      ); // Validate ownership
       discountAmount =
         Math.round(((totalAmount * validatedDiscount.percentage) / 100) * 100) /
         100;
@@ -930,7 +966,7 @@ export class BookingService {
       serviceRecords.push({
         serviceId: service.id,
         name: service.name,
-        price: Number(service.price),
+        price: this.resolvePriceForBookingType(service, bookingType),
         duration: service.duration,
         ...(item.notes ? { notes: item.notes } : {}),
       });
