@@ -142,12 +142,18 @@ export class MonnifyWebhookProcessor {
       `Monnify webhook processed: ${transaction.reference}, ₦${transaction.amount} credited`,
     );
 
-    // Invalidate caches
-    void Promise.all([
-      this.redis.del(`wallet:balance:${transaction.wallet.userId}`),
-      this.redis.del('wallet:admin-stats'),
-      this.redis.delByPattern('analytics:*'),
-    ]);
+    // Invalidate caches without affecting payment processing success.
+    try {
+      await Promise.all([
+        this.redis.del(`wallet:balance:${transaction.wallet.userId}`),
+        this.redis.del('wallet:admin-stats'),
+        this.redis.delByPattern('analytics:*'),
+      ]);
+    } catch (redisErr) {
+      this.logger.warn(
+        `Cache invalidation failed (non-critical): ${redisErr instanceof Error ? redisErr.message : String(redisErr)}`,
+      );
+    }
 
     // Send deposit success email (non-fatal)
     try {

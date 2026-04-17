@@ -20,7 +20,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     this.client = redisUrl
       ? new Redis(redisUrl, {
           lazyConnect: true,
-          maxRetriesPerRequest: 1,
+          maxRetriesPerRequest: null,
           enableOfflineQueue: false,
           retryStrategy: (times) => {
             if (times > 3) return null; // give up — don't hang requests
@@ -32,7 +32,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
           port: this.configService.get<number>('REDIS_PORT', 6379),
           password: this.configService.get<string>('REDIS_PASSWORD'),
           lazyConnect: true,
-          maxRetriesPerRequest: 1,
+          maxRetriesPerRequest: null,
           enableOfflineQueue: false,
           retryStrategy: (times) => {
             if (times > 3) return null;

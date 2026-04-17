@@ -9,6 +9,7 @@ import {
   HttpStatus,
   Req,
   Headers,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -29,12 +30,15 @@ import { InjectQueue } from '@nestjs/bull';
 import { MonnifyService } from '../payment/monnify.service';
 import type { Queue } from 'bull';
 import type { Request } from 'express';
+import type { RawBodyRequest } from '@nestjs/common';
 
 @ApiTags('Wallet')
 @Controller('wallet')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class WalletController {
+  private readonly logger = new Logger(WalletController.name);
+
   constructor(
     private readonly walletService: WalletService,
     private readonly monnifyService: MonnifyService,
@@ -263,22 +267,33 @@ export class WalletController {
   @Public()
   @HttpCode(HttpStatus.OK)
   @ApiExcludeEndpoint()
-  async handleMonnifyWebhook(@Req() req: Request, @Headers() headers: any) {
-    const signature = headers['monnify-signature'] as string | undefined;
-    const rawBody = JSON.stringify(req.body);
+  async handleMonnifyWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('monnify-signature') signature?: string,
+  ) {
+    const rawBody = req.rawBody?.toString('utf-8') || '';
 
-    if (signature && !this.monnifyService.verifyWebhookSignature(rawBody, signature)) {
+    if (!signature || !this.monnifyService.verifyWebhookSignature(rawBody, signature)) {
+      this.logger.warn('Invalid Monnify signature');
       return { status: 'invalid_signature' };
     }
 
-    await this.monnifyWebhookQueue.add('deposit-webhook', req.body, {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 2000,
-      },
-    });
-
-    return { status: 'queued' };
+    try {
+      await this.monnifyWebhookQueue.add('deposit-webhook', req.body, {
+        attempts: 5,
+        backoff: {
+          type: 'exponential',
+          delay: 3000,
+        },
+      });
+      return { status: 'success' };
+    } catch (error) {
+      this.logger.error(
+        'Failed to queue Monnify webhook',
+        error instanceof Error ? error.stack : String(error),
+      );
+      // Return 200 response body so gateway does not fail on transient internal queue errors.
+      return { status: 'queued_with_error' };
+    }
   }
 }

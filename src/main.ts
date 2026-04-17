@@ -8,7 +8,9 @@ import { json, urlencoded } from 'express';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const isProduction = process.env.NODE_ENV === 'production';
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true,
+  });
 
   const expressApp = app.getHttpAdapter().getInstance() as {
     disable: (name: string) => void;
