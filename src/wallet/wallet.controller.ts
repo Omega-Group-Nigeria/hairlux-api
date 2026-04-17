@@ -271,10 +271,13 @@ export class WalletController {
     @Req() req: RawBodyRequest<Request>,
     @Headers('monnify-signature') signature?: string,
   ) {
-    const rawBody = req.rawBody?.toString('utf-8') || '';
+    const rawBody =
+      req.rawBody?.toString('utf-8') || JSON.stringify(req.body ?? {});
 
     if (!signature || !this.monnifyService.verifyWebhookSignature(rawBody, signature)) {
-      this.logger.warn('Invalid Monnify signature');
+      this.logger.warn(
+        `Invalid Monnify signature (rawLength=${rawBody.length}, signatureLength=${signature?.length ?? 0})`,
+      );
       return { status: 'invalid_signature' };
     }
 

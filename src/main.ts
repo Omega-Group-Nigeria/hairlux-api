@@ -4,6 +4,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
+import type { Request, Response } from 'express';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -33,8 +34,18 @@ async function bootstrap() {
 
   // Limit payload size to reduce abuse and accidental oversized requests.
   const bodyLimit = process.env.REQUEST_BODY_LIMIT || '100kb';
-  app.use(json({ limit: bodyLimit }));
-  app.use(urlencoded({ extended: true, limit: bodyLimit }));
+  const rawBodySaver = (
+    req: Request & { rawBody?: Buffer },
+    _res: Response,
+    buf: Buffer,
+    _encoding: BufferEncoding,
+  ) => {
+    if (buf?.length) {
+      req.rawBody = Buffer.from(buf);
+    }
+  };
+  app.use(json({ limit: bodyLimit, verify: rawBodySaver }));
+  app.use(urlencoded({ extended: true, limit: bodyLimit, verify: rawBodySaver }));
 
   // Enable CORS
   const configuredOrigins = process.env.ALLOWED_ORIGINS

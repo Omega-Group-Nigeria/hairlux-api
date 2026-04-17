@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 
 export interface MonnifyInitResponse {
   requestSuccessful: boolean;
@@ -121,26 +121,45 @@ export class MonnifyService {
   }
 
   verifyWebhookSignature(rawBody: string, signature: string): boolean {
-    const normalizedSignature = signature.trim().toLowerCase();
-
-    const computedRaw = createHash('sha512')
-      .update(`${this.secretKey}${rawBody}`)
-      .digest('hex');
-
-    if (computedRaw === normalizedSignature) {
-      return true;
-    }
-
-    // Fallback: normalize JSON formatting before hashing to avoid false negatives
-    // when whitespace/serialization differs across intermediaries.
-    try {
-      const normalizedBody = JSON.stringify(JSON.parse(rawBody));
-      const computedNormalized = createHash('sha512')
-        .update(`${this.secretKey}${normalizedBody}`)
-        .digest('hex');
-      return computedNormalized === normalizedSignature;
-    } catch {
+    if (!signature || !this.secretKey || !rawBody) {
       return false;
     }
+
+    const normalizedSignature = signature
+      .replace(/^"|"$/g, '')
+      .trim()
+      .toLowerCase();
+
+    const bodiesToTry = [rawBody];
+    try {
+      const normalizedBody = JSON.stringify(JSON.parse(rawBody));
+      if (normalizedBody !== rawBody) {
+        bodiesToTry.push(normalizedBody);
+      }
+    } catch {
+      // Ignore parse errors; raw body is still attempted.
+    }
+
+    for (const body of bodiesToTry) {
+      // Variant A: SHA-512(secret + rawBody)
+      const concatHash = createHash('sha512')
+        .update(`${this.secretKey}${body}`)
+        .digest('hex');
+
+      if (concatHash === normalizedSignature) {
+        return true;
+      }
+
+      // Variant B: HMAC-SHA512(rawBody, secret)
+      const hmacHash = createHmac('sha512', this.secretKey)
+        .update(body)
+        .digest('hex');
+
+      if (hmacHash === normalizedSignature) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }
