@@ -1,65 +1,104 @@
-import { IsOptional, IsString, IsBoolean } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { AddressComponentsDto } from './shared-address-components.dto';
+
+const trimString = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim() : value;
 
 export class UpdateAddressDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'Office',
     description: 'Label for the address',
-    required: false,
   })
   @IsOptional()
+  @Transform(trimString)
   @IsString()
+  @IsNotEmpty({ message: 'label should not be empty' })
+  @MaxLength(60)
   label?: string;
 
-  @ApiProperty({
-    example: '25 Victoria Island',
-    description: 'Street address or detailed location',
-    required: false,
+  @ApiPropertyOptional({
+    example: '12 Admiralty Way, Lekki Phase 1, Lagos, Nigeria',
+    description: 'User-selected full address from maps lookup',
   })
   @IsOptional()
+  @Transform(trimString)
   @IsString()
-  addressLine?: string;
+  @IsNotEmpty({ message: 'fullAddress should not be empty' })
+  @MaxLength(255)
+  fullAddress?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
+    example: '12 Admiralty Way',
+    description: 'Normalized street address from maps',
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @IsNotEmpty({ message: 'streetAddress should not be empty' })
+  streetAddress?: string;
+
+  @ApiPropertyOptional({
     example: 'Lagos',
     description: 'City name',
-    required: false,
   })
   @IsOptional()
+  @Transform(trimString)
   @IsString()
+  @IsNotEmpty({ message: 'city should not be empty' })
   city?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'Lagos',
     description: 'State or province',
-    required: false,
   })
   @IsOptional()
+  @Transform(trimString)
   @IsString()
+  @IsNotEmpty({ message: 'state should not be empty' })
   state?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'Nigeria',
     description: 'Country name',
-    required: false,
   })
   @IsOptional()
+  @Transform(trimString)
   @IsString()
+  @IsNotEmpty({ message: 'country should not be empty' })
   country?: string;
 
-  @ApiProperty({
-    example: '101245',
-    description: 'Postal or ZIP code',
-    required: false,
+  @ApiPropertyOptional({
+    example: 'ChIJ...',
+    description: 'Google maps place id',
   })
   @IsOptional()
+  @Transform(trimString)
   @IsString()
-  postalCode?: string;
+  @IsNotEmpty({ message: 'placeId should not be empty' })
+  @MaxLength(255)
+  placeId?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
+    description: 'Normalized maps components',
+    type: AddressComponentsDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AddressComponentsDto)
+  addressComponents?: AddressComponentsDto;
+
+  @ApiPropertyOptional({
     example: false,
     description: 'Set as default address',
-    required: false,
   })
   @IsOptional()
   @IsBoolean()

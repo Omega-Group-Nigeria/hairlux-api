@@ -583,6 +583,7 @@ export class DiscountService {
               walletId: wallet.id,
               type: TransactionType.INFLUENCER_REWARD,
               status: TransactionStatus.COMPLETED,
+              paymentMethod: 'REFERRAL',
               amount: rewardAmount,
               reference: `INFL-REWARD-${usageId}`,
               description: `Influencer reward for discount usage`,

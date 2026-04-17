@@ -105,6 +105,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.referral;
   }
 
+  get referralCampaignCode() {
+    return this.client.referralCampaignCode;
+  }
+
+  get referralCampaignCodeUsage() {
+    return this.client.referralCampaignCodeUsage;
+  }
+
   get discountUsage() {
     return this.client.discountUsage;
   }

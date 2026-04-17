@@ -14,6 +14,7 @@ import { UpdateAddressDto } from './dto/update-address.dto';
 import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
 import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import {
+  Prisma,
   UserRole,
   UserStatus,
   TransactionType,
@@ -22,6 +23,23 @@ import {
 import { GetTransactionsDto } from '../wallet/dto/get-transactions.dto';
 import { ErrorMessages } from '../common/constants/error-messages';
 import { RedisService } from '../redis/redis.service';
+import { AddressComponentsDto } from './dto/shared-address-components.dto';
+
+interface AddressRecord {
+  id: string;
+  userId: string;
+  label: string | null;
+  fullAddress?: string;
+  streetAddress?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  placeId?: string | null;
+  addressComponents?: unknown;
+  isDefault: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 @Injectable()
 export class UserService {
@@ -113,35 +131,60 @@ export class UserService {
 
   // Address Management
   async getAddresses(userId: string) {
-    const addresses = await this.prisma.address.findMany({
+    const addresses = (await this.prisma.address.findMany({
       where: { userId },
-      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
-    });
+      orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+    })) as AddressRecord[];
 
-    return addresses;
+    return addresses.map((address) => this.formatAddress(address));
+  }
+
+  async getAddressById(userId: string, addressId: string) {
+    const address = (await this.prisma.address.findFirst({
+      where: { id: addressId, userId },
+    })) as AddressRecord | null;
+
+    if (!address) {
+      throw new NotFoundException(ErrorMessages.ADDRESS_NOT_FOUND);
+    }
+
+    return this.formatAddress(address);
   }
 
   async createAddress(userId: string, createAddressDto: CreateAddressDto) {
-    const { isDefault, ...addressData } = createAddressDto;
+    const resolvedAddress = this.resolveAddressValues(createAddressDto);
 
-    // If this is set as default, unset other default addresses
-    if (isDefault) {
-      await this.prisma.address.updateMany({
-        where: { userId, isDefault: true },
-        data: { isDefault: false },
-      });
-    }
+    const address = await this.prisma.$transaction(async (tx) => {
+      const addressCount = await tx.address.count({ where: { userId } });
+      const shouldBeDefault =
+        createAddressDto.isDefault !== undefined
+          ? createAddressDto.isDefault
+          : addressCount === 0;
 
-    const address = await this.prisma.address.create({
-      data: {
-        ...addressData,
-        userId,
-        isDefault: isDefault || false,
-        country: addressData.country || 'Nigeria',
-      },
+      if (shouldBeDefault) {
+        await tx.address.updateMany({
+          where: { userId, isDefault: true },
+          data: { isDefault: false },
+        });
+      }
+
+      return tx.address.create({
+        data: {
+          userId,
+          label: resolvedAddress.label,
+          fullAddress: resolvedAddress.fullAddress,
+          streetAddress: resolvedAddress.streetAddress,
+          city: resolvedAddress.city,
+          state: resolvedAddress.state,
+          country: resolvedAddress.country,
+          placeId: resolvedAddress.placeId,
+          addressComponents: resolvedAddress.addressComponents,
+          isDefault: shouldBeDefault,
+        },
+      }) as any;
     });
 
-    return address;
+    return this.formatAddress(address);
   }
 
   async updateAddress(
@@ -150,40 +193,84 @@ export class UserService {
     updateAddressDto: UpdateAddressDto,
   ) {
     // Check if address exists and belongs to user
-    const existingAddress = await this.prisma.address.findFirst({
+    const existingAddress = (await this.prisma.address.findFirst({
       where: { id: addressId, userId },
-    });
+    })) as AddressRecord | null;
 
     if (!existingAddress) {
       throw new NotFoundException(ErrorMessages.ADDRESS_NOT_FOUND);
     }
 
-    const { isDefault, ...addressData } = updateAddressDto;
+    const resolvedAddress = this.resolveAddressValues(updateAddressDto, existingAddress);
 
-    // If this is set as default, unset other default addresses
-    if (isDefault) {
-      await this.prisma.address.updateMany({
-        where: { userId, isDefault: true, id: { not: addressId } },
-        data: { isDefault: false },
-      });
-    }
+    const address = await this.prisma.$transaction(async (tx) => {
+      if (updateAddressDto.isDefault === true) {
+        await tx.address.updateMany({
+          where: { userId, isDefault: true, id: { not: addressId } },
+          data: { isDefault: false },
+        });
+      }
 
-    const address = await this.prisma.address.update({
-      where: { id: addressId },
-      data: {
-        ...addressData,
-        ...(isDefault !== undefined && { isDefault }),
-      },
+      return tx.address.update({
+        where: { id: addressId },
+        data: {
+          ...(resolvedAddress.label !== undefined && { label: resolvedAddress.label }),
+          ...(resolvedAddress.fullAddress !== undefined && {
+            fullAddress: resolvedAddress.fullAddress,
+          }),
+          ...(resolvedAddress.streetAddress !== undefined && {
+            streetAddress: resolvedAddress.streetAddress,
+          }),
+          ...(resolvedAddress.city !== undefined && { city: resolvedAddress.city }),
+          ...(resolvedAddress.state !== undefined && { state: resolvedAddress.state }),
+          ...(resolvedAddress.country !== undefined && {
+            country: resolvedAddress.country,
+          }),
+          ...(resolvedAddress.placeId !== undefined && {
+            placeId: resolvedAddress.placeId,
+          }),
+          ...(resolvedAddress.addressComponents !== undefined && {
+            addressComponents: resolvedAddress.addressComponents,
+          }),
+          ...(updateAddressDto.isDefault !== undefined && {
+            isDefault: updateAddressDto.isDefault,
+          }),
+        },
+      }) as any;
     });
 
-    return address;
+    return this.formatAddress(address);
+  }
+
+  async setDefaultAddress(userId: string, addressId: string) {
+    const existingAddress = (await this.prisma.address.findFirst({
+      where: { id: addressId, userId },
+    })) as AddressRecord | null;
+
+    if (!existingAddress) {
+      throw new NotFoundException(ErrorMessages.ADDRESS_NOT_FOUND);
+    }
+
+    const address = await this.prisma.$transaction(async (tx) => {
+      await tx.address.updateMany({
+        where: { userId, isDefault: true },
+        data: { isDefault: false },
+      });
+
+      return tx.address.update({
+        where: { id: addressId },
+        data: { isDefault: true },
+      });
+    });
+
+    return this.formatAddress(address);
   }
 
   async deleteAddress(userId: string, addressId: string) {
     // Check if address exists and belongs to user
-    const existingAddress = await this.prisma.address.findFirst({
+    const existingAddress = (await this.prisma.address.findFirst({
       where: { id: addressId, userId },
-    });
+    })) as AddressRecord | null;
 
     if (!existingAddress) {
       throw new NotFoundException(ErrorMessages.ADDRESS_NOT_FOUND);
@@ -200,11 +287,171 @@ export class UserService {
       );
     }
 
-    await this.prisma.address.delete({
-      where: { id: addressId },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.address.delete({
+        where: { id: addressId },
+      });
+
+      if (existingAddress.isDefault) {
+        const replacementAddress = await tx.address.findFirst({
+          where: { userId },
+          orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+        });
+
+        if (replacementAddress) {
+          await tx.address.update({
+            where: { id: replacementAddress.id },
+            data: { isDefault: true },
+          });
+        }
+      }
     });
 
     return { message: 'Address deleted successfully' };
+  }
+
+  private formatAddress(address: AddressRecord) {
+    const addressComponents = this.extractAddressComponents(address.addressComponents);
+
+    const streetAddress =
+      address.streetAddress ??
+      addressComponents?.streetAddress ??
+      null;
+
+    const city = address.city ?? addressComponents?.city ?? null;
+    const state = address.state ?? addressComponents?.state ?? null;
+    const country = address.country ?? addressComponents?.country ?? 'Nigeria';
+    const fullAddress = address.fullAddress || this.joinAddressParts([
+      streetAddress,
+      city,
+      state,
+      country,
+    ]);
+
+    return {
+      id: address.id,
+      label: address.label,
+      fullAddress,
+      streetAddress,
+      city,
+      state,
+      country,
+      placeId: address.placeId,
+      addressComponents: addressComponents ?? {
+        streetAddress,
+        city,
+        state,
+        country,
+      },
+      isDefault: address.isDefault,
+      createdAt: address.createdAt,
+      updatedAt: address.updatedAt,
+    };
+  }
+
+  private resolveAddressValues(
+    dto: CreateAddressDto | UpdateAddressDto,
+    existingAddress?: AddressRecord,
+  ) {
+    const existingComponents = this.extractAddressComponents(
+      existingAddress?.addressComponents,
+    );
+
+    const streetAddress =
+      dto.streetAddress ??
+      dto.addressComponents?.streetAddress ??
+      existingAddress?.streetAddress ??
+      existingComponents?.streetAddress;
+
+    const city =
+      dto.city ??
+      dto.addressComponents?.city ??
+      existingAddress?.city ??
+      existingComponents?.city;
+
+    const state =
+      dto.state ??
+      dto.addressComponents?.state ??
+      existingAddress?.state ??
+      existingComponents?.state;
+
+    const country =
+      dto.country ??
+      dto.addressComponents?.country ??
+      existingAddress?.country ??
+      existingComponents?.country ??
+      'Nigeria';
+
+    const fullAddress =
+      dto.fullAddress ??
+      existingAddress?.fullAddress ??
+      this.joinAddressParts([streetAddress, city, state, country]);
+
+    const shouldRebuildComponents =
+      dto.addressComponents !== undefined ||
+      dto.streetAddress !== undefined ||
+      dto.city !== undefined ||
+      dto.state !== undefined ||
+      dto.country !== undefined ||
+      !existingAddress;
+
+    return {
+      label: dto.label,
+      fullAddress,
+      streetAddress,
+      city,
+      state,
+      country,
+      placeId: dto.placeId,
+      addressComponents: shouldRebuildComponents
+        ? this.normalizeAddressComponents({
+            streetAddress,
+            city,
+            state,
+            country,
+          })
+        : undefined,
+    };
+  }
+
+  private normalizeAddressComponents(
+    components?: AddressComponentsDto,
+  ): Prisma.InputJsonValue | undefined {
+    if (!components) {
+      return undefined;
+    }
+
+    const normalized: Record<string, string> = {
+      ...(components.streetAddress && { streetAddress: components.streetAddress }),
+      ...(components.city && { city: components.city }),
+      ...(components.state && { state: components.state }),
+      ...(components.country && { country: components.country }),
+    };
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private extractAddressComponents(value: unknown): AddressComponentsDto | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    const raw = value as Record<string, unknown>;
+    return {
+      ...(typeof raw.streetAddress === 'string' && {
+        streetAddress: raw.streetAddress,
+      }),
+      ...(typeof raw.city === 'string' && { city: raw.city }),
+      ...(typeof raw.state === 'string' && { state: raw.state }),
+      ...(typeof raw.country === 'string' && { country: raw.country }),
+    };
+  }
+
+  private joinAddressParts(parts: Array<string | null | undefined>) {
+    return parts
+      .map((part) => (typeof part === 'string' ? part.trim() : part))
+      .filter((part): part is string => Boolean(part))
+      .join(', ');
   }
 
   // ==================== ADMIN METHODS ====================
@@ -474,19 +721,24 @@ export class UserService {
     });
 
     // Get addresses
-    const addresses = await this.prisma.address.findMany({
+    const addresses = (await this.prisma.address.findMany({
       where: { userId },
       select: {
         id: true,
+        userId: true,
         label: true,
-        addressLine: true,
+        fullAddress: true,
+        streetAddress: true,
         city: true,
         state: true,
         country: true,
+        placeId: true,
+        addressComponents: true,
         isDefault: true,
         createdAt: true,
+        updatedAt: true,
       },
-    });
+    })) as AddressRecord[];
 
     // Get wallet transactions (last 10 preview)
     const transactions = await this.prisma.transaction.findMany({
@@ -525,7 +777,7 @@ export class UserService {
         ...booking,
         totalAmount: Number(booking.totalAmount),
       })),
-      addresses,
+      addresses: addresses.map((address) => this.formatAddress(address)),
       transactions: transactions.map((transaction) => ({
         ...transaction,
         amount: Number(transaction.amount),

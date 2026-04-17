@@ -113,21 +113,32 @@ export class AuthService {
       return newUser;
     });
 
-    // Handle referral code linking (non-fatal)
+    // Generate personal referral code (non-fatal)
     try {
       await this.referralService.createReferralCode(user.id, firstName);
-      if (referralCode) {
-        await this.referralService.linkReferral(user.id, referralCode);
-      }
     } catch (referralErr) {
-      // Referral errors must never break registration
       this.logger.warn(
-        `Referral setup failed for user ${user.id} (non-fatal): ${
+        `Referral code generation failed for user ${user.id} (non-fatal): ${
           referralErr instanceof Error
             ? referralErr.message
             : String(referralErr)
         }`,
       );
+    }
+
+    // Apply optional signup code (campaign or user referral) without blocking registration
+    if (referralCode) {
+      try {
+        await this.referralService.applySignupCode(user.id, referralCode);
+      } catch (referralErr) {
+        this.logger.warn(
+          `Signup code application failed for user ${user.id} (non-fatal): ${
+            referralErr instanceof Error
+              ? referralErr.message
+              : String(referralErr)
+          }`,
+        );
+      }
     }
 
     // Send OTP email

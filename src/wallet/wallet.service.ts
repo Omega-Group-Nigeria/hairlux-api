@@ -8,13 +8,22 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from '../payment/paystack.service';
+import { MonnifyService } from '../payment/monnify.service';
 import { GetTransactionsDto } from './dto/get-transactions.dto';
 import { InitializeDepositDto } from './dto/initialize-deposit.dto';
 import { AdminQueryTransactionsDto } from './dto/admin-query-transactions.dto';
 import { AdminWalletStatsDto } from './dto/admin-wallet-stats.dto';
-import { TransactionType, TransactionStatus } from '@prisma/client';
+import {
+  TransactionType,
+  TransactionStatus,
+} from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { RedisService } from '../redis/redis.service';
+
+const TRANSACTION_GATEWAY = {
+  PAYSTACK: 'PAYSTACK',
+  MONNIFY: 'MONNIFY',
+} as const;
 
 @Injectable()
 export class WalletService {
@@ -25,6 +34,7 @@ export class WalletService {
   constructor(
     private prisma: PrismaService,
     private paystackService: PaystackService,
+    private monnifyService: MonnifyService,
     private configService: ConfigService,
     private redis: RedisService,
   ) {
@@ -123,8 +133,18 @@ export class WalletService {
     // Get or create wallet
     const wallet = await this.getOrCreateWallet(userId);
 
+    const provider = dto.provider ?? 'paystack';
+    const paymentMethod =
+      provider === 'monnify'
+        ? TRANSACTION_GATEWAY.MONNIFY
+        : TRANSACTION_GATEWAY.PAYSTACK;
+    const providerPrefix =
+      provider === 'monnify'
+        ? 'MONF'
+        : 'PSTK';
+
     // Generate unique reference
-    const reference = `WALLET-${Date.now()}-${randomBytes(8).toString('hex')}`;
+    const reference = `WALLET-${providerPrefix}-${Date.now()}-${randomBytes(8).toString('hex')}`;
 
     // Create pending transaction record
     const transaction = await this.prisma.transaction.create({
@@ -133,16 +153,48 @@ export class WalletService {
         amount,
         type: TransactionType.DEPOSIT,
         status: TransactionStatus.PENDING,
+        paymentMethod,
         reference,
         description: `Wallet deposit of ₦${amount}`,
+        metadata: { provider } as any,
       },
     });
 
     this.logger.log(
-      `Initializing deposit for user ${userId}: ₦${amount}, ref: ${reference}`,
+      `Initializing ${provider} deposit for user ${userId}: ₦${amount}, ref: ${reference}`,
     );
 
-    // Initialize Paystack payment
+    if (provider === 'monnify') {
+      const monnifyData = await this.monnifyService.initializePayment(
+        user.email,
+        amount,
+        reference,
+        `${user.firstName} ${user.lastName}`,
+      );
+
+      // Store the monnify transaction reference for later verification
+      await this.prisma.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          metadata: {
+            provider,
+            monnifyTransactionReference: monnifyData.responseBody.transactionReference,
+            monnifyPaymentReference: monnifyData.responseBody.paymentReference,
+          } as any,
+        },
+      });
+
+      return {
+        provider: 'monnify' as const,
+        checkoutUrl: monnifyData.responseBody.checkoutUrl,
+        transactionReference: monnifyData.responseBody.transactionReference,
+        paymentReference: monnifyData.responseBody.paymentReference,
+        reference,
+        amount,
+      };
+    }
+
+    // Paystack
     const paymentData = await this.paystackService.initializePayment(
       user.email,
       amount,
@@ -156,6 +208,7 @@ export class WalletService {
     );
 
     return {
+      provider: 'paystack' as const,
       authorization_url: paymentData.data.authorization_url,
       access_code: paymentData.data.access_code,
       reference,
@@ -163,7 +216,11 @@ export class WalletService {
     };
   }
 
-  async verifyDeposit(userId: string, reference: string) {
+  async verifyDeposit(
+    userId: string,
+    reference: string,
+    provider?: 'paystack' | 'monnify',
+  ) {
     // Get transaction by reference
     const transaction = await this.prisma.transaction.findFirst({
       where: {
@@ -199,7 +256,93 @@ export class WalletService {
       };
     }
 
-    // Verify payment with Paystack
+    const metadata = transaction.metadata as any;
+    const metadataProvider = metadata?.provider;
+    const storedProvider =
+      metadataProvider === 'monnify' || metadataProvider === 'paystack'
+        ? metadataProvider
+        : reference.includes('-MONF-')
+          ? 'monnify'
+          : 'paystack';
+
+    if (provider && provider !== storedProvider) {
+      this.logger.warn(
+        `Provider mismatch on verify for ${reference}: request=${provider}, stored=${storedProvider}. Using stored provider.`,
+      );
+    }
+
+    // ── Monnify verification path ────────────────────────────────────────────
+    if (storedProvider === 'monnify') {
+      const monnifyRef = metadata?.monnifyTransactionReference;
+
+      if (!monnifyRef) {
+        throw new BadRequestException(
+          'Monnify transaction reference not found for this deposit',
+        );
+      }
+
+      const verification = await this.monnifyService.verifyPayment(monnifyRef);
+
+      if (verification.responseBody.paymentStatus !== 'PAID') {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: TransactionStatus.FAILED,
+            paymentMethod: TRANSACTION_GATEWAY.MONNIFY,
+          },
+        });
+        throw new BadRequestException(
+          `Payment not completed. Status: ${verification.responseBody.paymentStatus}`,
+        );
+      }
+
+      // Monnify amounts are already in Naira
+      const paidAmount = verification.responseBody.amountPaid;
+      if (paidAmount !== Number(transaction.amount)) {
+        this.logger.error(
+          `Amount mismatch: expected ${transaction.amount}, got ${paidAmount}`,
+        );
+        throw new BadRequestException('Payment amount mismatch');
+      }
+
+      const result = await this.prisma.$transaction(async (tx) => {
+        const lockedTransaction = await tx.transaction.findUnique({
+          where: { id: transaction.id },
+        });
+        if (lockedTransaction?.status === TransactionStatus.COMPLETED) {
+          throw new ConflictException('Transaction already processed');
+        }
+        const updatedTransaction = await tx.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: TransactionStatus.COMPLETED,
+            paymentMethod: TRANSACTION_GATEWAY.MONNIFY,
+            metadata: verification.responseBody as any,
+          },
+        });
+        await tx.wallet.update({
+          where: { id: transaction.walletId },
+          data: { balance: { increment: transaction.amount } },
+        });
+        return updatedTransaction;
+      });
+
+      this.logger.log(
+        `Monnify deposit completed for user ${userId}: ₦${transaction.amount}, ref: ${reference}`,
+      );
+      void Promise.all([
+        this.redis.del(`wallet:balance:${userId}`),
+        this.redis.del('wallet:admin-stats'),
+        this.redis.delByPattern('analytics:*'),
+      ]);
+      return {
+        status: 'success',
+        message: 'Deposit successful',
+        transaction: { ...result, amount: Number(result.amount) },
+      };
+    }
+
+    // ── Paystack verification path ───────────────────────────────────────────
     const verification = await this.paystackService.verifyPayment(reference);
 
     if (verification.data.status !== 'success') {
@@ -207,7 +350,7 @@ export class WalletService {
         where: { id: transaction.id },
         data: {
           status: TransactionStatus.FAILED,
-          paystackReference: verification.data.reference,
+          paymentMethod: TRANSACTION_GATEWAY.PAYSTACK,
         },
       });
 
@@ -240,7 +383,7 @@ export class WalletService {
         where: { id: transaction.id },
         data: {
           status: TransactionStatus.COMPLETED,
-          paystackReference: verification.data.reference,
+          paymentMethod: TRANSACTION_GATEWAY.PAYSTACK,
           metadata: verification.data as any,
         },
       });
@@ -412,9 +555,9 @@ export class WalletService {
           type: true,
           amount: true,
           status: true,
+          paymentMethod: true,
           reference: true,
           description: true,
-          paystackReference: true,
           createdAt: true,
           updatedAt: true,
           wallet: {

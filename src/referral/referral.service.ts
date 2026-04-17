@@ -16,6 +16,9 @@ import { RedisService } from '../redis/redis.service';
 import { MailService } from '../mail/mail.service';
 import { UpdateReferralSettingsDto } from './dto/update-referral-settings.dto';
 import { QueryReferralsDto } from './dto/query-referrals.dto';
+import { CreateReferralCampaignCodeDto } from './dto/create-referral-campaign-code.dto';
+import { UpdateReferralCampaignCodeDto } from './dto/update-referral-campaign-code.dto';
+import { QueryReferralCampaignCodesDto } from './dto/query-referral-campaign-codes.dto';
 
 const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0,O,1,I to avoid confusion
 const CODE_SUFFIX_LEN = 4;
@@ -52,6 +55,42 @@ export class ReferralService {
     return `${prefix}-${this.buildSuffix()}`;
   }
 
+  private normalizeCode(code: string): string {
+    return code.trim().toUpperCase();
+  }
+
+  private validateCampaignWindow(
+    startsAt?: Date | null,
+    expiresAt?: Date | null,
+  ): void {
+    if (startsAt && expiresAt && startsAt >= expiresAt) {
+      throw new BadRequestException('startsAt must be earlier than expiresAt');
+    }
+  }
+
+  private async ensureCodeNotReserved(
+    code: string,
+    ignoreCampaignId?: string,
+  ): Promise<void> {
+    const [userReferralCode, existingCampaignCode] = await Promise.all([
+      this.prisma.referralCode.findUnique({ where: { code } }),
+      this.prisma.referralCampaignCode.findUnique({ where: { code } }),
+    ]);
+
+    if (userReferralCode) {
+      throw new BadRequestException(
+        'Code is already assigned to an existing user referral code',
+      );
+    }
+
+    if (
+      existingCampaignCode &&
+      existingCampaignCode.id !== ignoreCampaignId
+    ) {
+      throw new BadRequestException('Campaign code already exists');
+    }
+  }
+
   // ─── Called from AuthService after user creation ──────────────────────────
 
   async createReferralCode(userId: string, firstName: string): Promise<string> {
@@ -81,15 +120,160 @@ export class ReferralService {
     return fallbackCode;
   }
 
+  async applySignupCode(userId: string, rawCode: string): Promise<void> {
+    const code = this.normalizeCode(rawCode);
+
+    if (!code) {
+      return;
+    }
+
+    const campaignCode = await this.prisma.referralCampaignCode.findUnique({
+      where: { code },
+      select: { id: true },
+    });
+
+    if (campaignCode) {
+      await this.applyReferralCampaignSignupBonus(userId, code);
+      return;
+    }
+
+    await this.linkReferral(userId, code);
+  }
+
+  private async applyReferralCampaignSignupBonus(
+    userId: string,
+    code: string,
+  ): Promise<void> {
+    const now = new Date();
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const campaign = await tx.referralCampaignCode.findUnique({
+        where: { code },
+      });
+
+      if (!campaign) {
+        return { status: 'NOT_FOUND' as const };
+      }
+
+      if (!campaign.isActive) {
+        return { status: 'INACTIVE' as const, code: campaign.code };
+      }
+
+      if (campaign.startsAt && campaign.startsAt > now) {
+        return { status: 'NOT_STARTED' as const, code: campaign.code };
+      }
+
+      if (campaign.expiresAt && campaign.expiresAt < now) {
+        return { status: 'EXPIRED' as const, code: campaign.code };
+      }
+
+      if (campaign.maxUses !== null && campaign.usedCount >= campaign.maxUses) {
+        return { status: 'LIMIT_REACHED' as const, code: campaign.code };
+      }
+
+      const existingUsage = await tx.referralCampaignCodeUsage.findUnique({
+        where: { userId },
+      });
+
+      if (existingUsage) {
+        return { status: 'ALREADY_USED' as const, code: campaign.code };
+      }
+
+      const wallet = await tx.wallet.findUnique({ where: { userId } });
+      if (!wallet) {
+        return { status: 'WALLET_MISSING' as const, code: campaign.code };
+      }
+
+      const bonusAmount = Number(campaign.signupBonusAmount);
+
+      const transaction = await tx.transaction.create({
+        data: {
+          walletId: wallet.id,
+          type: 'CREDIT',
+          amount: bonusAmount,
+          status: 'COMPLETED',
+          paymentMethod: 'REFERRAL',
+          reference: `SIGNUP-CODE-${campaign.id}-${userId}`,
+          description: `Signup bonus via referral campaign code ${campaign.code}`,
+        },
+      });
+
+      await tx.wallet.update({
+        where: { id: wallet.id },
+        data: {
+          balance: { increment: bonusAmount },
+        },
+      });
+
+      await tx.referralCampaignCodeUsage.create({
+        data: {
+          campaignCodeId: campaign.id,
+          userId,
+          transactionId: transaction.id,
+          bonusAmount,
+        },
+      });
+
+      await tx.referralCampaignCode.update({
+        where: { id: campaign.id },
+        data: {
+          usedCount: { increment: 1 },
+        },
+      });
+
+      return {
+        status: 'APPLIED' as const,
+        code: campaign.code,
+        bonusAmount,
+      };
+    });
+
+    if (result.status === 'APPLIED') {
+      this.logger.log(
+        `Referral campaign code applied: code=${result.code}, user=${userId}, bonus=₦${result.bonusAmount}`,
+      );
+
+      void Promise.all([
+        this.redis.del(`wallet:balance:${userId}`),
+        this.redis.del('wallet:admin-stats'),
+        this.redis.delByPattern('analytics:*'),
+      ]);
+
+      return;
+    }
+
+    if (result.status === 'ALREADY_USED') {
+      this.logger.warn(
+        `User ${userId} has already used a referral campaign code`,
+      );
+      return;
+    }
+
+    if (result.status === 'WALLET_MISSING') {
+      this.logger.warn(
+        `Wallet missing while applying referral campaign code for user ${userId}`,
+      );
+      return;
+    }
+
+    if (result.status !== 'NOT_FOUND') {
+      this.logger.warn(
+        `Referral campaign code not applied for user ${userId}: ${result.status}`,
+      );
+    }
+  }
+
   // ─── Called from AuthService — links referral at signup (non-fatal) ────────
 
   async linkReferral(referredUserId: string, code: string): Promise<void> {
+    const normalizedCode = this.normalizeCode(code);
+
     const referralCode = await this.prisma.referralCode.findUnique({
-      where: { code: code.toUpperCase() },
+      where: { code: normalizedCode },
     });
 
     if (!referralCode) {
-      this.logger.warn(`Referral code not found: ${code}`);
+      this.logger.warn(`Referral code not found: ${normalizedCode}`);
       return;
     }
 
@@ -227,6 +411,7 @@ export class ReferralService {
             type: 'CREDIT',
             amount: rewardAmount,
             status: 'COMPLETED',
+            paymentMethod: 'REFERRAL',
             reference: `REFERRAL-${referral.id}`,
             description: 'Referral reward',
           },
@@ -386,6 +571,197 @@ export class ReferralService {
 
     void this.redis.del('referral:settings');
     return settings;
+  }
+
+  async createCampaignCode(dto: CreateReferralCampaignCodeDto) {
+    const code = this.normalizeCode(dto.code);
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : null;
+    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+
+    this.validateCampaignWindow(startsAt, expiresAt);
+    await this.ensureCodeNotReserved(code);
+
+    return this.prisma.referralCampaignCode.create({
+      data: {
+        code,
+        name: dto.name.trim(),
+        description: dto.description,
+        signupBonusAmount: dto.signupBonusAmount,
+        isActive: dto.isActive ?? true,
+        startsAt,
+        expiresAt,
+        maxUses: dto.maxUses ?? null,
+      },
+    });
+  }
+
+  async getCampaignCodes(query: QueryReferralCampaignCodesDto) {
+    const { page = 1, limit = 20, isActive, code } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ReferralCampaignCodeWhereInput = {};
+    if (isActive === 'true') {
+      where.isActive = true;
+    } else if (isActive === 'false') {
+      where.isActive = false;
+    }
+    if (code) {
+      where.code = {
+        contains: code,
+        mode: 'insensitive',
+      };
+    }
+
+    const [total, campaignCodes] = await Promise.all([
+      this.prisma.referralCampaignCode.count({ where }),
+      this.prisma.referralCampaignCode.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          _count: {
+            select: { usages: true },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      data: campaignCodes,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getCampaignCodeById(id: string) {
+    const campaignCode = await this.prisma.referralCampaignCode.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: { usages: true },
+        },
+      },
+    });
+
+    if (!campaignCode) {
+      throw new NotFoundException('Referral campaign code not found');
+    }
+
+    return campaignCode;
+  }
+
+  async updateCampaignCode(id: string, dto: UpdateReferralCampaignCodeDto) {
+    const existing = await this.prisma.referralCampaignCode.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Referral campaign code not found');
+    }
+
+    const updatedCode = dto.code
+      ? this.normalizeCode(dto.code)
+      : existing.code;
+
+    if (updatedCode !== existing.code) {
+      await this.ensureCodeNotReserved(updatedCode, existing.id);
+    }
+
+    const startsAt =
+      dto.startsAt !== undefined
+        ? dto.startsAt
+          ? new Date(dto.startsAt)
+          : null
+        : existing.startsAt;
+
+    const expiresAt =
+      dto.expiresAt !== undefined
+        ? dto.expiresAt
+          ? new Date(dto.expiresAt)
+          : null
+        : existing.expiresAt;
+
+    this.validateCampaignWindow(startsAt, expiresAt);
+
+    return this.prisma.referralCampaignCode.update({
+      where: { id },
+      data: {
+        code: updatedCode,
+        name: dto.name?.trim(),
+        description: dto.description,
+        signupBonusAmount: dto.signupBonusAmount,
+        isActive: dto.isActive,
+        startsAt,
+        expiresAt,
+        maxUses: dto.maxUses,
+      },
+    });
+  }
+
+  async deleteCampaignCode(id: string) {
+    const existing = await this.prisma.referralCampaignCode.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        code: true,
+        isActive: true,
+        usedCount: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Referral campaign code not found');
+    }
+
+    if (existing.usedCount === 0) {
+      const deleted = await this.prisma.referralCampaignCode.delete({
+        where: { id },
+        select: {
+          id: true,
+          code: true,
+          usedCount: true,
+        },
+      });
+
+      return {
+        action: 'DELETED' as const,
+        message: 'Campaign code deleted successfully',
+        data: deleted,
+      };
+    }
+
+    if (!existing.isActive) {
+      return {
+        action: 'DEACTIVATED' as const,
+        message: 'Campaign code has usage history and is already inactive',
+        data: existing,
+      };
+    }
+
+    const deactivated = await this.prisma.referralCampaignCode.update({
+      where: { id },
+      data: { isActive: false },
+      select: {
+        id: true,
+        code: true,
+        isActive: true,
+        usedCount: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      action: 'DEACTIVATED' as const,
+      message:
+        'Campaign code has usage history and was deactivated instead of deleted',
+      data: deactivated,
+    };
   }
 
   async getAllReferrals(query: QueryReferralsDto) {

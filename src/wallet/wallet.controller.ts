@@ -26,6 +26,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { InjectQueue } from '@nestjs/bull';
+import { MonnifyService } from '../payment/monnify.service';
 import type { Queue } from 'bull';
 import type { Request } from 'express';
 
@@ -36,7 +37,9 @@ import type { Request } from 'express';
 export class WalletController {
   constructor(
     private readonly walletService: WalletService,
+    private readonly monnifyService: MonnifyService,
     @InjectQueue('paystack-webhooks') private webhookQueue: Queue,
+    @InjectQueue('monnify-webhooks') private monnifyWebhookQueue: Queue,
   ) {}
 
   @Get('balance')
@@ -112,7 +115,8 @@ export class WalletController {
               type: 'DEPOSIT',
               status: 'COMPLETED',
               description: 'Wallet deposit of ₦5000',
-              reference: 'WALLET-1234567890',
+              paymentMethod: 'PAYSTACK',
+              reference: 'WALLET-PSTK-1234567890-abc',
               createdAt: '2026-02-17T10:00:00.000Z',
             },
           ],
@@ -144,7 +148,7 @@ export class WalletController {
   @ApiOperation({
     summary: 'Initialize wallet deposit',
     description:
-      'Initialize Paystack payment for wallet deposit. Returns payment URL.',
+      'Initialize wallet deposit with Paystack or Monnify. Returns checkout URL for selected gateway.',
   })
   @ApiResponse({
     status: 200,
@@ -154,9 +158,10 @@ export class WalletController {
         success: true,
         message: 'Deposit initialized successfully',
         data: {
+          provider: 'paystack',
           authorization_url: 'https://checkout.paystack.com/xxx',
           access_code: 'xxx',
-          reference: 'WALLET-1234567890-xxx',
+          reference: 'WALLET-PSTK-1234567890-xxx',
           amount: 5000,
         },
       },
@@ -184,7 +189,7 @@ export class WalletController {
   @ApiOperation({
     summary: 'Verify wallet deposit',
     description:
-      'Verify Paystack payment and credit wallet. Call this after successful payment.',
+      'Verify wallet deposit payment (Paystack or Monnify) and credit wallet after successful payment.',
   })
   @ApiResponse({
     status: 200,
@@ -201,7 +206,8 @@ export class WalletController {
             amount: 5000,
             type: 'DEPOSIT',
             status: 'COMPLETED',
-            reference: 'WALLET-1234567890-xxx',
+            paymentMethod: 'PAYSTACK',
+            reference: 'WALLET-PSTK-1234567890-xxx',
             createdAt: '2026-02-17T10:00:00.000Z',
           },
         },
@@ -222,6 +228,7 @@ export class WalletController {
     const result = await this.walletService.verifyDeposit(
       userId,
       dto.reference,
+      dto.provider,
     );
     return {
       success: true,
@@ -249,6 +256,29 @@ export class WalletController {
     });
 
     // Return 200 immediately to Paystack
+    return { status: 'queued' };
+  }
+
+  @Post('monnify-webhook')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiExcludeEndpoint()
+  async handleMonnifyWebhook(@Req() req: Request, @Headers() headers: any) {
+    const signature = headers['monnify-signature'] as string | undefined;
+    const rawBody = JSON.stringify(req.body);
+
+    if (signature && !this.monnifyService.verifyWebhookSignature(rawBody, signature)) {
+      return { status: 'invalid_signature' };
+    }
+
+    await this.monnifyWebhookQueue.add('deposit-webhook', req.body, {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 2000,
+      },
+    });
+
     return { status: 'queued' };
   }
 }

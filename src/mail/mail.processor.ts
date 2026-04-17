@@ -35,7 +35,7 @@ export class MailProcessor {
       this.logger.log(`Sending email to ${to} with subject: ${subject}`);
 
       await this.transporter.sendMail({
-        from: this.configService.get('SMTP_FROM'),
+        from: this.configService.get('EMAIL_FROM'),
         to,
         subject,
         html,

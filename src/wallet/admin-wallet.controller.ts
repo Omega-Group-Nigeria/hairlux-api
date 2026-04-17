@@ -83,9 +83,9 @@ export class AdminWalletController {
             type: 'DEPOSIT',
             amount: 5000,
             status: 'COMPLETED',
-            reference: 'WALLET-1234567890-xxx',
+            paymentMethod: 'PAYSTACK',
+            reference: 'WALLET-PSTK-1234567890-xxx',
             description: 'Wallet deposit of ₦5000',
-            paystackReference: 'ps_ref_xxx',
             createdAt: '2026-02-17T10:00:00.000Z',
             updatedAt: '2026-02-17T10:00:00.000Z',
             wallet: {

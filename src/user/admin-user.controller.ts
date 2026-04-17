@@ -295,7 +295,8 @@ export class AdminUserController {
         {
           id: 'clx4444444444',
           label: 'Home',
-          addressLine: '123 Main Street',
+          fullAddress: '123 Main Street, Lagos, Nigeria',
+          streetAddress: '123 Main Street',
           city: 'Lagos',
           state: 'Lagos',
           country: 'Nigeria',

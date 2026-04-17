@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import { EmailJobData } from './mail.processor';
+import { ConfigService } from '@nestjs/config';
 import {
   otpTemplate,
   resetPasswordTemplate,
@@ -10,13 +11,17 @@ import {
   depositSuccessTemplate,
   referralRewardTemplate,
   staffBirthdayTemplate,
+  contactFormSubmissionTemplate,
 } from './templates';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
 
-  constructor(@InjectQueue('email') private emailQueue: Queue<EmailJobData>) {}
+  constructor(
+    @InjectQueue('email') private emailQueue: Queue<EmailJobData>,
+    private configService: ConfigService,
+  ) {}
 
   async sendOtpEmail(email: string, otpCode: string, firstName: string) {
     try {
@@ -230,6 +235,50 @@ export class MailService {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Error queuing staff birthday email:`, errorMessage);
+    }
+  }
+
+  async sendContactFormEmail(data: {
+    name: string;
+    emailAddress: string;
+    phoneNo: string;
+    subject: string;
+    message: string;
+  }) {
+    const contactEmail = this.configService.get<string>('CONTACT_EMAIL');
+    const safeSubject = data.subject.replace(/[\r\n]+/g, ' ').trim();
+
+    if (!contactEmail) {
+      this.logger.error('CONTACT_EMAIL is not configured');
+      throw new InternalServerErrorException(
+        'Contact email destination is not configured',
+      );
+    }
+
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: contactEmail,
+          subject: `Contact Form: ${safeSubject}`,
+          html: contactFormSubmissionTemplate(data),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(
+        `Contact form email queued for destination ${contactEmail}`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing contact form email:`, errorMessage);
+      throw new InternalServerErrorException(
+        'Unable to process contact request at the moment',
+      );
     }
   }
 }

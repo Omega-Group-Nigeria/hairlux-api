@@ -76,7 +76,10 @@ export class PaystackWebhookProcessor {
 
         await this.prisma.transaction.update({
           where: { id: transaction.id },
-          data: { status: TransactionStatus.FAILED },
+          data: {
+            status: TransactionStatus.FAILED,
+            paymentMethod: 'PAYSTACK',
+          },
         });
 
         return { status: 'amount_mismatch', reference: data.reference };
@@ -98,7 +101,7 @@ export class PaystackWebhookProcessor {
           where: { id: transaction.id },
           data: {
             status: TransactionStatus.COMPLETED,
-            paystackReference: data.reference,
+            paymentMethod: 'PAYSTACK',
             metadata: data as any,
           },
         });

@@ -1,11 +1,13 @@
 import {
   Controller,
   Get,
+  Patch,
   Put,
   Post,
   Delete,
   Body,
   Param,
+  UsePipes,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -22,6 +24,9 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 import { ResponseUtil } from '../common/utils/response.util';
+import { AddressValidationPipe } from './pipes/address-validation.pipe';
+
+const addressValidationPipe = new AddressValidationPipe();
 
 @ApiTags('User Management')
 @ApiBearerAuth('JWT-auth')
@@ -128,22 +133,26 @@ export class UserController {
   @ApiOperation({ summary: 'Get all user addresses' })
   @ApiResponse({
     status: 200,
-    description: 'Addresses retrieved successfully',
+    description: 'Addresses fetched successfully',
     example: {
       success: true,
-      message: 'Addresses retrieved successfully',
+      message: 'Addresses fetched successfully',
       data: [
         {
           id: '660e8400-e29b-41d4-a716-446655440000',
-          userId: '550e8400-e29b-41d4-a716-446655440000',
           label: 'Home',
-          addressLine: '15 Lekki Phase 1',
+          fullAddress: '12 Admiralty Way, Lekki Phase 1, Lagos, Nigeria',
+          streetAddress: '12 Admiralty Way',
           city: 'Lagos',
           state: 'Lagos',
           country: 'Nigeria',
-          postalCode: '101245',
-          latitude: 6.4474,
-          longitude: 3.47,
+          placeId: 'ChIJ...',
+          addressComponents: {
+            streetAddress: '12 Admiralty Way',
+            city: 'Lagos',
+            state: 'Lagos',
+            country: 'Nigeria',
+          },
           isDefault: true,
           createdAt: '2026-01-25T12:00:00.000Z',
           updatedAt: '2026-01-25T12:00:00.000Z',
@@ -154,10 +163,27 @@ export class UserController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getAddresses(@GetUser('id') userId: string) {
     const addresses = await this.userService.getAddresses(userId);
-    return ResponseUtil.success(addresses, 'Addresses retrieved successfully');
+    return ResponseUtil.success(addresses, 'Addresses fetched successfully');
+  }
+
+  @Get('addresses/:id')
+  @ApiOperation({ summary: 'Get a user address by id' })
+  @ApiResponse({
+    status: 200,
+    description: 'Address fetched successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Address not found' })
+  async getAddressById(
+    @GetUser('id') userId: string,
+    @Param('id') addressId: string,
+  ) {
+    const address = await this.userService.getAddressById(userId, addressId);
+    return ResponseUtil.success(address, 'Address fetched successfully');
   }
 
   @Post('addresses')
+  @UsePipes(addressValidationPipe)
   @ApiOperation({ summary: 'Create a new address' })
   @ApiResponse({
     status: 201,
@@ -167,15 +193,19 @@ export class UserController {
       message: 'Address created successfully',
       data: {
         id: '660e8400-e29b-41d4-a716-446655440000',
-        userId: '550e8400-e29b-41d4-a716-446655440000',
         label: 'Home',
-        addressLine: '15 Lekki Phase 1',
+        fullAddress: '12 Admiralty Way, Lekki Phase 1, Lagos, Nigeria',
+        streetAddress: '12 Admiralty Way',
         city: 'Lagos',
         state: 'Lagos',
         country: 'Nigeria',
-        postalCode: '101245',
-        latitude: null,
-        longitude: null,
+        placeId: 'ChIJ...',
+        addressComponents: {
+          streetAddress: '12 Admiralty Way',
+          city: 'Lagos',
+          state: 'Lagos',
+          country: 'Nigeria',
+        },
         isDefault: true,
         createdAt: '2026-01-25T12:00:00.000Z',
         updatedAt: '2026-01-25T12:00:00.000Z',
@@ -195,8 +225,9 @@ export class UserController {
     return ResponseUtil.success(address, 'Address created successfully');
   }
 
-  @Put('addresses/:id')
-  @ApiOperation({ summary: 'Update an existing address' })
+  @Patch('addresses/:id')
+  @UsePipes(addressValidationPipe)
+  @ApiOperation({ summary: 'Partially update an existing address' })
   @ApiResponse({
     status: 200,
     description: 'Address updated successfully',
@@ -205,15 +236,19 @@ export class UserController {
       message: 'Address updated successfully',
       data: {
         id: '660e8400-e29b-41d4-a716-446655440000',
-        userId: '550e8400-e29b-41d4-a716-446655440000',
         label: 'Office',
-        addressLine: '25 Victoria Island',
+        fullAddress: '25 Victoria Island, Lagos, Nigeria',
+        streetAddress: '25 Victoria Island',
         city: 'Lagos',
         state: 'Lagos',
         country: 'Nigeria',
-        postalCode: '101245',
-        latitude: null,
-        longitude: null,
+        placeId: 'ChIJ...',
+        addressComponents: {
+          streetAddress: '25 Victoria Island',
+          city: 'Lagos',
+          state: 'Lagos',
+          country: 'Nigeria',
+        },
         isDefault: false,
         createdAt: '2026-01-25T12:00:00.000Z',
         updatedAt: '2026-01-25T13:00:00.000Z',
@@ -233,6 +268,41 @@ export class UserController {
       updateAddressDto,
     );
     return ResponseUtil.success(address, 'Address updated successfully');
+  }
+
+  @Put('addresses/:id')
+  @UsePipes(addressValidationPipe)
+  @ApiOperation({ summary: 'Update an existing address (legacy alias)' })
+  @ApiResponse({ status: 200, description: 'Address updated successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Address not found' })
+  async updateAddressLegacy(
+    @GetUser('id') userId: string,
+    @Param('id') addressId: string,
+    @Body() updateAddressDto: UpdateAddressDto,
+  ) {
+    const address = await this.userService.updateAddress(
+      userId,
+      addressId,
+      updateAddressDto,
+    );
+    return ResponseUtil.success(address, 'Address updated successfully');
+  }
+
+  @Patch('addresses/:id/default')
+  @ApiOperation({ summary: 'Set an address as default' })
+  @ApiResponse({
+    status: 200,
+    description: 'Default address updated successfully',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Address not found' })
+  async setDefaultAddress(
+    @GetUser('id') userId: string,
+    @Param('id') addressId: string,
+  ) {
+    const address = await this.userService.setDefaultAddress(userId, addressId);
+    return ResponseUtil.success(address, 'Default address updated successfully');
   }
 
   @Delete('addresses/:id')

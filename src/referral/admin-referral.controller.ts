@@ -1,6 +1,9 @@
 import {
   Controller,
   Get,
+  Post,
+  Patch,
+  Delete,
   Put,
   Body,
   Query,
@@ -25,6 +28,9 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 import { UpdateReferralSettingsDto } from './dto/update-referral-settings.dto';
 import { QueryReferralsDto } from './dto/query-referrals.dto';
+import { CreateReferralCampaignCodeDto } from './dto/create-referral-campaign-code.dto';
+import { UpdateReferralCampaignCodeDto } from './dto/update-referral-campaign-code.dto';
+import { QueryReferralCampaignCodesDto } from './dto/query-referral-campaign-codes.dto';
 
 @ApiTags('Admin - Referrals')
 @ApiBearerAuth('JWT-auth')
@@ -33,6 +39,198 @@ import { QueryReferralsDto } from './dto/query-referrals.dto';
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminReferralController {
   constructor(private readonly referralService: ReferralService) {}
+
+  @Post('campaign-codes')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Create referral campaign code',
+    description:
+      'Creates an admin-managed signup referral campaign code that credits a wallet bonus to eligible new users.',
+  })
+  @ApiBody({ type: CreateReferralCampaignCodeDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Campaign code created successfully.',
+    schema: {
+      example: {
+        id: 'campaign-uuid-001',
+        code: 'LAUNCH100',
+        name: 'Launch Bonus Campaign',
+        description: 'Signup bonus for first 100 users',
+        signupBonusAmount: '1000.00',
+        isActive: true,
+        startsAt: '2026-04-20T00:00:00.000Z',
+        expiresAt: '2026-05-20T23:59:59.999Z',
+        maxUses: 100,
+        usedCount: 0,
+        createdAt: '2026-04-20T08:00:00.000Z',
+        updatedAt: '2026-04-20T08:00:00.000Z',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid input or duplicate code.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — admin/super-admin only.',
+  })
+  async createCampaignCode(@Body() dto: CreateReferralCampaignCodeDto) {
+    return this.referralService.createCampaignCode(dto);
+  }
+
+  @Get('campaign-codes')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List referral campaign codes',
+    description:
+      'Returns paginated referral campaign codes with usage counts for admin monitoring.',
+  })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, example: 20 })
+  @ApiQuery({
+    name: 'isActive',
+    required: false,
+    enum: ['true', 'false'],
+    example: 'false',
+  })
+  @ApiQuery({ name: 'code', required: false, example: 'LAUNCH' })
+  @ApiResponse({
+    status: 200,
+    description: 'Campaign codes returned successfully.',
+    schema: {
+      example: {
+        data: [
+          {
+            id: 'campaign-uuid-001',
+            code: 'LAUNCH100',
+            name: 'Launch Bonus Campaign',
+            description: 'Signup bonus for first 100 users',
+            signupBonusAmount: '1000.00',
+            isActive: true,
+            startsAt: '2026-04-20T00:00:00.000Z',
+            expiresAt: '2026-05-20T23:59:59.999Z',
+            maxUses: 100,
+            usedCount: 45,
+            createdAt: '2026-04-20T08:00:00.000Z',
+            updatedAt: '2026-04-21T12:30:00.000Z',
+            _count: {
+              usages: 45,
+            },
+          },
+        ],
+        meta: {
+          total: 1,
+          page: 1,
+          limit: 20,
+          totalPages: 1,
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — admin/super-admin only.',
+  })
+  async getCampaignCodes(@Query() query: QueryReferralCampaignCodesDto) {
+    return this.referralService.getCampaignCodes(query);
+  }
+
+  @Get('campaign-codes/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get one referral campaign code',
+    description: 'Returns details and usage count for a specific campaign code.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Campaign code UUID',
+    example: 'campaign-uuid-001',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Campaign code returned successfully.',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — admin/super-admin only.',
+  })
+  @ApiResponse({ status: 404, description: 'Campaign code not found.' })
+  async getCampaignCodeById(@Param('id') id: string) {
+    return this.referralService.getCampaignCodeById(id);
+  }
+
+  @Patch('campaign-codes/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update referral campaign code',
+    description:
+      'Updates campaign code metadata, bonus amount, validity window, limits, and active state.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Campaign code UUID',
+    example: 'campaign-uuid-001',
+  })
+  @ApiBody({ type: UpdateReferralCampaignCodeDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Campaign code updated successfully.',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid update payload.' })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — admin/super-admin only.',
+  })
+  @ApiResponse({ status: 404, description: 'Campaign code not found.' })
+  async updateCampaignCode(
+    @Param('id') id: string,
+    @Body() dto: UpdateReferralCampaignCodeDto,
+  ) {
+    return this.referralService.updateCampaignCode(id, dto);
+  }
+
+  @Delete('campaign-codes/:id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Delete or deactivate campaign code',
+    description:
+      'Deletes campaign code when usedCount is 0. If usedCount is greater than 0, the code is deactivated instead.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Campaign code UUID',
+    example: 'campaign-uuid-001',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Campaign code deleted or deactivated successfully.',
+    schema: {
+      example: {
+        action: 'DEACTIVATED',
+        message:
+          'Campaign code has usage history and was deactivated instead of deleted',
+        data: {
+          id: 'campaign-uuid-001',
+          code: 'LAUNCH100',
+          isActive: false,
+          usedCount: 12,
+          updatedAt: '2026-04-17T10:30:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized.' })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden — admin/super-admin only.',
+  })
+  @ApiResponse({ status: 404, description: 'Campaign code not found.' })
+  async deleteCampaignCode(@Param('id') id: string) {
+    return this.referralService.deleteCampaignCode(id);
+  }
 
   @Get('settings')
   @HttpCode(HttpStatus.OK)

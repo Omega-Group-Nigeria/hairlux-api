@@ -98,6 +98,25 @@ export class BookingService {
       : service.homeServicePrice.toNumber();
   }
 
+  private formatBookingAddress(address: unknown) {
+    if (!address || typeof address !== 'object' || Array.isArray(address)) {
+      return null;
+    }
+
+    const raw = address as Record<string, unknown>;
+    return {
+      id: raw.id,
+      fullAddress: raw.fullAddress ?? null,
+      streetAddress: raw.streetAddress ?? null,
+      city: raw.city ?? null,
+      state: raw.state ?? null,
+      country: raw.country ?? null,
+      placeId: raw.placeId ?? null,
+      addressComponents: raw.addressComponents ?? null,
+      isDefault: raw.isDefault ?? false,
+    };
+  }
+
   async checkAvailability(queryDto: CheckAvailabilityDto) {
     const { serviceId, date } = queryDto;
 
@@ -205,12 +224,6 @@ export class BookingService {
 
       if (!address) {
         throw new NotFoundException('Address not found');
-      }
-
-      if (!address.latitude || !address.longitude) {
-        throw new BadRequestException(
-          'Address must have location coordinates (latitude and longitude)',
-        );
       }
     }
 
@@ -345,6 +358,7 @@ export class BookingService {
             walletId: wallet.id,
             amount: finalAmount,
             type: TransactionType.DEBIT,
+            paymentMethod: 'WALLET',
             description: `Payment for: ${serviceNames}${validatedDiscount ? ` (${validatedDiscount.percentage}% discount applied)` : ''}`,
             reference: `BOOK-${booking.id}-${Date.now()}`,
             status: TransactionStatus.COMPLETED,
@@ -372,7 +386,7 @@ export class BookingService {
 
       // Queue emails (non-blocking — void fires and forgets into Bull queue)
       const addressStr = address
-        ? `${address.addressLine}, ${address.city}, ${address.state}`
+        ? address.fullAddress
         : 'In-store (Walk-in)';
       const emailServices = serviceRecords.map((s) => ({
         name: s.name,
@@ -475,7 +489,7 @@ export class BookingService {
 
     // Queue emails (non-blocking — void fires and forgets into Bull queue)
     const addressStr = address
-      ? `${address.addressLine}, ${address.city}, ${address.state}`
+      ? address.fullAddress
       : 'In-store (Walk-in)';
     const emailServices = serviceRecords.map((s) => ({
       name: s.name,
@@ -755,6 +769,7 @@ export class BookingService {
               walletId: wallet.id,
               amount: refundAmount,
               type: TransactionType.CREDIT,
+              paymentMethod: 'WALLET',
               description: `Refund for cancelled booking`,
               reference: `REFUND-${booking.id}`,
               status: TransactionStatus.COMPLETED,
@@ -879,6 +894,7 @@ export class BookingService {
       data: bookings.map((booking) => ({
         ...booking,
         totalAmount: Number(booking.totalAmount),
+        address: this.formatBookingAddress(booking.address),
       })),
       meta: {
         total,
@@ -913,6 +929,7 @@ export class BookingService {
     return {
       ...booking,
       totalAmount: Number(booking.totalAmount),
+      address: this.formatBookingAddress(booking.address),
     };
   }
 
@@ -989,12 +1006,6 @@ export class BookingService {
 
       if (address.userId !== userId) {
         throw new BadRequestException('Address does not belong to user');
-      }
-
-      if (!address.latitude || !address.longitude) {
-        throw new BadRequestException(
-          'Address must have latitude and longitude coordinates',
-        );
       }
     }
 
@@ -1084,6 +1095,7 @@ export class BookingService {
             data: {
               walletId: wallet.id,
               type: TransactionType.DEBIT,
+              paymentMethod: 'WALLET',
               amount: totalAmount,
               description: `Payment for booking #${booking.id}`,
               reference: booking.id,
@@ -1100,6 +1112,7 @@ export class BookingService {
       totalAmount: Number(booking.totalAmount),
       services: serviceRecords,
       reservationCode,
+      address: this.formatBookingAddress(booking.address),
     };
   }
 
@@ -1167,6 +1180,7 @@ export class BookingService {
             data: {
               walletId: wallet.id,
               type: TransactionType.CREDIT,
+              paymentMethod: 'WALLET',
               amount: booking.totalAmount,
               description: `Refund for cancelled booking #${booking.id}`,
               reference: `REFUND-${booking.id}`,
@@ -1212,6 +1226,7 @@ export class BookingService {
     return {
       ...result,
       totalAmount: Number(result.totalAmount),
+      address: this.formatBookingAddress(result.address),
     };
   }
 
@@ -1566,6 +1581,7 @@ export class BookingService {
 
     return {
       ...booking,
+      address: this.formatBookingAddress(booking.address),
       isValid:
         !booking.reservationUsed && booking.status !== BookingStatus.CANCELLED,
     };
@@ -1609,6 +1625,7 @@ export class BookingService {
         user: {
           select: { id: true, firstName: true, lastName: true, phone: true },
         },
+        address: true,
       },
     });
 
@@ -1638,6 +1655,9 @@ export class BookingService {
       })();
     }
 
-    return updated;
+    return {
+      ...updated,
+      address: this.formatBookingAddress(updated.address),
+    };
   }
 }

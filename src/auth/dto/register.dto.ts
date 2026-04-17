@@ -71,7 +71,8 @@ export class RegisterDto {
 
   @ApiProperty({
     example: 'JOH-X7K2',
-    description: 'Optional referral code from an existing user',
+    description:
+      'Optional referral code. Can be from an existing user or an admin-created launch/signup campaign code.',
     required: false,
   })
   @IsOptional()
