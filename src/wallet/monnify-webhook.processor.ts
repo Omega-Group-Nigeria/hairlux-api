@@ -20,8 +20,8 @@ interface MonnifyWebhookJobData {
   eventData: {
     transactionReference: string;
     paymentReference: string;
-    amountPaid: number;
-    totalPayable: number;
+    amountPaid: number | string;
+    totalPayable: number | string;
     paymentStatus: string;
     paidOn: string;
     customer?: {
@@ -93,8 +93,14 @@ export class MonnifyWebhookProcessor {
       return { status: 'already_processed', reference: transaction.reference };
     }
 
-    // Monnify amounts are already in Naira — no kobo conversion needed
-    if (eventData.amountPaid !== Number(transaction.amount)) {
+    // Monnify can return numeric-looking strings (e.g. "100.00").
+    // Normalize both sides and compare with tiny tolerance.
+    const paidAmount = Number(eventData.amountPaid);
+    const expectedAmount = Number(transaction.amount);
+    if (
+      !Number.isFinite(paidAmount) ||
+      Math.abs(paidAmount - expectedAmount) > 0.001
+    ) {
       this.logger.error(
         `Amount mismatch for ${transaction.reference}: expected ${transaction.amount}, got ${eventData.amountPaid}`,
       );

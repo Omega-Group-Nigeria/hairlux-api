@@ -296,9 +296,14 @@ export class WalletService {
         );
       }
 
-      // Monnify amounts are already in Naira
-      const paidAmount = verification.responseBody.amountPaid;
-      if (paidAmount !== Number(transaction.amount)) {
+      // Monnify can return numeric-looking strings (e.g. "100.00").
+      // Normalize both sides and compare with tiny tolerance.
+      const paidAmount = Number(verification.responseBody.amountPaid);
+      const expectedAmount = Number(transaction.amount);
+      if (
+        !Number.isFinite(paidAmount) ||
+        Math.abs(paidAmount - expectedAmount) > 0.001
+      ) {
         this.logger.error(
           `Amount mismatch: expected ${transaction.amount}, got ${paidAmount}`,
         );

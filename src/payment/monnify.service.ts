@@ -22,9 +22,9 @@ export interface MonnifyVerifyResponse {
   responseBody: {
     transactionReference: string;
     paymentReference: string;
-    amountPaid: number;
-    totalPayable: number;
-    settledAmount: number;
+    amountPaid: number | string;
+    totalPayable: number | string;
+    settledAmount: number | string;
     paidOn: string;
     paymentStatus: string; // 'PAID' | 'FAILED' | 'PENDING' | 'OVERPAID' | 'PARTIALLY_PAID'
     customer: { email: string; name: string };
