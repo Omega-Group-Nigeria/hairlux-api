@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
-import { createHmac } from 'crypto';
+import { createHash } from 'crypto';
 
 export interface MonnifyInitResponse {
   requestSuccessful: boolean;
@@ -121,9 +121,26 @@ export class MonnifyService {
   }
 
   verifyWebhookSignature(rawBody: string, signature: string): boolean {
-    const computed = createHmac('sha512', this.secretKey)
-      .update(rawBody)
+    const normalizedSignature = signature.trim().toLowerCase();
+
+    const computedRaw = createHash('sha512')
+      .update(`${this.secretKey}${rawBody}`)
       .digest('hex');
-    return computed === signature;
+
+    if (computedRaw === normalizedSignature) {
+      return true;
+    }
+
+    // Fallback: normalize JSON formatting before hashing to avoid false negatives
+    // when whitespace/serialization differs across intermediaries.
+    try {
+      const normalizedBody = JSON.stringify(JSON.parse(rawBody));
+      const computedNormalized = createHash('sha512')
+        .update(`${this.secretKey}${normalizedBody}`)
+        .digest('hex');
+      return computedNormalized === normalizedSignature;
+    } catch {
+      return false;
+    }
   }
 }

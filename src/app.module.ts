@@ -31,13 +31,35 @@ import { StaffModule } from './staff/staff.module';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        redis: {
-          host: configService.get('REDIS_HOST', 'localhost'),
-          port: configService.get('REDIS_PORT', 6379),
-          password: configService.get('REDIS_PASSWORD'),
-        },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const redisUrl = configService.get<string>('REDIS_URL');
+
+        if (redisUrl) {
+          const parsed = new URL(redisUrl);
+          const dbPart = parsed.pathname?.replace('/', '');
+          const parsedDb = dbPart ? Number(dbPart) : undefined;
+
+          return {
+            redis: {
+              host: parsed.hostname,
+              port: parsed.port ? Number(parsed.port) : 6379,
+              password: parsed.password
+                ? decodeURIComponent(parsed.password)
+                : undefined,
+              db: Number.isFinite(parsedDb) ? parsedDb : undefined,
+              ...(parsed.protocol === 'rediss:' ? { tls: {} } : {}),
+            },
+          };
+        }
+
+        return {
+          redis: {
+            host: configService.get('REDIS_HOST', 'localhost'),
+            port: configService.get('REDIS_PORT', 6379),
+            password: configService.get('REDIS_PASSWORD'),
+          },
+        };
+      },
     }),
     PrismaModule,
     RedisModule,
