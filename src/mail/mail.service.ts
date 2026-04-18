@@ -52,7 +52,7 @@ export class MailService {
     firstName: string,
   ) {
     try {
-      const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3001'}/reset-password?token=${resetToken}`;
+      const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3001'}/reset-password.html?token=${resetToken}`;
 
       await this.emailQueue.add(
         'send',
@@ -116,7 +116,7 @@ export class MailService {
       time: string;
       address: string;
       totalAmount: number;
-      paymentMethod: 'WALLET' | 'CASH';
+      paymentMethod: 'WALLET' | 'CASH' | 'MONNIFY';
       bookingIds: string[];
       reservationCode: string;
     },

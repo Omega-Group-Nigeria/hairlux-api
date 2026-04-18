@@ -8,10 +8,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from '../payment/paystack.service';
+import { MonnifyService } from '../payment/monnify.service';
 import { MailService } from '../mail/mail.service';
 import { RedisService } from '../redis/redis.service';
 import { DiscountService } from '../discount/discount.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { BookingPaymentPayloadDto } from './dto/booking-payment-payload.dto';
+import { InitializeBookingPaymentDto } from './dto/initialize-booking-payment.dto';
+import { VerifyBookingPaymentDto } from './dto/verify-booking-payment.dto';
 import { CheckAvailabilityDto } from './dto/check-availability.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
@@ -28,6 +32,7 @@ import {
   TransactionStatus,
   BookingType,
 } from '@prisma/client';
+import { createHash } from 'crypto';
 
 @Injectable()
 export class BookingService {
@@ -36,6 +41,7 @@ export class BookingService {
   constructor(
     private prisma: PrismaService,
     private paystackService: PaystackService,
+    private monnifyService: MonnifyService,
     private mailService: MailService,
     private redis: RedisService,
     private discountService: DiscountService,
@@ -568,6 +574,524 @@ export class BookingService {
         : undefined,
       paymentMethod: PaymentMethod.CASH,
       message: 'Booking reserved. Payment will be collected on delivery.',
+    };
+  }
+
+  private buildBookingPaymentReference(userId: string, idempotencyKey: string) {
+    const digest = createHash('sha256')
+      .update(`${userId}:${idempotencyKey.trim()}`)
+      .digest('hex')
+      .slice(0, 24)
+      .toUpperCase();
+    return `BOOKPAY-MONF-${digest}`;
+  }
+
+  private async getOrCreateWallet(userId: string) {
+    return this.prisma.wallet.upsert({
+      where: { userId },
+      update: {},
+      create: {
+        userId,
+        balance: 0,
+      },
+    });
+  }
+
+  private async prepareBookingPaymentContext(
+    userId: string,
+    payload: BookingPaymentPayloadDto,
+    checkSlotAvailability = true,
+  ) {
+    const {
+      services,
+      date,
+      time,
+      addressId,
+      bookingType,
+      discountCode,
+    } = payload;
+
+    let address: Awaited<
+      ReturnType<typeof this.prisma.address.findFirst>
+    > | null = null;
+    if (bookingType === BookingType.HOME_SERVICE) {
+      address = await this.prisma.address.findFirst({
+        where: { id: addressId, userId },
+      });
+
+      if (!address) {
+        throw new NotFoundException('Address not found');
+      }
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, firstName: true, lastName: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const bookingDate = new Date(`${date}T${time}`);
+
+    const serviceRecords: {
+      serviceId: string;
+      name: string;
+      price: number;
+      duration: number;
+      notes?: string;
+    }[] = [];
+
+    for (const item of services) {
+      const service = await this.prisma.service.findUnique({
+        where: { id: item.serviceId },
+      });
+
+      if (!service) {
+        throw new NotFoundException(`Service ${item.serviceId} not found`);
+      }
+
+      if (service.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          `Service "${service.name}" is not available`,
+        );
+      }
+
+      serviceRecords.push({
+        serviceId: service.id,
+        name: service.name,
+        price: this.resolvePriceForBookingType(service, bookingType),
+        duration: service.duration ?? 0,
+        ...(item.notes ? { notes: item.notes } : {}),
+      });
+    }
+
+    if (checkSlotAvailability) {
+      const existingBooking = await this.prisma.booking.findFirst({
+        where: {
+          bookingDate,
+          bookingTime: time,
+          status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
+        },
+      });
+
+      if (existingBooking) {
+        throw new ConflictException('This time slot is already booked');
+      }
+    }
+
+    const totalAmount = serviceRecords.reduce((sum, s) => sum + s.price, 0);
+
+    let validatedDiscount: {
+      id: string;
+      code: string;
+      name: string;
+      percentage: number;
+    } | null = null;
+    let discountAmount = 0;
+    let finalAmount = totalAmount;
+
+    if (discountCode) {
+      validatedDiscount = await this.discountService.validate(discountCode, userId);
+      discountAmount =
+        Math.round(((totalAmount * validatedDiscount.percentage) / 100) * 100) /
+        100;
+      finalAmount = Math.max(0, totalAmount - discountAmount);
+    }
+
+    return {
+      user,
+      address,
+      bookingDate,
+      serviceRecords,
+      totalAmount,
+      finalAmount,
+      discountAmount,
+      validatedDiscount,
+    };
+  }
+
+  async initializeBookingPayment(
+    userId: string,
+    dto: InitializeBookingPaymentDto,
+  ) {
+    if (dto.provider !== 'monnify') {
+      throw new BadRequestException('Only monnify is supported for booking payments');
+    }
+
+    const context = await this.prepareBookingPaymentContext(
+      userId,
+      dto.bookingPayload,
+      true,
+    );
+
+    if (Math.abs(Number(dto.amount) - context.finalAmount) > 0.001) {
+      throw new BadRequestException(
+        `Amount mismatch. Expected ${context.finalAmount}, got ${dto.amount}`,
+      );
+    }
+
+    const bookingPaymentReference = this.buildBookingPaymentReference(
+      userId,
+      dto.idempotencyKey,
+    );
+
+    const existingIntent = await this.prisma.transaction.findFirst({
+      where: {
+        reference: bookingPaymentReference,
+        type: TransactionType.BOOKING_PAYMENT,
+        wallet: { userId },
+      },
+    });
+
+    if (existingIntent) {
+      const metadata = (existingIntent.metadata as Record<string, any> | null) ?? {};
+      return {
+        paymentUrl: metadata.checkoutUrl ?? null,
+        checkoutUrl: metadata.checkoutUrl ?? null,
+        bookingPaymentReference,
+        gatewayReference: metadata.monnifyTransactionReference ?? null,
+        expiresAt: metadata.expiresAt ?? null,
+        status: existingIntent.status,
+      };
+    }
+
+    const monnifyData = await this.monnifyService.initializePayment(
+      context.user.email,
+      context.finalAmount,
+      bookingPaymentReference,
+      `${context.user.firstName} ${context.user.lastName}`.trim(),
+    );
+
+    const wallet = await this.getOrCreateWallet(userId);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
+    await this.prisma.transaction.create({
+      data: {
+        walletId: wallet.id,
+        amount: context.finalAmount,
+        type: TransactionType.BOOKING_PAYMENT,
+        status: TransactionStatus.PENDING,
+        paymentMethod: 'MONNIFY',
+        reference: bookingPaymentReference,
+        description: 'Booking payment intent via Monnify',
+        metadata: {
+          purpose: 'BOOKING_PAYMENT',
+          provider: 'monnify',
+          idempotencyKey: dto.idempotencyKey,
+          bookingPayload: dto.bookingPayload,
+          originalAmount: context.totalAmount,
+          finalAmount: context.finalAmount,
+          discountApplied: context.validatedDiscount
+            ? {
+                code: context.validatedDiscount.code,
+                percentage: context.validatedDiscount.percentage,
+                amount: context.discountAmount,
+              }
+            : null,
+          monnifyTransactionReference:
+            monnifyData.responseBody.transactionReference,
+          monnifyPaymentReference: monnifyData.responseBody.paymentReference,
+          checkoutUrl: monnifyData.responseBody.checkoutUrl,
+          expiresAt,
+        } as any,
+      },
+    });
+
+    return {
+      paymentUrl: monnifyData.responseBody.checkoutUrl,
+      checkoutUrl: monnifyData.responseBody.checkoutUrl,
+      bookingPaymentReference,
+      gatewayReference: monnifyData.responseBody.transactionReference,
+      expiresAt,
+    };
+  }
+
+  async verifyBookingPayment(userId: string, dto: VerifyBookingPaymentDto) {
+    if (dto.provider !== 'monnify') {
+      throw new BadRequestException('Only monnify is supported for booking payments');
+    }
+
+    const paymentIntent = await this.prisma.transaction.findFirst({
+      where: {
+        reference: dto.bookingPaymentReference,
+        type: TransactionType.BOOKING_PAYMENT,
+        wallet: { userId },
+      },
+    });
+
+    if (!paymentIntent) {
+      throw new NotFoundException('Booking payment reference not found');
+    }
+
+    const metadata =
+      (paymentIntent.metadata as Record<string, any> | null) ?? {};
+
+    if (paymentIntent.status === TransactionStatus.COMPLETED && metadata.bookingId) {
+      const existingBooking = await this.prisma.booking.findFirst({
+        where: { id: String(metadata.bookingId), userId },
+        include: { address: true },
+      });
+
+      if (existingBooking) {
+        return {
+          booking: {
+            ...existingBooking,
+            totalAmount: Number(existingBooking.totalAmount),
+            address: this.formatBookingAddress(existingBooking.address),
+          },
+          reservationCode:
+            String(metadata.reservationCode ?? existingBooking.reservationCode),
+          message: 'Booking payment already verified',
+        };
+      }
+    }
+
+    const monnifyTransactionReference = metadata.monnifyTransactionReference;
+    if (!monnifyTransactionReference) {
+      throw new BadRequestException(
+        'Gateway reference missing for this booking payment',
+      );
+    }
+
+    const verification = await this.monnifyService.verifyPayment(
+      String(monnifyTransactionReference),
+    );
+
+    if (verification.responseBody.paymentStatus !== 'PAID') {
+      await this.prisma.transaction.update({
+        where: { id: paymentIntent.id },
+        data: {
+          status: TransactionStatus.FAILED,
+          metadata: {
+            ...metadata,
+            paymentStatus: verification.responseBody.paymentStatus,
+          } as any,
+        },
+      });
+
+      throw new BadRequestException(
+        `Payment not completed. Status: ${verification.responseBody.paymentStatus}`,
+      );
+    }
+
+    const paidAmount = Number(verification.responseBody.amountPaid);
+    const expectedAmount = Number(paymentIntent.amount);
+    if (
+      !Number.isFinite(paidAmount) ||
+      Math.abs(paidAmount - expectedAmount) > 0.001
+    ) {
+      throw new BadRequestException('Payment amount mismatch');
+    }
+
+    const payload = metadata.bookingPayload as BookingPaymentPayloadDto | undefined;
+    if (!payload) {
+      throw new BadRequestException('Booking payload missing for this payment');
+    }
+
+    const context = await this.prepareBookingPaymentContext(userId, payload, true);
+    if (Math.abs(context.finalAmount - expectedAmount) > 0.001) {
+      throw new BadRequestException(
+        `Current booking amount (${context.finalAmount}) no longer matches initialized amount (${expectedAmount})`,
+      );
+    }
+
+    const reservationCode = await this.generateReservationCode();
+    const addressLabel = context.address
+      ? context.address.fullAddress
+      : 'In-store (Walk-in)';
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const lockedIntent = await tx.transaction.findUnique({
+        where: { id: paymentIntent.id },
+      });
+      const lockedMetadata =
+        (lockedIntent?.metadata as Record<string, any> | null) ?? {};
+
+      if (lockedIntent?.status === TransactionStatus.COMPLETED && lockedMetadata.bookingId) {
+        const existingBooking = await tx.booking.findUnique({
+          where: { id: String(lockedMetadata.bookingId) },
+          include: { address: true },
+        });
+
+        return {
+          booking: existingBooking,
+          reservationCode: String(
+            lockedMetadata.reservationCode ?? existingBooking?.reservationCode,
+          ),
+          discountUsageId: null as string | null,
+        };
+      }
+
+      const booking = await tx.booking.create({
+        data: {
+          userId,
+          services: context.serviceRecords,
+          addressId: payload.addressId ?? null,
+          bookingDate: context.bookingDate,
+          bookingTime: payload.time,
+          bookingType: payload.bookingType,
+          reservationCode,
+          guestName: payload.guestName ?? null,
+          guestPhone: payload.guestPhone ?? null,
+          guestEmail: payload.guestEmail ?? null,
+          totalAmount: context.finalAmount,
+          paymentMethod: PaymentMethod.MONNIFY,
+          status: BookingStatus.CONFIRMED,
+          notes:
+            `Paid online via MONNIFY (${dto.bookingPaymentReference})` +
+            (addressLabel ? ` | ${addressLabel}` : ''),
+        },
+        include: {
+          address: true,
+        },
+      });
+
+      let discountUsageId: string | null = null;
+      if (context.validatedDiscount) {
+        const usage = await tx.discountUsage.create({
+          data: {
+            discountCodeId: context.validatedDiscount.id,
+            userId,
+            bookingId: booking.id,
+            discountAmount: context.discountAmount,
+          },
+        });
+        discountUsageId = usage.id;
+      }
+
+      await tx.transaction.update({
+        where: { id: paymentIntent.id },
+        data: {
+          status: TransactionStatus.COMPLETED,
+          metadata: {
+            ...lockedMetadata,
+            ...verification.responseBody,
+            provider: 'monnify',
+            purpose: 'BOOKING_PAYMENT',
+            bookingId: booking.id,
+            reservationCode,
+            verifiedAt: new Date().toISOString(),
+          } as any,
+        },
+      });
+
+      return {
+        booking,
+        reservationCode,
+        discountUsageId,
+      };
+    });
+
+    if (!result.booking) {
+      throw new ConflictException('Booking payment already processed');
+    }
+
+    const emailServices = context.serviceRecords.map((s) => ({
+      name: s.name,
+      price: s.price,
+      duration: s.duration,
+    }));
+
+    void this.mailService.sendBookingConfirmationEmail(
+      context.user.email,
+      context.user.firstName,
+      {
+        services: emailServices,
+        date: payload.date,
+        time: payload.time,
+        address: addressLabel,
+        totalAmount: context.finalAmount,
+        paymentMethod: 'MONNIFY',
+        bookingIds: [result.booking.id],
+        reservationCode: result.reservationCode,
+      },
+    );
+
+    if (payload.guestEmail && payload.guestName) {
+      void this.mailService.sendGuestBookingEmail(payload.guestEmail, payload.guestName, {
+        services: emailServices,
+        date: payload.date,
+        time: payload.time,
+        address: addressLabel,
+        totalAmount: context.finalAmount,
+        reservationCode: result.reservationCode,
+        bookedByName: `${context.user.firstName} ${context.user.lastName}`.trim(),
+      });
+    }
+
+    if (context.validatedDiscount && result.discountUsageId) {
+      void (async () => {
+        try {
+          await this.discountService.incrementUsage(context.validatedDiscount!.code);
+        } catch (e) {
+          this.logger.warn(
+            `incrementUsage failed (booking payment, non-fatal): ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      })();
+    }
+
+    void this.redis.delByPattern('analytics:*');
+
+    return {
+      booking: {
+        ...result.booking,
+        totalAmount: Number(result.booking.totalAmount),
+        address: this.formatBookingAddress(result.booking.address),
+      },
+      reservationCode: result.reservationCode,
+      message: 'Booking payment verified and booking created',
+    };
+  }
+
+  async getBookingPaymentStatus(userId: string, bookingPaymentReference: string) {
+    const paymentIntent = await this.prisma.transaction.findFirst({
+      where: {
+        reference: bookingPaymentReference,
+        type: TransactionType.BOOKING_PAYMENT,
+        wallet: { userId },
+      },
+    });
+
+    if (!paymentIntent) {
+      throw new NotFoundException('Booking payment reference not found');
+    }
+
+    const metadata =
+      (paymentIntent.metadata as Record<string, any> | null) ?? {};
+
+    const bookingId =
+      typeof metadata.bookingId === 'string' ? metadata.bookingId : null;
+    const linkedBooking = bookingId
+      ? await this.prisma.booking.findFirst({
+          where: { id: bookingId, userId },
+          select: {
+            id: true,
+            reservationCode: true,
+            status: true,
+            totalAmount: true,
+            bookingDate: true,
+            bookingTime: true,
+          },
+        })
+      : null;
+
+    return {
+      bookingPaymentReference,
+      provider: metadata.provider ?? 'monnify',
+      status: paymentIntent.status,
+      amount: Number(paymentIntent.amount),
+      gatewayReference: metadata.monnifyTransactionReference ?? null,
+      paymentReference: metadata.monnifyPaymentReference ?? null,
+      expiresAt: metadata.expiresAt ?? null,
+      booking: linkedBooking
+        ? {
+            ...linkedBooking,
+            totalAmount: Number(linkedBooking.totalAmount),
+          }
+        : null,
     };
   }
 

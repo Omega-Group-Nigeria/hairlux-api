@@ -6,7 +6,7 @@ export interface BookingConfirmationData {
   time: string;
   address: string;
   totalAmount: number;
-  paymentMethod: 'WALLET' | 'CASH';
+  paymentMethod: 'WALLET' | 'CASH' | 'MONNIFY';
   bookingIds: string[];
   reservationCode: string;
 }
@@ -30,15 +30,18 @@ export function bookingConfirmationTemplate(
     )
     .join('');
 
-  const paymentBadgeColor =
-    booking.paymentMethod === 'WALLET' ? '#C9A872' : '#888888';
+  const isPrepaid =
+    booking.paymentMethod === 'WALLET' || booking.paymentMethod === 'MONNIFY';
+  const paymentBadgeColor = isPrepaid ? '#C9A872' : '#888888';
   const paymentLabel =
-    booking.paymentMethod === 'WALLET' ? 'Paid via Wallet' : 'Cash on Delivery';
-  const statusLabel =
-    booking.paymentMethod === 'WALLET' ? 'CONFIRMED' : 'PENDING';
-  const statusColor =
-    booking.paymentMethod === 'WALLET' ? '#1a7f4b' : '#b45309';
-  const statusBg = booking.paymentMethod === 'WALLET' ? '#d1fae5' : '#fef3c7';
+    booking.paymentMethod === 'WALLET'
+      ? 'Paid via Wallet'
+      : booking.paymentMethod === 'MONNIFY'
+        ? 'Paid Online (Monnify)'
+        : 'Cash on Delivery';
+  const statusLabel = isPrepaid ? 'CONFIRMED' : 'PENDING';
+  const statusColor = isPrepaid ? '#1a7f4b' : '#b45309';
+  const statusBg = isPrepaid ? '#d1fae5' : '#fef3c7';
 
   const content = `
     <p style="margin:0 0 4px;font-size:36px;text-align:center;">✨</p>

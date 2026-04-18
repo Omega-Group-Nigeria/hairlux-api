@@ -31,10 +31,12 @@ enum BookingStatus {
 enum PaymentMethod {
   WALLET
   CASH
+  MONNIFY
 }
 
 enum TransactionType {
   DEPOSIT
+  BOOKING_PAYMENT
   DEBIT
   CREDIT
   REFUND

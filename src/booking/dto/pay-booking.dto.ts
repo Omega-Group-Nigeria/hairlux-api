@@ -1,5 +1,5 @@
 import {
-  IsEnum,
+  IsIn,
   IsNotEmpty,
   IsArray,
   IsUUID,
@@ -25,9 +25,9 @@ export class PayBookingDto {
   @ApiProperty({
     example: 'WALLET',
     description: 'Payment method (WALLET or CASH)',
-    enum: PaymentMethod,
+    enum: ['WALLET', 'CASH'],
   })
-  @IsEnum(PaymentMethod, { message: 'Invalid payment method' })
+  @IsIn(['WALLET', 'CASH'], { message: 'Invalid payment method' })
   @IsNotEmpty({ message: 'Payment method is required' })
   paymentMethod: PaymentMethod;
 }

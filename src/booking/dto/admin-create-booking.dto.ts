@@ -2,6 +2,7 @@ import {
   IsString,
   IsDateString,
   IsEnum,
+  IsIn,
   IsOptional,
   ValidateIf,
   IsUUID,
@@ -91,11 +92,11 @@ export class AdminCreateBookingDto {
 
   @ApiPropertyOptional({
     description: 'Payment method',
-    enum: PaymentMethod,
+    enum: ['WALLET', 'CASH'],
     example: 'CASH',
   })
   @IsOptional()
-  @IsEnum(PaymentMethod)
+  @IsIn(['WALLET', 'CASH'])
   paymentMethod?: PaymentMethod;
 
   @ApiPropertyOptional({

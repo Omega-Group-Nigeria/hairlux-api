@@ -9,6 +9,7 @@ import {
   ValidateNested,
   ArrayMinSize,
   IsEnum,
+  IsIn,
   ValidateIf,
   Matches,
 } from 'class-validator';
@@ -110,10 +111,12 @@ export class CreateBookingDto {
   @ApiProperty({
     description:
       'Payment method. WALLET deducts from your wallet balance immediately. CASH reserves the slot and payment is collected on delivery.',
-    enum: PaymentMethod,
+    enum: ['WALLET', 'CASH'],
     example: 'WALLET',
   })
-  @IsEnum(PaymentMethod, { message: 'paymentMethod must be WALLET or CASH' })
+  @IsIn(['WALLET', 'CASH'], {
+    message: 'paymentMethod must be WALLET or CASH',
+  })
   paymentMethod: PaymentMethod;
 
   @ApiPropertyOptional({

@@ -820,10 +820,13 @@ export class UserService {
     ]);
 
     return {
-      transactions: transactions.map((t) => ({
-        ...t,
-        amount: Number(t.amount),
-      })),
+      transactions: transactions.map((t) => {
+        const { metadata, ...safeTransaction } = t;
+        return {
+          ...safeTransaction,
+          amount: Number(safeTransaction.amount),
+        };
+      }),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }

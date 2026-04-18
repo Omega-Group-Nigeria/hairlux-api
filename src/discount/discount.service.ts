@@ -312,7 +312,17 @@ export class DiscountService {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          influencer: true,
+          influencer: {
+            include: {
+              user: {
+                select: {
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                },
+              },
+            },
+          },
           _count: { select: { usages: true } },
         },
       }),
@@ -335,8 +345,20 @@ export class DiscountService {
             _sum: { rewardAmount: true },
           }),
         ]);
+
+        const influencerName = c.influencer
+          ? `${c.influencer.user.firstName} ${c.influencer.user.lastName}`.trim()
+          : null;
+
         return {
           ...c,
+          influencer: c.influencer
+            ? {
+                ...c.influencer,
+                name: influencerName,
+                email: c.influencer.user.email,
+              }
+            : null,
           stats: {
             totalUsages: c._count.usages,
             totalDiscountGiven: Number(discountGiven._sum.discountAmount ?? 0),

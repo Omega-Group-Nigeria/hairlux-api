@@ -18,6 +18,8 @@ import {
 } from '@nestjs/swagger';
 import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { InitializeBookingPaymentDto } from './dto/initialize-booking-payment.dto';
+import { VerifyBookingPaymentDto } from './dto/verify-booking-payment.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
 import { Public } from '../auth/decorators/public.decorator';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
@@ -188,6 +190,114 @@ export class BookingController {
     return {
       success: true,
       message: data.message,
+      data,
+    };
+  }
+
+  @Post('payments/initialize')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Initialize booking payment intent',
+    description:
+      'Creates a Monnify booking payment intent without funding wallet balance. ' +
+      'Booking is only created after successful verify.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Booking payment initialized successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Booking payment initialized successfully',
+        data: {
+          paymentUrl: 'https://checkout.monnify.com/xxx',
+          checkoutUrl: 'https://checkout.monnify.com/xxx',
+          bookingPaymentReference: 'BOOKPAY-MONF-ABC123',
+          gatewayReference: 'MNFY|14|20260418204651|000112',
+          expiresAt: '2026-04-18T21:16:10.028Z',
+        },
+      },
+    },
+  })
+  async initializePayment(
+    @GetUser('id') userId: string,
+    @Body() dto: InitializeBookingPaymentDto,
+  ) {
+    const data = await this.bookingService.initializeBookingPayment(userId, dto);
+    return {
+      success: true,
+      message: 'Booking payment initialized successfully',
+      data,
+    };
+  }
+
+  @Post('payments/verify')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Verify booking payment and create booking',
+    description:
+      'Verifies Monnify booking payment by bookingPaymentReference, creates booking once paid, and sends booking email.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Booking payment verified successfully',
+    schema: {
+      example: {
+        success: true,
+        message: 'Booking payment verified successfully',
+        data: {
+          reservationCode: 'HLX-A3K9',
+          message: 'Booking payment verified and booking created',
+          booking: {
+            id: '123e4567-e89b-12d3-a456-426614174010',
+            status: 'CONFIRMED',
+          },
+        },
+      },
+    },
+  })
+  async verifyPayment(
+    @GetUser('id') userId: string,
+    @Body() dto: VerifyBookingPaymentDto,
+  ) {
+    const data = await this.bookingService.verifyBookingPayment(userId, dto);
+    return {
+      success: true,
+      message: 'Booking payment verified successfully',
+      data,
+    };
+  }
+
+  @Get('payments/:bookingPaymentReference')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Get booking payment status',
+    description:
+      'Returns booking payment status and linked booking status for polling/recovery flows.',
+  })
+  @ApiParam({
+    name: 'bookingPaymentReference',
+    example: 'BOOKPAY-MONF-ABC123',
+    description: 'Internal booking payment reference',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Booking payment status retrieved successfully',
+  })
+  async getPaymentStatus(
+    @GetUser('id') userId: string,
+    @Param('bookingPaymentReference') bookingPaymentReference: string,
+  ) {
+    const data = await this.bookingService.getBookingPaymentStatus(
+      userId,
+      bookingPaymentReference,
+    );
+    return {
+      success: true,
+      message: 'Booking payment status retrieved successfully',
       data,
     };
   }

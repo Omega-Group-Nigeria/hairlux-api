@@ -54,19 +54,23 @@ export class AnalyticsService {
       this.prisma.user.count({
         where: { role: UserRole.USER, status: UserStatus.ACTIVE },
       }),
-      // Today's revenue: wallet-paid bookings created today (CONFIRMED or COMPLETED)
+      // Today's revenue: prepaid bookings created today (WALLET or MONNIFY)
       this.prisma.booking.aggregate({
         where: {
-          paymentMethod: PaymentMethod.WALLET,
+          paymentMethod: {
+            in: [PaymentMethod.WALLET, PaymentMethod.MONNIFY],
+          },
           status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED] },
           createdAt: { gte: startOfToday, lte: endOfToday },
         },
         _sum: { totalAmount: true },
       }),
-      // All-time booking revenue: wallet-paid bookings (CONFIRMED or COMPLETED)
+      // All-time booking revenue: prepaid bookings (WALLET or MONNIFY)
       this.prisma.booking.aggregate({
         where: {
-          paymentMethod: PaymentMethod.WALLET,
+          paymentMethod: {
+            in: [PaymentMethod.WALLET, PaymentMethod.MONNIFY],
+          },
           status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED] },
         },
         _sum: { totalAmount: true },
@@ -145,10 +149,12 @@ export class AnalyticsService {
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
 
-    // Revenue = wallet-paid bookings (CONFIRMED or COMPLETED) created in range
+    // Revenue = prepaid bookings (WALLET or MONNIFY) created in range
     const paidBookings = await this.prisma.booking.findMany({
       where: {
-        paymentMethod: PaymentMethod.WALLET,
+        paymentMethod: {
+          in: [PaymentMethod.WALLET, PaymentMethod.MONNIFY],
+        },
         status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED] },
         createdAt: { gte: start, lte: end },
       },
