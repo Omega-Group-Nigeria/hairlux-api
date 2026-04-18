@@ -5,11 +5,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   Transaction,
   TransactionStatus,
+  TransactionType,
   Wallet,
 } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
 import { RedisService } from '../redis/redis.service';
 import { ReferralService } from '../referral/referral.service';
+import { BookingService } from '../booking/booking.service';
 
 type TransactionWithWallet = Transaction & {
   wallet: Pick<Wallet, 'id' | 'userId'>;
@@ -40,6 +42,7 @@ export class MonnifyWebhookProcessor {
     private mailService: MailService,
     private redis: RedisService,
     private referralService: ReferralService,
+    private bookingService: BookingService,
   ) {}
 
   @Process('deposit-webhook')
@@ -69,6 +72,15 @@ export class MonnifyWebhookProcessor {
           `Transaction not found for Monnify ref: ${eventData.paymentReference}`,
         );
         return { status: 'not_found', reference: eventData.paymentReference };
+      }
+
+      if (transaction.type === TransactionType.BOOKING_PAYMENT) {
+        this.logger.log(
+          `Processing booking payment webhook: ${transaction.reference}`,
+        );
+        return this.bookingService.verifyBookingPaymentByReference(
+          transaction.reference,
+        );
       }
 
       return this.processTransaction(transaction, eventData);

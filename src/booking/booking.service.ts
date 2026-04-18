@@ -726,9 +726,23 @@ export class BookingService {
       true,
     );
 
-    if (Math.abs(Number(dto.amount) - context.finalAmount) > 0.001) {
+    const wallet = await this.getOrCreateWallet(userId);
+    const walletBalance = Number(wallet.balance);
+    const walletContribution = Math.min(walletBalance, context.finalAmount);
+    const requiredExternalAmount = Math.max(
+      0,
+      Math.round((context.finalAmount - walletContribution) * 100) / 100,
+    );
+
+    if (requiredExternalAmount <= 0) {
       throw new BadRequestException(
-        `Amount mismatch. Expected ${context.finalAmount}, got ${dto.amount}`,
+        'Wallet balance is sufficient. Complete this booking with WALLET payment.',
+      );
+    }
+
+    if (Math.abs(Number(dto.amount) - requiredExternalAmount) > 0.001) {
+      throw new BadRequestException(
+        `Amount mismatch. Expected wallet shortfall ${requiredExternalAmount}, got ${dto.amount}`,
       );
     }
 
@@ -754,23 +768,27 @@ export class BookingService {
         gatewayReference: metadata.monnifyTransactionReference ?? null,
         expiresAt: metadata.expiresAt ?? null,
         status: existingIntent.status,
+        walletContribution:
+          typeof metadata.walletContribution === 'number'
+            ? metadata.walletContribution
+            : null,
+        amountToPay: Number(existingIntent.amount),
       };
     }
 
     const monnifyData = await this.monnifyService.initializePayment(
       context.user.email,
-      context.finalAmount,
+      requiredExternalAmount,
       bookingPaymentReference,
       `${context.user.firstName} ${context.user.lastName}`.trim(),
     );
 
-    const wallet = await this.getOrCreateWallet(userId);
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
     await this.prisma.transaction.create({
       data: {
         walletId: wallet.id,
-        amount: context.finalAmount,
+        amount: requiredExternalAmount,
         type: TransactionType.BOOKING_PAYMENT,
         status: TransactionStatus.PENDING,
         paymentMethod: 'MONNIFY',
@@ -783,6 +801,9 @@ export class BookingService {
           bookingPayload: dto.bookingPayload,
           originalAmount: context.totalAmount,
           finalAmount: context.finalAmount,
+          walletBalanceAtInit: walletBalance,
+          walletContribution,
+          amountToPay: requiredExternalAmount,
           discountApplied: context.validatedDiscount
             ? {
                 code: context.validatedDiscount.code,
@@ -805,6 +826,9 @@ export class BookingService {
       bookingPaymentReference,
       gatewayReference: monnifyData.responseBody.transactionReference,
       expiresAt,
+      walletContribution,
+      amountToPay: requiredExternalAmount,
+      totalAmount: context.finalAmount,
     };
   }
 
@@ -891,9 +915,12 @@ export class BookingService {
     }
 
     const context = await this.prepareBookingPaymentContext(userId, payload, true);
-    if (Math.abs(context.finalAmount - expectedAmount) > 0.001) {
+    const expectedWalletContribution = Number(metadata.walletContribution ?? 0);
+    const expectedTotalFromParts =
+      Math.round((expectedAmount + expectedWalletContribution) * 100) / 100;
+    if (Math.abs(context.finalAmount - expectedTotalFromParts) > 0.001) {
       throw new BadRequestException(
-        `Current booking amount (${context.finalAmount}) no longer matches initialized amount (${expectedAmount})`,
+        `Current booking amount (${context.finalAmount}) no longer matches initialized split (${expectedTotalFromParts})`,
       );
     }
 
@@ -909,6 +936,10 @@ export class BookingService {
       const lockedMetadata =
         (lockedIntent?.metadata as Record<string, any> | null) ?? {};
 
+      const walletContributionToDebit = Number(
+        lockedMetadata.walletContribution ?? 0,
+      );
+
       if (lockedIntent?.status === TransactionStatus.COMPLETED && lockedMetadata.bookingId) {
         const existingBooking = await tx.booking.findUnique({
           where: { id: String(lockedMetadata.bookingId) },
@@ -922,6 +953,31 @@ export class BookingService {
           ),
           discountUsageId: null as string | null,
         };
+      }
+
+      if (walletContributionToDebit > 0) {
+        const wallet = await tx.wallet.findUnique({
+          where: { id: paymentIntent.walletId },
+        });
+
+        if (!wallet) {
+          throw new NotFoundException('Wallet not found');
+        }
+
+        if (Number(wallet.balance) < walletContributionToDebit) {
+          throw new BadRequestException(
+            `Wallet balance changed before verification. Needed ${walletContributionToDebit}, available ${Number(wallet.balance)}`,
+          );
+        }
+
+        await tx.wallet.update({
+          where: { id: paymentIntent.walletId },
+          data: {
+            balance: {
+              decrement: walletContributionToDebit,
+            },
+          },
+        });
       }
 
       const booking = await tx.booking.create({
@@ -949,6 +1005,26 @@ export class BookingService {
       });
 
       let discountUsageId: string | null = null;
+
+      if (walletContributionToDebit > 0) {
+        await tx.transaction.create({
+          data: {
+            walletId: paymentIntent.walletId,
+            amount: walletContributionToDebit,
+            type: TransactionType.DEBIT,
+            paymentMethod: 'WALLET',
+            reference: `BOOK-WAL-${booking.id}`,
+            description: `Wallet contribution for booking payment ${dto.bookingPaymentReference}`,
+            status: TransactionStatus.COMPLETED,
+            metadata: {
+              purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
+              bookingId: booking.id,
+              bookingPaymentReference: dto.bookingPaymentReference,
+            } as any,
+          },
+        });
+      }
+
       if (context.validatedDiscount) {
         const usage = await tx.discountUsage.create({
           data: {
@@ -972,6 +1048,7 @@ export class BookingService {
             purpose: 'BOOKING_PAYMENT',
             bookingId: booking.id,
             reservationCode,
+            walletContributionUsed: walletContributionToDebit,
             verifiedAt: new Date().toISOString(),
           } as any,
         },
@@ -1034,6 +1111,9 @@ export class BookingService {
     }
 
     void this.redis.delByPattern('analytics:*');
+    if (expectedWalletContribution > 0) {
+      void this.redis.del(`wallet:balance:${userId}`);
+    }
 
     return {
       booking: {
@@ -1043,6 +1123,38 @@ export class BookingService {
       },
       reservationCode: result.reservationCode,
       message: 'Booking payment verified and booking created',
+    };
+  }
+
+  async verifyBookingPaymentByReference(bookingPaymentReference: string) {
+    const paymentIntent = await this.prisma.transaction.findFirst({
+      where: {
+        reference: bookingPaymentReference,
+        type: TransactionType.BOOKING_PAYMENT,
+      },
+      include: {
+        wallet: {
+          select: {
+            userId: true,
+          },
+        },
+      },
+    });
+
+    if (!paymentIntent) {
+      return { status: 'not_found', bookingPaymentReference };
+    }
+
+    const result = await this.verifyBookingPayment(paymentIntent.wallet.userId, {
+      bookingPaymentReference,
+      provider: 'monnify',
+    });
+
+    return {
+      status: 'processed',
+      bookingPaymentReference,
+      reservationCode: result.reservationCode,
+      bookingId: result.booking.id,
     };
   }
 

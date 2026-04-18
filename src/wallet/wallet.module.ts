@@ -9,6 +9,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { PaymentModule } from '../payment/payment.module';
 import { MailModule } from '../mail/mail.module';
 import { ReferralModule } from '../referral/referral.module';
+import { BookingModule } from '../booking/booking.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ReferralModule } from '../referral/referral.module';
     PaymentModule,
     MailModule,
     ReferralModule,
+    BookingModule,
     BullModule.registerQueue(
       { name: 'paystack-webhooks' },
       { name: 'monnify-webhooks' },
