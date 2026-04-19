@@ -57,7 +57,6 @@ export class RolesController {
               group: 'Bookings',
               permissions: [
                 { key: 'bookings:read', label: 'View bookings' },
-                { key: 'bookings:create', label: 'Create bookings' },
                 {
                   key: 'bookings:update_status',
                   label: 'Update booking status',

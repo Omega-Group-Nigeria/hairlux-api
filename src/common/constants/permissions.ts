@@ -1,7 +1,6 @@
 export const PERMISSIONS = {
   // ── Bookings ────────────────────────────────────────────────────────────────
   BOOKINGS_READ: 'bookings:read', // View all bookings
-  BOOKINGS_CREATE: 'bookings:create', // Create manual bookings (walk-in / phone)
   BOOKINGS_UPDATE_STATUS: 'bookings:update_status', // Confirm / complete / cancel
   BOOKINGS_VERIFY_RESERVATION: 'bookings:verify_reservation', // Look up & mark codes used
   BOOKINGS_MANAGE_SCHEDULE: 'bookings:manage_schedule', // Manage business hours & exceptions
@@ -79,7 +78,6 @@ export const PERMISSION_GROUPS = [
     group: 'Bookings',
     permissions: [
       { key: PERMISSIONS.BOOKINGS_READ, label: 'View bookings' },
-      { key: PERMISSIONS.BOOKINGS_CREATE, label: 'Create manual bookings' },
       {
         key: PERMISSIONS.BOOKINGS_UPDATE_STATUS,
         label: 'Update booking status',
