@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import { UserRole } from '@prisma/client';
@@ -65,10 +69,13 @@ export class MailService {
         ? baseUrl.slice(0, -1)
         : baseUrl;
 
-      const resetUrl =
-        role === UserRole.USER
-          ? `${normalizedBase}/reset-password.html?token=${encodeURIComponent(resetToken)}`
-          : `${normalizedBase}${normalizedBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(resetToken)}`;
+      const [baseWithoutQuery, existingQuery = ''] = normalizedBase.split('?');
+      const resetPageBase = baseWithoutQuery.endsWith('/reset-password.html')
+        ? baseWithoutQuery
+        : `${baseWithoutQuery}/reset-password.html`;
+      const queryParams = new URLSearchParams(existingQuery);
+      queryParams.set('token', resetToken);
+      const resetUrl = `${resetPageBase}?${queryParams.toString()}`;
 
       await this.emailQueue.add(
         'send',
