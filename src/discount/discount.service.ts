@@ -536,28 +536,48 @@ export class DiscountService {
       const influencerId = usage.discountCode.influencerId;
       if (!influencerId) return;
 
-      const settings = await this.getInfluencerRewardSettings();
-      if (!settings.isActive) {
-        this.logger.log('Influencer reward system inactive — skipping');
-        return;
-      }
+      const existingReward = await this.prisma.influencerReward.findUnique({
+        where: { usageId },
+        select: {
+          influencerId: true,
+          rewardAmount: true,
+          status: true,
+        },
+      });
 
-      if (paidAmount < Number(settings.minPurchaseAmount)) {
+      if (existingReward?.status === ReferralStatus.REWARDED) {
         this.logger.log(
-          `Booking ₦${paidAmount} below min ₦${settings.minPurchaseAmount} — skipping influencer reward`,
+          `Reward for usage ${usageId} already marked as REWARDED — skipping`,
         );
         return;
       }
 
-      const discountAmount = Number(usage.discountAmount);
       let rewardAmount: number;
-      if (settings.rewardType === ReferralRewardType.FIXED) {
-        rewardAmount = Number(settings.rewardValue);
+      if (existingReward?.status === ReferralStatus.PENDING) {
+        rewardAmount = Number(existingReward.rewardAmount);
       } else {
-        rewardAmount = Math.min(
-          (discountAmount * Number(settings.rewardValue)) / 100,
-          discountAmount,
-        );
+        const settings = await this.getInfluencerRewardSettings();
+        if (!settings.isActive) {
+          this.logger.log('Influencer reward system inactive — skipping');
+          return;
+        }
+
+        if (paidAmount < Number(settings.minPurchaseAmount)) {
+          this.logger.log(
+            `Booking ₦${paidAmount} below min ₦${settings.minPurchaseAmount} — skipping influencer reward`,
+          );
+          return;
+        }
+
+        const discountAmount = Number(usage.discountAmount);
+        if (settings.rewardType === ReferralRewardType.FIXED) {
+          rewardAmount = Number(settings.rewardValue);
+        } else {
+          rewardAmount = Math.min(
+            (discountAmount * Number(settings.rewardValue)) / 100,
+            discountAmount,
+          );
+        }
       }
 
       rewardAmount = Math.round(rewardAmount * 100) / 100;
@@ -593,11 +613,8 @@ export class DiscountService {
         return;
       }
 
-      // Atomic: create reward + credit wallet + create transaction, then link
-      // The DB unique constraint on usageId is the idempotency guard — if two
-      // concurrent calls race past the early-return checks, only one will
-      // succeed; the other gets a P2002 unique-constraint violation which we
-      // treat as "already processed" (not an error).
+      // Atomic: create reward transaction, then promote/create reward, then
+      // credit wallet. If a race is detected, the transaction is rolled back.
       try {
         await this.prisma.$transaction(async (tx) => {
           const txRecord = await tx.transaction.create({
@@ -612,15 +629,35 @@ export class DiscountService {
             },
           });
 
-          await tx.influencerReward.create({
-            data: {
-              influencerId,
-              usageId,
-              rewardAmount,
-              status: ReferralStatus.REWARDED,
-              walletTransactionId: txRecord.id,
-            },
-          });
+          if (existingReward?.status === ReferralStatus.PENDING) {
+            const promoted = await tx.influencerReward.updateMany({
+              where: {
+                usageId,
+                status: ReferralStatus.PENDING,
+              },
+              data: {
+                status: ReferralStatus.REWARDED,
+                rewardAmount,
+                walletTransactionId: txRecord.id,
+              },
+            });
+
+            if (promoted.count === 0) {
+              throw new BadRequestException(
+                `Reward for usage ${usageId} was already processed`,
+              );
+            }
+          } else {
+            await tx.influencerReward.create({
+              data: {
+                influencerId,
+                usageId,
+                rewardAmount,
+                status: ReferralStatus.REWARDED,
+                walletTransactionId: txRecord.id,
+              },
+            });
+          }
 
           await tx.wallet.update({
             where: { id: wallet.id },
@@ -628,15 +665,26 @@ export class DiscountService {
           });
         });
       } catch (txErr: unknown) {
-        // P2002 = unique constraint violation — reward already exists (race condition)
+        if (
+          txErr instanceof BadRequestException &&
+          txErr.message.includes('already processed')
+        ) {
+          this.logger.log(
+            `Reward for usage ${usageId} already processed by another request — skipping`,
+          );
+          return;
+        }
+
+        // P2002 = unique constraint violation, P2025 = record missing for update
         if (
           typeof txErr === 'object' &&
           txErr !== null &&
           'code' in txErr &&
-          (txErr as { code: string }).code === 'P2002'
+          ((txErr as { code: string }).code === 'P2002' ||
+            (txErr as { code: string }).code === 'P2025')
         ) {
           this.logger.log(
-            `Reward for usage ${usageId} already exists (race condition caught at DB) — skipping`,
+            `Reward for usage ${usageId} already processed (race condition caught at DB) — skipping`,
           );
           return;
         }

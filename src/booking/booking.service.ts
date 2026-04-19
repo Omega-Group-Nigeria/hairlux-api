@@ -28,6 +28,10 @@ import { CreateBusinessExceptionDto } from './dto/create-business-exception.dto'
 import {
   BookingStatus,
   PaymentMethod,
+  Prisma,
+  DiscountType,
+  ReferralRewardType,
+  ReferralStatus,
   TransactionType,
   TransactionStatus,
   BookingType,
@@ -121,6 +125,124 @@ export class BookingService {
       addressComponents: raw.addressComponents ?? null,
       isDefault: raw.isDefault ?? false,
     };
+  }
+
+  private async awardInfluencerRewardIfEligibleTx(
+    tx: Prisma.TransactionClient,
+    usageId: string,
+    paidAmount: number,
+  ): Promise<string | null> {
+    const usage = await tx.discountUsage.findUnique({
+      where: { id: usageId },
+      include: {
+        discountCode: {
+          select: {
+            type: true,
+            influencerId: true,
+          },
+        },
+      },
+    });
+
+    if (!usage) return null;
+    if (usage.discountCode.type !== DiscountType.INFLUENCER) return null;
+
+    const influencerId = usage.discountCode.influencerId;
+    if (!influencerId) return null;
+
+    const settings = await tx.influencerRewardSettings.findFirst();
+    if (!settings?.isActive) return null;
+    if (paidAmount < Number(settings.minPurchaseAmount)) return null;
+
+    const discountAmount = Number(usage.discountAmount);
+    let rewardAmount: number;
+    if (settings.rewardType === ReferralRewardType.FIXED) {
+      rewardAmount = Number(settings.rewardValue);
+    } else {
+      rewardAmount = Math.min(
+        (discountAmount * Number(settings.rewardValue)) / 100,
+        discountAmount,
+      );
+    }
+    rewardAmount = Math.round(rewardAmount * 100) / 100;
+    if (rewardAmount <= 0) return null;
+
+    const influencer = await tx.influencer.findUnique({
+      where: { id: influencerId },
+      select: { userId: true },
+    });
+    if (!influencer) return null;
+
+    const existingReward = await tx.influencerReward.findUnique({
+      where: { usageId },
+      select: { status: true },
+    });
+    if (existingReward?.status === ReferralStatus.REWARDED) {
+      return influencer.userId;
+    }
+
+    const influencerWallet = await tx.wallet.upsert({
+      where: { userId: influencer.userId },
+      update: {},
+      create: {
+        userId: influencer.userId,
+        balance: 0,
+      },
+    });
+
+    const rewardReference = `INFL-REWARD-${usageId}`;
+
+    try {
+      const rewardTx = await tx.transaction.create({
+        data: {
+          walletId: influencerWallet.id,
+          type: TransactionType.INFLUENCER_REWARD,
+          status: TransactionStatus.COMPLETED,
+          paymentMethod: 'REFERRAL',
+          amount: rewardAmount,
+          reference: rewardReference,
+          description: 'Influencer reward for discount usage',
+        },
+      });
+
+      await tx.influencerReward.upsert({
+        where: { usageId },
+        update: {
+          influencerId,
+          rewardAmount,
+          status: ReferralStatus.REWARDED,
+          walletTransactionId: rewardTx.id,
+        },
+        create: {
+          influencerId,
+          usageId,
+          rewardAmount,
+          status: ReferralStatus.REWARDED,
+          walletTransactionId: rewardTx.id,
+        },
+      });
+
+      await tx.wallet.update({
+        where: { id: influencerWallet.id },
+        data: {
+          balance: {
+            increment: rewardAmount,
+          },
+        },
+      });
+    } catch (err) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: string }).code === 'P2002'
+      ) {
+        return influencer.userId;
+      }
+      throw err;
+    }
+
+    return influencer.userId;
   }
 
   async checkAvailability(queryDto: CheckAvailabilityDto) {
@@ -372,7 +494,7 @@ export class BookingService {
         });
 
         // Track discount usage
-        let discountUsageId: string | null = null;
+        let influencerRewardUserId: string | null = null;
         if (validatedDiscount) {
           const usage = await tx.discountUsage.create({
             data: {
@@ -382,13 +504,23 @@ export class BookingService {
               discountAmount,
             },
           });
-          discountUsageId = usage.id;
+
+          await tx.discountCode.update({
+            where: { id: validatedDiscount.id },
+            data: { usedCount: { increment: 1 } },
+          });
+
+          influencerRewardUserId = await this.awardInfluencerRewardIfEligibleTx(
+            tx,
+            usage.id,
+            finalAmount,
+          );
         }
 
-        return { booking, discountUsageId };
+        return { booking, influencerRewardUserId };
       });
 
-      const { booking, discountUsageId } = walletResult;
+      const { booking, influencerRewardUserId } = walletResult;
 
       // Queue emails (non-blocking — void fires and forgets into Bull queue)
       const addressStr = address
@@ -433,20 +565,10 @@ export class BookingService {
       void Promise.all([
         this.redis.delByPattern('analytics:*'),
         this.redis.del(`wallet:balance:${userId}`),
+        ...(influencerRewardUserId
+          ? [this.redis.del(`wallet:balance:${influencerRewardUserId}`)]
+          : []),
       ]);
-
-      // Non-fatal: increment usage count (reward triggered on COMPLETED, not on create)
-      if (validatedDiscount && discountUsageId) {
-        void (async () => {
-          try {
-            await this.discountService.incrementUsage(validatedDiscount!.code);
-          } catch (e) {
-            this.logger.warn(
-              `incrementUsage failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
-        })();
-      }
 
       return {
         booking: {
@@ -532,7 +654,7 @@ export class BookingService {
       });
     }
 
-    // Non-fatal: track discount usage + increment (reward triggered on COMPLETED, not on create)
+    // Non-fatal: track discount usage and increment usage
     if (validatedDiscount) {
       void (async () => {
         try {
@@ -1004,7 +1126,7 @@ export class BookingService {
         },
       });
 
-      let discountUsageId: string | null = null;
+      let influencerRewardUserId: string | null = null;
 
       if (walletContributionToDebit > 0) {
         await tx.transaction.create({
@@ -1034,7 +1156,17 @@ export class BookingService {
             discountAmount: context.discountAmount,
           },
         });
-        discountUsageId = usage.id;
+
+        await tx.discountCode.update({
+          where: { id: context.validatedDiscount.id },
+          data: { usedCount: { increment: 1 } },
+        });
+
+        influencerRewardUserId = await this.awardInfluencerRewardIfEligibleTx(
+          tx,
+          usage.id,
+          context.finalAmount,
+        );
       }
 
       await tx.transaction.update({
@@ -1057,7 +1189,7 @@ export class BookingService {
       return {
         booking,
         reservationCode,
-        discountUsageId,
+        influencerRewardUserId,
       };
     });
 
@@ -1098,21 +1230,12 @@ export class BookingService {
       });
     }
 
-    if (context.validatedDiscount && result.discountUsageId) {
-      void (async () => {
-        try {
-          await this.discountService.incrementUsage(context.validatedDiscount!.code);
-        } catch (e) {
-          this.logger.warn(
-            `incrementUsage failed (booking payment, non-fatal): ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-      })();
-    }
-
     void this.redis.delByPattern('analytics:*');
     if (expectedWalletContribution > 0) {
       void this.redis.del(`wallet:balance:${userId}`);
+    }
+    if (result.influencerRewardUserId) {
+      void this.redis.del(`wallet:balance:${result.influencerRewardUserId}`);
     }
 
     return {
@@ -1838,27 +1961,6 @@ export class BookingService {
         : []),
     ]);
 
-    // Trigger influencer reward when booking reaches COMPLETED
-    if (status === BookingStatus.COMPLETED) {
-      void (async () => {
-        try {
-          const usage = await this.prisma.discountUsage.findUnique({
-            where: { bookingId: id },
-          });
-          if (usage) {
-            await this.discountService.processInfluencerReward(
-              usage.id,
-              Number(booking.totalAmount),
-            );
-          }
-        } catch (e) {
-          this.logger.warn(
-            `processInfluencerReward (COMPLETED) failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-      })();
-    }
-
     return {
       ...result,
       totalAmount: Number(result.totalAmount),
@@ -2266,30 +2368,6 @@ export class BookingService {
     });
 
     void this.redis.delByPattern('analytics:*');
-
-    // For WALK_IN bookings, status becomes COMPLETED immediately — trigger reward
-    if (
-      booking.bookingType === BookingType.WALK_IN &&
-      updated.status === BookingStatus.COMPLETED
-    ) {
-      void (async () => {
-        try {
-          const usage = await this.prisma.discountUsage.findUnique({
-            where: { bookingId: booking.id },
-          });
-          if (usage) {
-            await this.discountService.processInfluencerReward(
-              usage.id,
-              Number(booking.totalAmount),
-            );
-          }
-        } catch (e) {
-          this.logger.warn(
-            `processInfluencerReward (useReservation) failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`,
-          );
-        }
-      })();
-    }
 
     return {
       ...updated,
