@@ -258,6 +258,7 @@ export class MailService {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Error queuing staff birthday email:`, errorMessage);
+      throw error;
     }
   }
 

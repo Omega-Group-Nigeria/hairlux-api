@@ -121,7 +121,7 @@ type StaffTransactionClient = {
 @Injectable()
 export class StaffService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(StaffService.name);
-  private birthdayInterval: NodeJS.Timeout | null = null;
+  private birthdayTimeout: NodeJS.Timeout | null = null;
 
   constructor(
     private prisma: PrismaService,
@@ -146,22 +146,44 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       .staffLocation;
   }
 
+  private scheduleNextBirthdayRun(fromDate = new Date()) {
+    if (this.birthdayTimeout) {
+      clearTimeout(this.birthdayTimeout);
+      this.birthdayTimeout = null;
+    }
+
+    const nextRun = new Date(fromDate);
+    nextRun.setHours(0, 1, 0, 0); // 00:01 local server time
+    if (nextRun <= fromDate) {
+      nextRun.setDate(nextRun.getDate() + 1);
+    }
+
+    const delay = Math.max(0, nextRun.getTime() - fromDate.getTime());
+
+    this.logger.log(
+      `Next birthday email check scheduled for ${nextRun.toISOString()}`,
+    );
+
+    this.birthdayTimeout = setTimeout(() => {
+      void this.sendBirthdayEmailsForToday().finally(() => {
+        this.scheduleNextBirthdayRun();
+      });
+    }, delay);
+  }
+
   onModuleInit() {
-    // Run once shortly after boot, then every hour.
+    // Run once shortly after boot, then once daily at 00:01 server time.
     setTimeout(() => {
       void this.sendBirthdayEmailsForToday();
     }, 15000);
 
-    this.birthdayInterval = setInterval(
-      () => void this.sendBirthdayEmailsForToday(),
-      60 * 60 * 1000,
-    );
+    this.scheduleNextBirthdayRun();
   }
 
   onModuleDestroy() {
-    if (this.birthdayInterval) {
-      clearInterval(this.birthdayInterval);
-      this.birthdayInterval = null;
+    if (this.birthdayTimeout) {
+      clearTimeout(this.birthdayTimeout);
+      this.birthdayTimeout = null;
     }
   }
 
@@ -910,6 +932,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       });
 
       for (const staff of birthdayToday) {
+        const previousYear = staff.birthdayLastEmailedYear;
         const updated = await this.staffModel.updateMany({
           where: {
             id: staff.id,
@@ -925,8 +948,28 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         if (updated.count > 0 && staff.email) {
           const firstName = staff.name.split(' ')[0] || staff.name;
           const email = staff.email;
-          await this.mailService.sendStaffBirthdayEmail(email, firstName);
-          this.logger.log(`Birthday email queued for staff ${staff.id}`);
+          try {
+            await this.mailService.sendStaffBirthdayEmail(email, firstName);
+            this.logger.log(`Birthday email queued for staff ${staff.id}`);
+          } catch (queueError) {
+            const rolledBack = await this.staffModel.updateMany({
+              where: {
+                id: staff.id,
+                birthdayLastEmailedYear: currentYear,
+              },
+              data: {
+                birthdayLastEmailedYear: previousYear,
+              },
+            });
+
+            this.logger.error(
+              `Birthday email queue failed for staff ${staff.id}; marker rollback ${rolledBack.count > 0 ? 'succeeded' : 'did not apply'}: ${
+                queueError instanceof Error
+                  ? queueError.message
+                  : String(queueError)
+              }`,
+            );
+          }
         }
       }
 
