@@ -298,6 +298,7 @@ export class AuthService {
       user.email,
       resetToken,
       user.firstName,
+      user.role,
     );
 
     return {

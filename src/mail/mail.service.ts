@@ -1,6 +1,7 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
+import { UserRole } from '@prisma/client';
 import { EmailJobData } from './mail.processor';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -50,9 +51,24 @@ export class MailService {
     email: string,
     resetToken: string,
     firstName: string,
+    role: UserRole,
   ) {
     try {
-      const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3001'}/reset-password.html?token=${resetToken}`;
+      const frontendUrl =
+        this.configService.get<string>('FRONTEND_URL') ||
+        'http://localhost:3001';
+      const adminUrl =
+        this.configService.get<string>('ADMIN_URL') || frontendUrl;
+
+      const baseUrl = role === UserRole.USER ? frontendUrl : adminUrl;
+      const normalizedBase = baseUrl.endsWith('/')
+        ? baseUrl.slice(0, -1)
+        : baseUrl;
+
+      const resetUrl =
+        role === UserRole.USER
+          ? `${normalizedBase}/reset-password.html?token=${encodeURIComponent(resetToken)}`
+          : `${normalizedBase}${normalizedBase.includes('?') ? '&' : '?'}token=${encodeURIComponent(resetToken)}`;
 
       await this.emailQueue.add(
         'send',
