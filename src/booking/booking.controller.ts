@@ -117,7 +117,8 @@ export class BookingController {
     summary: 'Create and pay for a booking',
     description:
       'Book one or more services in a single appointment. All services are stored under ONE booking record with a single reservation code. ' +
-      '`bookingType` must be `HOME_SERVICE` (requires `addressId` — stylist visits you) or `WALK_IN` (in-store, no address needed). ' +
+      'Each service item should provide `serviceMode` (`HOME_SERVICE` or `WALK_IN`) so mixed-mode bookings are supported in one request. ' +
+      '`addressId` is required whenever at least one service uses `HOME_SERVICE`. ' +
       'Payment: WALLET deducts the full total from your wallet immediately — booking is only created if balance is sufficient. ' +
       'CASH: slot is reserved and payment is collected on the day. ' +
       'If `guestEmail` is provided, a notification email with the reservation code is sent to the guest after successful booking.',
@@ -133,7 +134,7 @@ export class BookingController {
           booking: {
             id: '123e4567-e89b-12d3-a456-426614174010',
             status: 'CONFIRMED',
-            bookingType: 'HOME_SERVICE',
+            bookingType: 'MIXED',
             bookingDate: '2026-02-15T14:00:00.000Z',
             bookingTime: '14:00',
             totalAmount: 45000,
@@ -144,12 +145,14 @@ export class BookingController {
             services: [
               {
                 serviceId: 'svc-uuid-1',
+                serviceMode: 'WALK_IN',
                 name: 'Box Braids',
                 price: 25000,
                 duration: 180,
               },
               {
                 serviceId: 'svc-uuid-2',
+                serviceMode: 'HOME_SERVICE',
                 name: 'Deep Conditioning',
                 price: 20000,
                 duration: 60,
@@ -224,7 +227,10 @@ export class BookingController {
     @GetUser('id') userId: string,
     @Body() dto: InitializeBookingPaymentDto,
   ) {
-    const data = await this.bookingService.initializeBookingPayment(userId, dto);
+    const data = await this.bookingService.initializeBookingPayment(
+      userId,
+      dto,
+    );
     return {
       success: true,
       message: 'Booking payment initialized successfully',

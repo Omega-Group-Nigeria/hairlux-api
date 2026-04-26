@@ -86,6 +86,7 @@ enum DiscountType {
 enum BookingType {
   HOME_SERVICE
   WALK_IN
+  MIXED
 }
 
 enum JobType {
@@ -228,7 +229,7 @@ model Booking {
   userId           String        @map("user_id")
   // services is a JSON array: [{serviceId, name, price, duration, notes?}]
   services         Json          @map("services")
-  addressId        String?       @map("address_id")  // null for WALK_IN bookings
+  addressId        String?       @map("address_id")  // null for WALK_IN-only bookings
   bookingDate      DateTime      @map("booking_date")
   bookingTime      String        @map("booking_time") // Format: "HH:mm"
   bookingType      BookingType   @default(HOME_SERVICE) @map("booking_type")

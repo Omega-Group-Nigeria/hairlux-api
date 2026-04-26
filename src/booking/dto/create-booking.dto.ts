@@ -8,14 +8,28 @@ import {
   IsArray,
   ValidateNested,
   ArrayMinSize,
-  IsEnum,
   IsIn,
   ValidateIf,
-  Matches,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingType, PaymentMethod } from '@prisma/client';
+
+const SERVICE_MODE_VALUES = [BookingType.HOME_SERVICE, BookingType.WALK_IN];
+
+export function requiresHomeServiceAddress(
+  services: Array<Pick<ServiceBookingItemDto, 'serviceMode'>> | undefined,
+  fallbackBookingType?: BookingType,
+): boolean {
+  if (
+    Array.isArray(services) &&
+    services.some((item) => item?.serviceMode === BookingType.HOME_SERVICE)
+  ) {
+    return true;
+  }
+
+  return fallbackBookingType === BookingType.HOME_SERVICE;
+}
 
 export class ServiceBookingItemDto {
   @ApiProperty({
@@ -33,6 +47,18 @@ export class ServiceBookingItemDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Booking mode for this specific service item. Use this for mixed-mode bookings.',
+    enum: [BookingType.HOME_SERVICE, BookingType.WALK_IN],
+    example: 'WALK_IN',
+  })
+  @IsOptional()
+  @IsIn(SERVICE_MODE_VALUES, {
+    message: 'serviceMode must be HOME_SERVICE or WALK_IN',
+  })
+  serviceMode?: BookingType;
 }
 
 export class CreateBookingDto {
@@ -40,9 +66,13 @@ export class CreateBookingDto {
     description: 'One or more services to book in this appointment',
     type: [ServiceBookingItemDto],
     example: [
-      { serviceId: '123e4567-e89b-12d3-a456-426614174001' },
+      {
+        serviceId: '123e4567-e89b-12d3-a456-426614174001',
+        serviceMode: 'WALK_IN',
+      },
       {
         serviceId: '123e4567-e89b-12d3-a456-426614174002',
+        serviceMode: 'HOME_SERVICE',
         notes: 'Extra time needed',
       },
     ],
@@ -69,24 +99,31 @@ export class CreateBookingDto {
   @IsString()
   time: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description:
-      'Booking type. HOME_SERVICE requires an addressId. WALK_IN is an in-store reservation — no address needed.',
-    enum: BookingType,
-    example: 'HOME_SERVICE',
+      'Legacy fallback for older clients. New clients should send serviceMode per services item.',
+    enum: [BookingType.HOME_SERVICE, BookingType.WALK_IN],
+    example: 'WALK_IN',
+    deprecated: true,
   })
-  @IsEnum(BookingType, {
+  @IsOptional()
+  @IsIn(SERVICE_MODE_VALUES, {
     message: 'bookingType must be HOME_SERVICE or WALK_IN',
   })
-  bookingType: BookingType;
+  bookingType?: BookingType;
 
   @ApiPropertyOptional({
     description:
-      'Address ID from user saved addresses (required when bookingType is HOME_SERVICE; ignored for WALK_IN)',
+      'Address ID from user saved addresses (required if any service has serviceMode HOME_SERVICE)',
     example: '123e4567-e89b-12d3-a456-426614174002',
   })
-  @ValidateIf((o) => o.bookingType === BookingType.HOME_SERVICE)
-  @IsNotEmpty({ message: 'addressId is required for HOME_SERVICE bookings' })
+  @ValidateIf((o: CreateBookingDto) =>
+    requiresHomeServiceAddress(o.services, o.bookingType),
+  )
+  @IsNotEmpty({
+    message:
+      'addressId is required when any serviceMode is HOME_SERVICE (or legacy bookingType is HOME_SERVICE)',
+  })
   @IsUUID()
   addressId?: string;
 

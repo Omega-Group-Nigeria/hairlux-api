@@ -2,7 +2,6 @@ import {
   IsArray,
   IsDateString,
   IsEmail,
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -10,17 +9,32 @@ import {
   ValidateIf,
   ValidateNested,
   ArrayMinSize,
+  IsIn,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingType } from '@prisma/client';
-import { ServiceBookingItemDto } from './create-booking.dto';
+import {
+  requiresHomeServiceAddress,
+  ServiceBookingItemDto,
+} from './create-booking.dto';
+
+const SERVICE_MODE_VALUES = [BookingType.HOME_SERVICE, BookingType.WALK_IN];
 
 export class BookingPaymentPayloadDto {
   @ApiProperty({
     description: 'One or more services to book in this appointment',
     type: [ServiceBookingItemDto],
-    example: [{ serviceId: '123e4567-e89b-12d3-a456-426614174001' }],
+    example: [
+      {
+        serviceId: '123e4567-e89b-12d3-a456-426614174001',
+        serviceMode: 'WALK_IN',
+      },
+      {
+        serviceId: '123e4567-e89b-12d3-a456-426614174002',
+        serviceMode: 'HOME_SERVICE',
+      },
+    ],
   })
   @IsArray()
   @ValidateNested({ each: true })
@@ -44,23 +58,31 @@ export class BookingPaymentPayloadDto {
   @IsString()
   time: string;
 
-  @ApiProperty({
-    description: 'Booking type',
-    enum: BookingType,
-    example: 'HOME_SERVICE',
+  @ApiPropertyOptional({
+    description:
+      'Legacy fallback for older clients. New clients should send serviceMode per services item.',
+    enum: [BookingType.HOME_SERVICE, BookingType.WALK_IN],
+    example: 'WALK_IN',
+    deprecated: true,
   })
-  @IsEnum(BookingType, {
+  @IsOptional()
+  @IsIn(SERVICE_MODE_VALUES, {
     message: 'bookingType must be HOME_SERVICE or WALK_IN',
   })
-  bookingType: BookingType;
+  bookingType?: BookingType;
 
   @ApiPropertyOptional({
     description:
-      'Address ID from saved addresses (required for HOME_SERVICE)',
+      'Address ID from saved addresses (required if any service has serviceMode HOME_SERVICE)',
     example: '123e4567-e89b-12d3-a456-426614174002',
   })
-  @ValidateIf((o) => o.bookingType === BookingType.HOME_SERVICE)
-  @IsNotEmpty({ message: 'addressId is required for HOME_SERVICE bookings' })
+  @ValidateIf((o: BookingPaymentPayloadDto) =>
+    requiresHomeServiceAddress(o.services, o.bookingType),
+  )
+  @IsNotEmpty({
+    message:
+      'addressId is required when any serviceMode is HOME_SERVICE (or legacy bookingType is HOME_SERVICE)',
+  })
   @IsUUID()
   addressId?: string;
 

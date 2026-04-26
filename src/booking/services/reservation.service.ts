@@ -111,7 +111,7 @@ export class ReservationService {
       data: {
         reservationUsed: true,
         // WALK_IN: customer is present, service rendered immediately -> COMPLETED
-        // HOME_SERVICE: stylist is on the way / just arrived -> IN_PROGRESS
+        // HOME_SERVICE / MIXED: stylist visit involved -> IN_PROGRESS
         status:
           booking.bookingType === BookingType.WALK_IN
             ? BookingStatus.COMPLETED

@@ -22,7 +22,7 @@ import { MonnifyService } from '../../payment/monnify.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { BookingPaymentPayloadDto } from '../dto/booking-payment-payload.dto';
-import { CreateBookingDto } from '../dto/create-booking.dto';
+import { CreateBookingDto, ServiceBookingItemDto } from '../dto/create-booking.dto';
 import { InitializeBookingPaymentDto } from '../dto/initialize-booking-payment.dto';
 import { VerifyBookingPaymentDto } from '../dto/verify-booking-payment.dto';
 import {
@@ -43,6 +43,35 @@ export class BookingPaymentService {
     private bookingWalletService: BookingWalletService,
     private reservationService: ReservationService,
   ) {}
+
+  private resolveServiceMode(
+    item: Pick<ServiceBookingItemDto, 'serviceMode' | 'serviceId'>,
+    fallbackBookingType?: BookingType,
+  ): BookingType {
+    const resolvedMode = item.serviceMode ?? fallbackBookingType;
+
+    if (
+      resolvedMode !== BookingType.HOME_SERVICE &&
+      resolvedMode !== BookingType.WALK_IN
+    ) {
+      throw new BadRequestException(
+        `Service ${item.serviceId} is missing serviceMode. Provide serviceMode per item (HOME_SERVICE or WALK_IN), or use legacy bookingType for all services.`,
+      );
+    }
+
+    return resolvedMode;
+  }
+
+  private deriveBookingTypeFromServiceRecords(
+    serviceRecords: Array<{ serviceMode: BookingType }>,
+  ): BookingType {
+    const modeSet = new Set(serviceRecords.map((service) => service.serviceMode));
+    if (modeSet.size > 1) {
+      return BookingType.MIXED;
+    }
+
+    return serviceRecords[0]?.serviceMode ?? BookingType.WALK_IN;
+  }
 
   private async awardInfluencerRewardIfEligibleTx(
     tx: Prisma.TransactionClient,
@@ -176,10 +205,15 @@ export class BookingPaymentService {
       discountCode,
     } = createBookingDto;
 
+    const hasHomeService = services.some(
+      (item) =>
+        this.resolveServiceMode(item, bookingType) === BookingType.HOME_SERVICE,
+    );
+
     let address: Awaited<
       ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
-    if (bookingType === BookingType.HOME_SERVICE) {
+    if (hasHomeService) {
       address = await this.prisma.address.findFirst({
         where: { id: addressId, userId },
       });
@@ -202,6 +236,7 @@ export class BookingPaymentService {
       price: number;
       duration: number;
       notes?: string;
+      serviceMode: BookingType;
     }[] = [];
 
     for (const item of services) {
@@ -219,14 +254,20 @@ export class BookingPaymentService {
         );
       }
 
+      const serviceMode = this.resolveServiceMode(item, bookingType);
+
       serviceRecords.push({
         serviceId: service.id,
         name: service.name,
-        price: resolvePriceForBookingType(service, bookingType),
+        price: resolvePriceForBookingType(service, serviceMode),
         duration: service.duration ?? 0,
+        serviceMode,
         ...(item.notes ? { notes: item.notes } : {}),
       });
     }
+
+    const effectiveBookingType =
+      this.deriveBookingTypeFromServiceRecords(serviceRecords);
 
     const existingBooking = await this.prisma.booking.findFirst({
       where: {
@@ -275,7 +316,7 @@ export class BookingPaymentService {
             addressId: addressId ?? null,
             bookingDate,
             bookingTime: time,
-            bookingType,
+            bookingType: effectiveBookingType,
             reservationCode,
             guestName: guestName ?? null,
             guestPhone: guestPhone ?? null,
@@ -397,7 +438,7 @@ export class BookingPaymentService {
           addressId: addressId ?? null,
           bookingDate,
           bookingTime: time,
-          bookingType,
+          bookingType: effectiveBookingType,
           reservationCode,
           guestName: guestName ?? null,
           guestPhone: guestPhone ?? null,
@@ -517,10 +558,15 @@ export class BookingPaymentService {
     const { services, date, time, addressId, bookingType, discountCode } =
       payload;
 
+    const hasHomeService = services.some(
+      (item) =>
+        this.resolveServiceMode(item, bookingType) === BookingType.HOME_SERVICE,
+    );
+
     let address: Awaited<
       ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
-    if (bookingType === BookingType.HOME_SERVICE) {
+    if (hasHomeService) {
       address = await this.prisma.address.findFirst({
         where: { id: addressId, userId },
       });
@@ -547,6 +593,7 @@ export class BookingPaymentService {
       price: number;
       duration: number;
       notes?: string;
+      serviceMode: BookingType;
     }[] = [];
 
     for (const item of services) {
@@ -564,14 +611,20 @@ export class BookingPaymentService {
         );
       }
 
+      const serviceMode = this.resolveServiceMode(item, bookingType);
+
       serviceRecords.push({
         serviceId: service.id,
         name: service.name,
-        price: resolvePriceForBookingType(service, bookingType),
+        price: resolvePriceForBookingType(service, serviceMode),
         duration: service.duration ?? 0,
+        serviceMode,
         ...(item.notes ? { notes: item.notes } : {}),
       });
     }
+
+    const effectiveBookingType =
+      this.deriveBookingTypeFromServiceRecords(serviceRecords);
 
     if (checkSlotAvailability) {
       const existingBooking = await this.prisma.booking.findFirst({
@@ -609,6 +662,7 @@ export class BookingPaymentService {
     return {
       user,
       address,
+      bookingType: effectiveBookingType,
       bookingDate,
       serviceRecords,
       totalAmount,
@@ -893,7 +947,7 @@ export class BookingPaymentService {
           addressId: payload.addressId ?? null,
           bookingDate: context.bookingDate,
           bookingTime: payload.time,
-          bookingType: payload.bookingType,
+          bookingType: context.bookingType,
           reservationCode,
           guestName: payload.guestName ?? null,
           guestPhone: payload.guestPhone ?? null,
