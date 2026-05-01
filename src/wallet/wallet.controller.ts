@@ -28,6 +28,8 @@ import { GetUser } from '../auth/decorators/get-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { InjectQueue } from '@nestjs/bull';
 import { MonnifyService } from '../payment/monnify.service';
+import { PaystackService } from '../payment/paystack.service';
+import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import type { Queue } from 'bull';
 import type { Request } from 'express';
 import type { RawBodyRequest } from '@nestjs/common';
@@ -42,6 +44,7 @@ export class WalletController {
   constructor(
     private readonly walletService: WalletService,
     private readonly monnifyService: MonnifyService,
+    private readonly paystackService: PaystackService,
     @InjectQueue('paystack-webhooks') private webhookQueue: Queue,
     @InjectQueue('monnify-webhooks') private monnifyWebhookQueue: Queue,
   ) {}
@@ -190,6 +193,7 @@ export class WalletController {
 
   @Post('deposit/verify')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiOperation({
     summary: 'Verify wallet deposit',
     description:
@@ -243,28 +247,47 @@ export class WalletController {
 
   @Post('paystack-webhook')
   @Public()
+  @SkipThrottle()
   @HttpCode(HttpStatus.OK)
-  @ApiExcludeEndpoint() // Hide from Swagger docs (internal endpoint)
-  async handleWebhook(@Req() req: Request, @Headers() headers: any) {
-    // Verify webhook signature (Paystack sends x-paystack-signature)
-    // For production, implement signature verification
-    const signature = headers['x-paystack-signature'];
+  @ApiExcludeEndpoint()
+  async handleWebhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('x-paystack-signature') signature?: string,
+  ) {
+    const rawBody =
+      req.rawBody?.toString('utf-8') || JSON.stringify(req.body ?? {});
 
-    // Add webhook to queue for async processing
-    await this.webhookQueue.add('deposit-webhook', req.body, {
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 2000,
-      },
-    });
+    if (
+      !signature ||
+      !this.paystackService.verifyWebhookSignature(rawBody, signature)
+    ) {
+      this.logger.warn(
+        `Invalid Paystack signature (rawLength=${rawBody.length}, signatureLength=${signature?.length ?? 0})`,
+      );
+      return { status: 'invalid_signature' };
+    }
 
-    // Return 200 immediately to Paystack
-    return { status: 'queued' };
+    try {
+      await this.webhookQueue.add('deposit-webhook', req.body, {
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000,
+        },
+      });
+      return { status: 'queued' };
+    } catch (error) {
+      this.logger.error(
+        'Failed to queue Paystack webhook',
+        error instanceof Error ? error.stack : String(error),
+      );
+      return { status: 'queued_with_error' };
+    }
   }
 
   @Post('monnify-webhook')
   @Public()
+  @SkipThrottle()
   @HttpCode(HttpStatus.OK)
   @ApiExcludeEndpoint()
   async handleMonnifyWebhook(

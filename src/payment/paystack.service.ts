@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHmac, timingSafeEqual } from 'crypto';
 import axios from 'axios';
 
 export interface PaystackInitializeResponse {
@@ -89,6 +90,29 @@ export class PaystackService {
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to verify payment:`, errorMessage);
       throw new Error('Failed to verify payment with Paystack');
+    }
+  }
+
+  /**
+   * Verifies the x-paystack-signature header using HMAC-SHA512.
+   * Paystack signs the raw request body with the secret key.
+   */
+  verifyWebhookSignature(rawBody: string, signature: string): boolean {
+    if (!signature || !this.secretKey || !rawBody) {
+      return false;
+    }
+    try {
+      const expected = createHmac('sha512', this.secretKey)
+        .update(rawBody)
+        .digest('hex');
+      const expectedBuf = Buffer.from(expected, 'utf8');
+      const receivedBuf = Buffer.from(signature.trim().toLowerCase(), 'utf8');
+      if (expectedBuf.length !== receivedBuf.length) {
+        return false;
+      }
+      return timingSafeEqual(expectedBuf, receivedBuf);
+    } catch {
+      return false;
     }
   }
 }
