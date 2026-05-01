@@ -287,7 +287,8 @@ export class BookingAnalyticsService {
     const status = paymentMethod
       ? BookingStatus.CONFIRMED
       : BookingStatus.PENDING;
-    let booking: Awaited<ReturnType<typeof this.prisma.booking.create>>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let booking: any;
     try {
       booking = await this.withReservationCodeRetry(async () => {
         const reservationCode =
