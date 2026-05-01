@@ -53,7 +53,10 @@ export class BookingService {
     );
   }
 
-  async getBookingPaymentStatus(userId: string, bookingPaymentReference: string) {
+  async getBookingPaymentStatus(
+    userId: string,
+    bookingPaymentReference: string,
+  ) {
     return this.bookingPaymentService.getBookingPaymentStatus(
       userId,
       bookingPaymentReference,

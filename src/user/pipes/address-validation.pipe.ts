@@ -16,7 +16,9 @@ function flattenValidationErrors(
   parentPath = '',
 ): ValidationIssue[] {
   return errors.flatMap((error) => {
-    const field = parentPath ? `${parentPath}.${error.property}` : error.property;
+    const field = parentPath
+      ? `${parentPath}.${error.property}`
+      : error.property;
     const issues: ValidationIssue[] = [];
 
     if (error.constraints) {

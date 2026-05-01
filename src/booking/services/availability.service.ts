@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BookingStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CheckAvailabilityDto } from '../dto/check-availability.dto';
@@ -25,10 +24,8 @@ export class AvailabilityService {
       throw new BadRequestException('Date is required');
     }
 
-    // Keep serviceId destructuring for API compatibility, even if currently unused.
+    // serviceId is kept for future use / API compatibility
     void serviceId;
-
-    const bookingDate = new Date(date);
 
     const [businessSettings, exception, dayHours] = await Promise.all([
       this.prisma.businessSettings.findFirst(),
@@ -67,35 +64,12 @@ export class AvailabilityService {
       businessSettings.slotDuration,
     );
 
-    const availableSlots = slots;
-
-    const startOfDay = new Date(bookingDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(bookingDate.setHours(23, 59, 59, 999));
-
-    const existingBookings = await this.prisma.booking.findMany({
-      where: {
-        bookingDate: {
-          gte: startOfDay,
-          lte: endOfDay,
-        },
-        status: {
-          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
-        },
-      },
-    });
-
-    const slotsWithAvailability = availableSlots.map((slot) => {
-      const isBooked = existingBookings.some((booking) => {
-        return booking.bookingTime === slot;
-      });
-
-      return {
-        time: slot,
-        available: !isBooked,
-      };
-    });
-
-    return slotsWithAvailability;
+    // IMPORTANT CHANGE: We no longer filter out booked slots
+    // because multiple bookings at the exact same time are now allowed.
+    return slots.map((slot) => ({
+      time: slot,
+      available: true, // always available under new business rule
+    }));
   }
 
   private generateTimeSlots(

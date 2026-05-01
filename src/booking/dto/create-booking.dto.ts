@@ -173,4 +173,14 @@ export class CreateBookingDto {
   @IsOptional()
   @IsEmail({}, { message: 'guestEmail must be a valid email address' })
   guestEmail?: string;
+
+  @ApiProperty({
+    description:
+      'Client-generated idempotency key for retry-safe booking creation (prevents duplicate bookings on double-click or network retry)',
+    example: 'book-8f19405c-84de-4863-aaf1-9913e4b52a35',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => value?.trim())
+  idempotencyKey: string;
 }

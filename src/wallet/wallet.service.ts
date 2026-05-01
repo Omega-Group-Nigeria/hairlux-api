@@ -13,10 +13,7 @@ import { GetTransactionsDto } from './dto/get-transactions.dto';
 import { InitializeDepositDto } from './dto/initialize-deposit.dto';
 import { AdminQueryTransactionsDto } from './dto/admin-query-transactions.dto';
 import { AdminWalletStatsDto } from './dto/admin-wallet-stats.dto';
-import {
-  TransactionType,
-  TransactionStatus,
-} from '@prisma/client';
+import { TransactionType, TransactionStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { RedisService } from '../redis/redis.service';
 
@@ -138,10 +135,7 @@ export class WalletService {
       provider === 'monnify'
         ? TRANSACTION_GATEWAY.MONNIFY
         : TRANSACTION_GATEWAY.PAYSTACK;
-    const providerPrefix =
-      provider === 'monnify'
-        ? 'MONF'
-        : 'PSTK';
+    const providerPrefix = provider === 'monnify' ? 'MONF' : 'PSTK';
 
     // Generate unique reference
     const reference = `WALLET-${providerPrefix}-${Date.now()}-${randomBytes(8).toString('hex')}`;
@@ -178,7 +172,8 @@ export class WalletService {
         data: {
           metadata: {
             provider,
-            monnifyTransactionReference: monnifyData.responseBody.transactionReference,
+            monnifyTransactionReference:
+              monnifyData.responseBody.transactionReference,
             monnifyPaymentReference: monnifyData.responseBody.paymentReference,
           } as any,
         },
@@ -449,16 +444,16 @@ export class WalletService {
 
     const walletWhere: any = {};
     const transactionWhere: any = {};
-    
+
     // Only apply date filter if dates are provided
     if (Object.keys(dateFilter).length > 0) {
-        // For wallets, we only filter by creation date if requested.
-        // HOWEVER: The user's issue suggests they might want TOTAL system balance but FILTERED transactions.
-        // If I filter wallets by date, I get stats for NEW wallets.
-        // If the user wants stats for the period, usually wallet stats are "new signups".
-        // Let's stick to that interpretation, but ensure transaction stats are correct.
-        walletWhere.createdAt = dateFilter;
-        transactionWhere.createdAt = dateFilter;
+      // For wallets, we only filter by creation date if requested.
+      // HOWEVER: The user's issue suggests they might want TOTAL system balance but FILTERED transactions.
+      // If I filter wallets by date, I get stats for NEW wallets.
+      // If the user wants stats for the period, usually wallet stats are "new signups".
+      // Let's stick to that interpretation, but ensure transaction stats are correct.
+      walletWhere.createdAt = dateFilter;
+      transactionWhere.createdAt = dateFilter;
     }
 
     const [
@@ -479,33 +474,34 @@ export class WalletService {
         by: ['type'],
         _sum: { amount: true },
         _count: { id: true },
-        where: { 
-            status: TransactionStatus.COMPLETED,
-            ...transactionWhere 
+        where: {
+          status: TransactionStatus.COMPLETED,
+          ...transactionWhere,
         },
       }),
       this.prisma.transaction.count({
-        where: { 
-            status: TransactionStatus.FAILED,
-            ...transactionWhere
+        where: {
+          status: TransactionStatus.FAILED,
+          ...transactionWhere,
         },
       }),
       this.prisma.transaction.count({
-        where: { 
-            status: TransactionStatus.PENDING,
-            ...transactionWhere
+        where: {
+          status: TransactionStatus.PENDING,
+          ...transactionWhere,
         },
       }),
     ]);
 
     // Ensure all transaction types are present in the response structure even if count is 0
     // This matches user expectation of consistent data shape
-    const statsByType: Record<string, { totalAmount: number; count: number }> = {
-      DEPOSIT: { totalAmount: 0, count: 0 },
-      DEBIT: { totalAmount: 0, count: 0 },
-      REFUND: { totalAmount: 0, count: 0 },
-      // Add other types if necessary, e.g., CREDIT
-    };
+    const statsByType: Record<string, { totalAmount: number; count: number }> =
+      {
+        DEPOSIT: { totalAmount: 0, count: 0 },
+        DEBIT: { totalAmount: 0, count: 0 },
+        REFUND: { totalAmount: 0, count: 0 },
+        // Add other types if necessary, e.g., CREDIT
+      };
 
     transactionStats.forEach((s) => {
       statsByType[s.type] = {
@@ -603,20 +599,11 @@ export class WalletService {
   // ─── Private Helpers ─────────────────────────────────────────────────────────
 
   private async getOrCreateWallet(userId: string) {
-    let wallet = await this.prisma.wallet.findUnique({
+    const wallet = await this.prisma.wallet.upsert({
       where: { userId },
+      update: {},
+      create: { userId, balance: 0 },
     });
-
-    if (!wallet) {
-      wallet = await this.prisma.wallet.create({
-        data: {
-          userId,
-          balance: 0,
-        },
-      });
-      this.logger.log(`Created wallet for user ${userId}`);
-    }
-
     return wallet;
   }
 

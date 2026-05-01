@@ -490,7 +490,7 @@ export class AdminBookingController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Bad request - validation error or slot unavailable',
+    description: 'Bad request - validation error',
   })
   @ApiResponse({
     status: 404,

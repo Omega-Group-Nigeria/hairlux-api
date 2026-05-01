@@ -97,7 +97,6 @@ export class MonnifyWebhookProcessor {
     transaction: TransactionWithWallet,
     eventData: MonnifyWebhookJobData['eventData'],
   ) {
-
     if (transaction.status === TransactionStatus.COMPLETED) {
       this.logger.warn(
         `Transaction already processed: ${transaction.reference}`,

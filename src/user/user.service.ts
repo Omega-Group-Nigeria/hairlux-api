@@ -201,7 +201,10 @@ export class UserService {
       throw new NotFoundException(ErrorMessages.ADDRESS_NOT_FOUND);
     }
 
-    const resolvedAddress = this.resolveAddressValues(updateAddressDto, existingAddress);
+    const resolvedAddress = this.resolveAddressValues(
+      updateAddressDto,
+      existingAddress,
+    );
 
     const address = await this.prisma.$transaction(async (tx) => {
       if (updateAddressDto.isDefault === true) {
@@ -214,15 +217,21 @@ export class UserService {
       return tx.address.update({
         where: { id: addressId },
         data: {
-          ...(resolvedAddress.label !== undefined && { label: resolvedAddress.label }),
+          ...(resolvedAddress.label !== undefined && {
+            label: resolvedAddress.label,
+          }),
           ...(resolvedAddress.fullAddress !== undefined && {
             fullAddress: resolvedAddress.fullAddress,
           }),
           ...(resolvedAddress.streetAddress !== undefined && {
             streetAddress: resolvedAddress.streetAddress,
           }),
-          ...(resolvedAddress.city !== undefined && { city: resolvedAddress.city }),
-          ...(resolvedAddress.state !== undefined && { state: resolvedAddress.state }),
+          ...(resolvedAddress.city !== undefined && {
+            city: resolvedAddress.city,
+          }),
+          ...(resolvedAddress.state !== undefined && {
+            state: resolvedAddress.state,
+          }),
           ...(resolvedAddress.country !== undefined && {
             country: resolvedAddress.country,
           }),
@@ -311,22 +320,19 @@ export class UserService {
   }
 
   private formatAddress(address: AddressRecord) {
-    const addressComponents = this.extractAddressComponents(address.addressComponents);
+    const addressComponents = this.extractAddressComponents(
+      address.addressComponents,
+    );
 
     const streetAddress =
-      address.streetAddress ??
-      addressComponents?.streetAddress ??
-      null;
+      address.streetAddress ?? addressComponents?.streetAddress ?? null;
 
     const city = address.city ?? addressComponents?.city ?? null;
     const state = address.state ?? addressComponents?.state ?? null;
     const country = address.country ?? addressComponents?.country ?? 'Nigeria';
-    const fullAddress = address.fullAddress || this.joinAddressParts([
-      streetAddress,
-      city,
-      state,
-      country,
-    ]);
+    const fullAddress =
+      address.fullAddress ||
+      this.joinAddressParts([streetAddress, city, state, country]);
 
     return {
       id: address.id,
@@ -422,7 +428,9 @@ export class UserService {
     }
 
     const normalized: Record<string, string> = {
-      ...(components.streetAddress && { streetAddress: components.streetAddress }),
+      ...(components.streetAddress && {
+        streetAddress: components.streetAddress,
+      }),
       ...(components.city && { city: components.city }),
       ...(components.state && { state: components.state }),
       ...(components.country && { country: components.country }),
@@ -431,7 +439,9 @@ export class UserService {
     return Object.keys(normalized).length > 0 ? normalized : undefined;
   }
 
-  private extractAddressComponents(value: unknown): AddressComponentsDto | null {
+  private extractAddressComponents(
+    value: unknown,
+  ): AddressComponentsDto | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return null;
     }

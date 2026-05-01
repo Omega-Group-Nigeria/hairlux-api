@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -116,20 +115,6 @@ export class BookingCoreService {
     }
 
     const newBookingDate = new Date(`${date}T${time}`);
-    const existingBooking = await this.prisma.booking.findFirst({
-      where: {
-        id: { not: id },
-        bookingDate: newBookingDate,
-        bookingTime: time,
-        status: {
-          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
-        },
-      },
-    });
-
-    if (existingBooking) {
-      throw new ConflictException('This time slot is already booked');
-    }
 
     const updatedBooking = await this.prisma.booking.update({
       where: { id },

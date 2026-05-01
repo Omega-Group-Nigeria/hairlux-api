@@ -302,7 +302,10 @@ export class UserController {
     @Param('id') addressId: string,
   ) {
     const address = await this.userService.setDefaultAddress(userId, addressId);
-    return ResponseUtil.success(address, 'Default address updated successfully');
+    return ResponseUtil.success(
+      address,
+      'Default address updated successfully',
+    );
   }
 
   @Delete('addresses/:id')

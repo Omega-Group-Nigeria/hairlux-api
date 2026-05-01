@@ -18,6 +18,8 @@ export class VerifyDepositDto {
     example: 'monnify',
   })
   @IsOptional()
-  @IsIn(['paystack', 'monnify'], { message: 'Provider must be paystack or monnify' })
+  @IsIn(['paystack', 'monnify'], {
+    message: 'Provider must be paystack or monnify',
+  })
   provider?: PaymentProvider;
 }

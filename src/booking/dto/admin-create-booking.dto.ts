@@ -106,4 +106,14 @@ export class AdminCreateBookingDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional idempotency key for retry-safe admin booking creation',
+    example: 'admin-book-8f19405c-84de-4863-aaf1-9913e4b52a35',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => value?.trim())
+  idempotencyKey?: string;
 }

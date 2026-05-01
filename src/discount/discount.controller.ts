@@ -1,4 +1,10 @@
-import { Controller, Get, Param, UseGuards, UnauthorizedException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  UseGuards,
+  UnauthorizedException,
+} from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -47,7 +53,10 @@ export class DiscountController {
     status: 400,
     description: 'Code is expired, inactive, or usage limit reached',
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized — Influencers cannot use their own codes' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized — Influencers cannot use their own codes',
+  })
   @ApiResponse({ status: 404, description: 'Discount code not found' })
   async validate(@Param('code') code: string, @GetUser('id') userId: string) {
     const data = await this.discountService.validate(code, userId);

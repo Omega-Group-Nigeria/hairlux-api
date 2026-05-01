@@ -58,7 +58,8 @@ export class CreateReferralCampaignCodeDto {
   isActive?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Optional start time (ISO 8601). Before this time, code is invalid.',
+    description:
+      'Optional start time (ISO 8601). Before this time, code is invalid.',
     example: '2026-04-20T00:00:00.000Z',
   })
   @IsOptional()
@@ -66,7 +67,8 @@ export class CreateReferralCampaignCodeDto {
   startsAt?: string;
 
   @ApiPropertyOptional({
-    description: 'Optional expiry time (ISO 8601). After this time, code is invalid.',
+    description:
+      'Optional expiry time (ISO 8601). After this time, code is invalid.',
     example: '2026-05-20T23:59:59.999Z',
   })
   @IsOptional()

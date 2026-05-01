@@ -183,7 +183,6 @@ export class BookingController {
     status: 404,
     description: 'Service, Address, or Wallet not found',
   })
-  @ApiResponse({ status: 409, description: 'Time slot already booked' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async create(
     @GetUser('id') userId: string,
@@ -513,7 +512,6 @@ export class BookingController {
   })
   @ApiResponse({ status: 400, description: 'Cannot reschedule this booking' })
   @ApiResponse({ status: 404, description: 'Booking not found' })
-  @ApiResponse({ status: 409, description: 'New time slot is not available' })
   async reschedule(
     @Param('id') id: string,
     @GetUser('id') userId: string,

@@ -157,7 +157,11 @@ export class DiscountService {
     }
 
     // Influencer self-usage check
-    if (userId && discount.influencer && discount.influencer.userId === userId) {
+    if (
+      userId &&
+      discount.influencer &&
+      discount.influencer.userId === userId
+    ) {
       throw new UnauthorizedException(
         'Influencers cannot use their own discount codes',
       );

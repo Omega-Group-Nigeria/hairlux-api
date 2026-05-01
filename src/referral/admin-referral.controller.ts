@@ -140,7 +140,8 @@ export class AdminReferralController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Get one referral campaign code',
-    description: 'Returns details and usage count for a specific campaign code.',
+    description:
+      'Returns details and usage count for a specific campaign code.',
   })
   @ApiParam({
     name: 'id',

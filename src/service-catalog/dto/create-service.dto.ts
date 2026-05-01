@@ -40,7 +40,10 @@ export class CreateServiceDto {
   @Transform(({ value }) => value?.trim())
   description: string;
 
-  @ApiProperty({ description: 'Walk-in service price in Naira', example: 25000 })
+  @ApiProperty({
+    description: 'Walk-in service price in Naira',
+    example: 25000,
+  })
   @Transform(({ value }) => Number(value))
   @IsNumber()
   @Min(0)
@@ -71,7 +74,10 @@ export class CreateServiceDto {
   })
   @Transform(({ value }) => toBoolean(value))
   @IsBoolean()
-  @ValidateIf((o) => o.isWalkInAvailable === false || o.isHomeServiceAvailable !== undefined)
+  @ValidateIf(
+    (o) =>
+      o.isWalkInAvailable === false || o.isHomeServiceAvailable !== undefined,
+  )
   isHomeServiceAvailable: boolean = true;
 
   @ApiProperty({ description: 'Service duration in minutes', example: 180 })

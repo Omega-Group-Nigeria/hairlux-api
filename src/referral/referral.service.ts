@@ -83,10 +83,7 @@ export class ReferralService {
       );
     }
 
-    if (
-      existingCampaignCode &&
-      existingCampaignCode.id !== ignoreCampaignId
-    ) {
+    if (existingCampaignCode && existingCampaignCode.id !== ignoreCampaignId) {
       throw new BadRequestException('Campaign code already exists');
     }
   }
@@ -664,9 +661,7 @@ export class ReferralService {
       throw new NotFoundException('Referral campaign code not found');
     }
 
-    const updatedCode = dto.code
-      ? this.normalizeCode(dto.code)
-      : existing.code;
+    const updatedCode = dto.code ? this.normalizeCode(dto.code) : existing.code;
 
     if (updatedCode !== existing.code) {
       await this.ensureCodeNotReserved(updatedCode, existing.id);

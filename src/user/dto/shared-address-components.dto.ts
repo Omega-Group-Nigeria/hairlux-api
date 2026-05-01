@@ -10,7 +10,9 @@ export class AddressComponentsDto {
   @IsOptional()
   @Transform(trimString)
   @IsString()
-  @IsNotEmpty({ message: 'addressComponents.streetAddress should not be empty' })
+  @IsNotEmpty({
+    message: 'addressComponents.streetAddress should not be empty',
+  })
   streetAddress?: string;
 
   @ApiPropertyOptional({ example: 'Lagos' })

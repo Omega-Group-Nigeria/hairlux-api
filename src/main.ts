@@ -45,7 +45,9 @@ async function bootstrap() {
     }
   };
   app.use(json({ limit: bodyLimit, verify: rawBodySaver }));
-  app.use(urlencoded({ extended: true, limit: bodyLimit, verify: rawBodySaver }));
+  app.use(
+    urlencoded({ extended: true, limit: bodyLimit, verify: rawBodySaver }),
+  );
 
   // Enable CORS
   const configuredOrigins = process.env.ALLOWED_ORIGINS

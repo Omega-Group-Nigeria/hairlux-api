@@ -6,7 +6,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { BookingPaymentPayloadDto } from './booking-payment-payload.dto';
 
@@ -20,7 +20,8 @@ export class InitializeBookingPaymentDto {
   bookingPayload: BookingPaymentPayloadDto;
 
   @ApiProperty({
-    description: 'Expected total amount to pay (must match server-calculated total)',
+    description:
+      'Expected total amount to pay (must match server-calculated total)',
     example: 15500,
   })
   @Type(() => Number)
@@ -37,10 +38,12 @@ export class InitializeBookingPaymentDto {
   provider: 'monnify';
 
   @ApiProperty({
-    description: 'Client-generated idempotency key for retry-safe initialize calls',
+    description:
+      'Client-generated idempotency key for retry-safe initialize calls',
     example: 'bookpay-8f19405c-84de-4863-aaf1-9913e4b52a35',
   })
   @IsString()
   @IsNotEmpty()
+  @Transform(({ value }) => value?.trim())
   idempotencyKey: string;
 }

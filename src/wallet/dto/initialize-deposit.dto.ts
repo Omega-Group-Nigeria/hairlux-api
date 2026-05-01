@@ -1,4 +1,11 @@
-import { IsNumber, IsPositive, Min, Max, IsOptional, IsIn } from 'class-validator';
+import {
+  IsNumber,
+  IsPositive,
+  Min,
+  Max,
+  IsOptional,
+  IsIn,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export type PaymentProvider = 'paystack' | 'monnify';
@@ -23,6 +30,8 @@ export class InitializeDepositDto {
     example: 'monnify',
   })
   @IsOptional()
-  @IsIn(['paystack', 'monnify'], { message: 'Provider must be paystack or monnify' })
+  @IsIn(['paystack', 'monnify'], {
+    message: 'Provider must be paystack or monnify',
+  })
   provider?: PaymentProvider;
 }

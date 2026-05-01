@@ -51,16 +51,38 @@ export class AdminStaffController {
     description:
       'Creates a staff profile with opening employment history entry using locationId.',
   })
-  @ApiResponse({ status: 201, description: 'Staff record created successfully' })
-  @ApiResponse({ status: 400, description: 'Validation failed or selected location is inactive' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:create permission' })
-  @ApiResponse({ status: 404, description: 'Referenced location was not found' })
-  @ApiResponse({ status: 409, description: 'Email already used by another staff record' })
+  @ApiResponse({
+    status: 201,
+    description: 'Staff record created successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed or selected location is inactive',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:create permission',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Referenced location was not found',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Email already used by another staff record',
+  })
   @Permission(PERMISSIONS.STAFF_CREATE)
   async create(@Body() dto: CreateStaffDto) {
     const data = await this.staffService.create(dto);
-    return { success: true, message: 'Staff record created successfully', data };
+    return {
+      success: true,
+      message: 'Staff record created successfully',
+      data,
+    };
   }
 
   @Get()
@@ -69,10 +91,19 @@ export class AdminStaffController {
     description:
       'Returns paginated staff list with filters for active and archived/former records.',
   })
-  @ApiResponse({ status: 200, description: 'Staff records retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff records retrieved successfully',
+  })
   @ApiResponse({ status: 400, description: 'Invalid query parameters' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:read permission' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:read permission',
+  })
   @Permission(PERMISSIONS.STAFF_READ)
   async findAll(@Query() queryDto: QueryStaffDto) {
     const data = await this.staffService.findAll(queryDto);
@@ -88,10 +119,19 @@ export class AdminStaffController {
     summary: 'Get upcoming birthdays',
     description: 'Returns upcoming staff birthdays within a configured window.',
   })
-  @ApiResponse({ status: 200, description: 'Upcoming birthdays retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Upcoming birthdays retrieved successfully',
+  })
   @ApiResponse({ status: 400, description: 'Invalid query parameters' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:read permission' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:read permission',
+  })
   @Permission(PERMISSIONS.STAFF_READ)
   async getUpcomingBirthdays(@Query() queryDto: QueryUpcomingBirthdaysDto) {
     const data = await this.staffService.getUpcomingBirthdays(queryDto);
@@ -107,11 +147,23 @@ export class AdminStaffController {
     summary: 'Create staff location',
     description: 'Creates a managed location that can be assigned to staff.',
   })
-  @ApiResponse({ status: 201, description: 'Staff location created successfully' })
+  @ApiResponse({
+    status: 201,
+    description: 'Staff location created successfully',
+  })
   @ApiResponse({ status: 400, description: 'Validation failed' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:manage_locations permission' })
-  @ApiResponse({ status: 409, description: 'A location with this name already exists' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:manage_locations permission',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'A location with this name already exists',
+  })
   @Permission(PERMISSIONS.STAFF_MANAGE_LOCATIONS)
   async createLocation(@Body() dto: CreateStaffLocationDto) {
     const data = await this.staffService.createLocation(dto);
@@ -127,10 +179,19 @@ export class AdminStaffController {
     summary: 'List staff locations',
     description: 'Returns active or all managed staff locations.',
   })
-  @ApiResponse({ status: 200, description: 'Staff locations retrieved successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff locations retrieved successfully',
+  })
   @ApiResponse({ status: 400, description: 'Invalid query parameters' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:read permission' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:read permission',
+  })
   @Permission(PERMISSIONS.STAFF_READ)
   async findAllLocations(@Query() queryDto: QueryStaffLocationsDto) {
     const data = await this.staffService.findAllLocations(queryDto);
@@ -147,12 +208,24 @@ export class AdminStaffController {
     description: 'Updates location name and activation state.',
   })
   @ApiParam({ name: 'id', description: 'Location ID' })
-  @ApiResponse({ status: 200, description: 'Staff location updated successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff location updated successfully',
+  })
   @ApiResponse({ status: 400, description: 'Validation failed' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:manage_locations permission' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:manage_locations permission',
+  })
   @ApiResponse({ status: 404, description: 'Location not found' })
-  @ApiResponse({ status: 409, description: 'Location name already exists or location has active staff' })
+  @ApiResponse({
+    status: 409,
+    description: 'Location name already exists or location has active staff',
+  })
   @Permission(PERMISSIONS.STAFF_MANAGE_LOCATIONS)
   async updateLocation(
     @Param('id', ParseUUIDPipe) id: string,
@@ -172,11 +245,23 @@ export class AdminStaffController {
     description: 'Deletes an unused managed location.',
   })
   @ApiParam({ name: 'id', description: 'Location ID' })
-  @ApiResponse({ status: 200, description: 'Staff location deleted successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:manage_locations permission' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff location deleted successfully',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:manage_locations permission',
+  })
   @ApiResponse({ status: 404, description: 'Location not found' })
-  @ApiResponse({ status: 409, description: 'Location is in use by staff records' })
+  @ApiResponse({
+    status: 409,
+    description: 'Location is in use by staff records',
+  })
   @Permission(PERMISSIONS.STAFF_MANAGE_LOCATIONS)
   async deleteLocation(@Param('id', ParseUUIDPipe) id: string) {
     await this.staffService.deleteLocation(id);
@@ -189,14 +274,27 @@ export class AdminStaffController {
   @Get(':id')
   @ApiOperation({ summary: 'Get one staff record with employment history' })
   @ApiParam({ name: 'id', description: 'Staff ID' })
-  @ApiResponse({ status: 200, description: 'Staff record retrieved successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:read permission' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff record retrieved successfully',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:read permission',
+  })
   @ApiResponse({ status: 404, description: 'Staff record not found' })
   @Permission(PERMISSIONS.STAFF_READ)
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.staffService.findOne(id);
-    return { success: true, message: 'Staff record retrieved successfully', data };
+    return {
+      success: true,
+      message: 'Staff record retrieved successfully',
+      data,
+    };
   }
 
   @Patch(':id')
@@ -205,19 +303,41 @@ export class AdminStaffController {
     description: 'Updates staff profile and contact details.',
   })
   @ApiParam({ name: 'id', description: 'Staff ID' })
-  @ApiResponse({ status: 200, description: 'Staff record updated successfully' })
-  @ApiResponse({ status: 400, description: 'Validation failed or selected location is inactive' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:update permission' })
-  @ApiResponse({ status: 404, description: 'Staff record or location not found' })
-  @ApiResponse({ status: 409, description: 'Email already used by another staff record' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff record updated successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed or selected location is inactive',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:update permission',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Staff record or location not found',
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Email already used by another staff record',
+  })
   @Permission(PERMISSIONS.STAFF_UPDATE)
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStaffDto,
   ) {
     const data = await this.staffService.update(id, dto);
-    return { success: true, message: 'Staff record updated successfully', data };
+    return {
+      success: true,
+      message: 'Staff record updated successfully',
+      data,
+    };
   }
 
   @Patch(':id/status')
@@ -227,10 +347,19 @@ export class AdminStaffController {
       'Changes employment status and captures exit details where applicable.',
   })
   @ApiParam({ name: 'id', description: 'Staff ID' })
-  @ApiResponse({ status: 200, description: 'Staff status updated successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff status updated successfully',
+  })
   @ApiResponse({ status: 400, description: 'Validation failed' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:manage_status permission' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:manage_status permission',
+  })
   @ApiResponse({ status: 404, description: 'Staff record not found' })
   @Permission(PERMISSIONS.STAFF_MANAGE_STATUS)
   async updateStatus(
@@ -238,40 +367,75 @@ export class AdminStaffController {
     @Body() dto: UpdateStaffStatusDto,
   ) {
     const data = await this.staffService.updateStatus(id, dto);
-    return { success: true, message: 'Staff status updated successfully', data };
+    return {
+      success: true,
+      message: 'Staff status updated successfully',
+      data,
+    };
   }
 
   @Post(':id/archive')
   @ApiOperation({
     summary: 'Archive a staff record',
-    description: 'Soft-archives former employees while keeping records accessible.',
+    description:
+      'Soft-archives former employees while keeping records accessible.',
   })
   @ApiParam({ name: 'id', description: 'Staff ID' })
-  @ApiResponse({ status: 200, description: 'Staff record archived successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff record archived successfully',
+  })
   @ApiResponse({ status: 400, description: 'Validation failed' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:archive permission' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:archive permission',
+  })
   @ApiResponse({ status: 404, description: 'Staff record not found' })
   @Permission(PERMISSIONS.STAFF_ARCHIVE)
   async archive(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ArchiveStaffDto,
   ) {
-    const data = await this.staffService.archive(id, dto.reasonForExit, dto.exitDate);
-    return { success: true, message: 'Staff record archived successfully', data };
+    const data = await this.staffService.archive(
+      id,
+      dto.reasonForExit,
+      dto.exitDate,
+    );
+    return {
+      success: true,
+      message: 'Staff record archived successfully',
+      data,
+    };
   }
 
   @Post(':id/restore')
   @ApiOperation({ summary: 'Restore an archived staff record' })
   @ApiParam({ name: 'id', description: 'Staff ID' })
-  @ApiResponse({ status: 200, description: 'Staff record restored successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:archive permission' })
+  @ApiResponse({
+    status: 200,
+    description: 'Staff record restored successfully',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:archive permission',
+  })
   @ApiResponse({ status: 404, description: 'Staff record not found' })
   @Permission(PERMISSIONS.STAFF_ARCHIVE)
   async restore(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.staffService.restore(id);
-    return { success: true, message: 'Staff record restored successfully', data };
+    return {
+      success: true,
+      message: 'Staff record restored successfully',
+      data,
+    };
   }
 
   @Post(':id/history')
@@ -281,11 +445,26 @@ export class AdminStaffController {
       'Adds a new role/location period. Existing open history is automatically closed.',
   })
   @ApiParam({ name: 'id', description: 'Staff ID' })
-  @ApiResponse({ status: 201, description: 'Employment history added successfully' })
-  @ApiResponse({ status: 400, description: 'Validation failed or invalid date ordering' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:update permission' })
-  @ApiResponse({ status: 404, description: 'Staff record or location not found' })
+  @ApiResponse({
+    status: 201,
+    description: 'Employment history added successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed or invalid date ordering',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:update permission',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Staff record or location not found',
+  })
   @Permission(PERMISSIONS.STAFF_UPDATE)
   async addEmploymentHistory(
     @Param('id', ParseUUIDPipe) id: string,
@@ -303,18 +482,37 @@ export class AdminStaffController {
   @ApiOperation({ summary: 'Update an employment history entry' })
   @ApiParam({ name: 'id', description: 'Staff ID' })
   @ApiParam({ name: 'historyId', description: 'Employment history ID' })
-  @ApiResponse({ status: 200, description: 'Employment history updated successfully' })
-  @ApiResponse({ status: 400, description: 'Validation failed or invalid date ordering' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:update permission' })
-  @ApiResponse({ status: 404, description: 'Staff, location, or history record not found' })
+  @ApiResponse({
+    status: 200,
+    description: 'Employment history updated successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed or invalid date ordering',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:update permission',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Staff, location, or history record not found',
+  })
   @Permission(PERMISSIONS.STAFF_UPDATE)
   async updateEmploymentHistory(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('historyId', ParseUUIDPipe) historyId: string,
     @Body() dto: UpdateEmploymentHistoryDto,
   ) {
-    const data = await this.staffService.updateEmploymentHistory(id, historyId, dto);
+    const data = await this.staffService.updateEmploymentHistory(
+      id,
+      historyId,
+      dto,
+    );
     return {
       success: true,
       message: 'Employment history updated successfully',
@@ -326,11 +524,26 @@ export class AdminStaffController {
   @ApiOperation({ summary: 'Delete a past employment history entry' })
   @ApiParam({ name: 'id', description: 'Staff ID' })
   @ApiParam({ name: 'historyId', description: 'Employment history ID' })
-  @ApiResponse({ status: 200, description: 'Employment history removed successfully' })
-  @ApiResponse({ status: 400, description: 'Cannot delete the current active history record' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:update permission' })
-  @ApiResponse({ status: 404, description: 'Staff or history record not found' })
+  @ApiResponse({
+    status: 200,
+    description: 'Employment history removed successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Cannot delete the current active history record',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:update permission',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Staff or history record not found',
+  })
   @Permission(PERMISSIONS.STAFF_UPDATE)
   async removeEmploymentHistory(
     @Param('id', ParseUUIDPipe) id: string,

@@ -142,8 +142,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
   }
 
   private get staffLocationModel(): StaffLocationModelDelegate {
-    return (this.prisma as unknown as { staffLocation: StaffLocationModelDelegate })
-      .staffLocation;
+    return (
+      this.prisma as unknown as { staffLocation: StaffLocationModelDelegate }
+    ).staffLocation;
   }
 
   private scheduleNextBirthdayRun(fromDate = new Date()) {
@@ -229,7 +230,10 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async assertLocationExists(locationId: string, requireActive = false) {
+  private async assertLocationExists(
+    locationId: string,
+    requireActive = false,
+  ) {
     const location = await this.staffLocationModel.findUnique({
       where: { id: locationId },
     });
@@ -290,7 +294,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     });
 
     if (existing) {
-      throw new ConflictException('Staff location with this name already exists');
+      throw new ConflictException(
+        'Staff location with this name already exists',
+      );
     }
 
     const location = await this.staffLocationModel.create({
@@ -343,7 +349,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       });
 
       if (duplicate) {
-        throw new ConflictException('Staff location with this name already exists');
+        throw new ConflictException(
+          'Staff location with this name already exists',
+        );
       }
     }
 
@@ -389,7 +397,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
   async deleteLocation(id: string) {
     await this.assertLocationExists(id);
 
-    const usageCount = await this.staffModel.count({ where: { locationId: id } });
+    const usageCount = await this.staffModel.count({
+      where: { locationId: id },
+    });
     if (usageCount > 0) {
       throw new ConflictException(
         'Cannot delete location because it is referenced by staff records',
@@ -654,8 +664,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
             status === STAFF_EMPLOYMENT_STATUS.ARCHIVED
               ? exitDate
               : null,
-          archivedAt:
-            status === STAFF_EMPLOYMENT_STATUS.ARCHIVED ? now : null,
+          archivedAt: status === STAFF_EMPLOYMENT_STATUS.ARCHIVED ? now : null,
         },
       });
     });

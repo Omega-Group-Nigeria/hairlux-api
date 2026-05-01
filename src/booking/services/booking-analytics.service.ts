@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -32,6 +31,45 @@ export class BookingAnalyticsService {
     private bookingWalletService: BookingWalletService,
     private reservationService: ReservationService,
   ) {}
+
+  private isUniqueConstraintError(err: unknown, field: string): boolean {
+    if (typeof err !== 'object' || err === null) return false;
+    if (!('code' in err) || (err as { code?: string }).code !== 'P2002') {
+      return false;
+    }
+
+    const fieldSnake = field.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
+    const target = (err as { meta?: { target?: string[] | string } }).meta
+      ?.target;
+    if (Array.isArray(target)) {
+      return target.includes(field) || target.includes(fieldSnake);
+    }
+    if (typeof target === 'string') {
+      return target.includes(field) || target.includes(fieldSnake);
+    }
+    return false;
+  }
+
+  private async withReservationCodeRetry<T>(
+    operation: () => Promise<T>,
+    maxAttempts = 5,
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (err) {
+        if (this.isUniqueConstraintError(err, 'reservationCode')) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Unable to generate a unique reservation code');
+  }
 
   async findAllBookings(queryDto: AdminQueryBookingsDto) {
     const {
@@ -155,7 +193,37 @@ export class BookingAnalyticsService {
       bookingTime,
       paymentMethod,
       notes,
+      idempotencyKey: rawIdempotencyKey,
     } = createDto;
+
+    const idempotencyKey = rawIdempotencyKey?.trim();
+    if (idempotencyKey) {
+      const existing = await this.prisma.booking.findFirst({
+        where: { userId, idempotencyKey },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+            },
+          },
+          address: true,
+        },
+      });
+
+      if (existing) {
+        return {
+          ...existing,
+          totalAmount: Number(existing.totalAmount),
+          services: existing.services,
+          reservationCode: existing.reservationCode,
+          address: formatBookingAddress(existing.address),
+        };
+      }
+    }
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -216,83 +284,95 @@ export class BookingAnalyticsService {
       }
     }
 
-    const parsedDate = new Date(bookingDate);
-    const startOfDay = new Date(parsedDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(parsedDate.setHours(23, 59, 59, 999));
-
-    const existingBooking = await this.prisma.booking.findFirst({
-      where: {
-        bookingDate: {
-          gte: startOfDay,
-          lte: endOfDay,
-        },
-        bookingTime,
-        status: {
-          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
-        },
-      },
-    });
-
-    if (existingBooking) {
-      throw new ConflictException(
-        'This time slot is already booked. Please choose another time.',
-      );
-    }
-
     const status = paymentMethod
       ? BookingStatus.CONFIRMED
       : BookingStatus.PENDING;
+    let booking: Awaited<ReturnType<typeof this.prisma.booking.create>>;
+    try {
+      booking = await this.withReservationCodeRetry(async () => {
+        const reservationCode =
+          await this.reservationService.generateReservationCode();
 
-    const reservationCode = await this.reservationService.generateReservationCode();
-
-    const booking = await this.prisma.booking.create({
-      data: {
-        userId,
-        services: serviceRecords,
-        addressId: addressId ?? null,
-        bookingDate: new Date(bookingDate),
-        bookingTime,
-        bookingType,
-        reservationCode,
-        guestName: guestName ?? null,
-        guestPhone: guestPhone ?? null,
-        totalAmount,
-        status,
-        paymentMethod: paymentMethod || PaymentMethod.CASH,
-        notes,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
-        address: true,
-      },
-    });
-
-    if (paymentMethod) {
-      if (paymentMethod === PaymentMethod.WALLET) {
-        await this.prisma.$transaction(async (tx) => {
-          await this.bookingWalletService.debitWalletAndRecordTx(tx, {
-            userId,
-            amount: totalAmount,
-            reference: booking.id,
-            description: `Payment for booking #${booking.id}`,
+        return this.prisma.$transaction(async (tx) => {
+          const created = await tx.booking.create({
+            data: {
+              userId,
+              services: serviceRecords,
+              addressId: addressId ?? null,
+              bookingDate: new Date(bookingDate),
+              bookingTime,
+              bookingType,
+              reservationCode,
+              idempotencyKey: idempotencyKey ?? undefined,
+              guestName: guestName ?? null,
+              guestPhone: guestPhone ?? null,
+              totalAmount,
+              status,
+              paymentMethod: paymentMethod || PaymentMethod.CASH,
+              notes,
+            },
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  phone: true,
+                },
+              },
+              address: true,
+            },
           });
+
+          if (paymentMethod === PaymentMethod.WALLET) {
+            await this.bookingWalletService.debitWalletAndRecordTx(tx, {
+              userId,
+              amount: totalAmount,
+              reference: created.id,
+              description: `Payment for booking #${created.id}`,
+            });
+          }
+
+          return created;
         });
+      });
+    } catch (err) {
+      if (idempotencyKey && this.isUniqueConstraintError(err, 'idempotencyKey')) {
+        const existing = await this.prisma.booking.findFirst({
+          where: { userId, idempotencyKey },
+          include: {
+            user: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+              },
+            },
+            address: true,
+          },
+        });
+
+        if (existing) {
+          return {
+            ...existing,
+            totalAmount: Number(existing.totalAmount),
+            services: existing.services,
+            reservationCode: existing.reservationCode,
+            address: formatBookingAddress(existing.address),
+          };
+        }
       }
+      throw err;
     }
 
     return {
       ...booking,
       totalAmount: Number(booking.totalAmount),
       services: serviceRecords,
-      reservationCode,
+      reservationCode: booking.reservationCode,
       address: formatBookingAddress(booking.address),
     };
   }

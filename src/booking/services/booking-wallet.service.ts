@@ -1,9 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  Prisma,
-  TransactionStatus,
-  TransactionType,
-} from '@prisma/client';
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, TransactionStatus, TransactionType } from '@prisma/client';
 
 @Injectable()
 export class BookingWalletService {
@@ -24,21 +24,23 @@ export class BookingWalletService {
       throw new NotFoundException('Wallet not found');
     }
 
-    const availableBalance = Number(wallet.balance);
-    if (availableBalance < params.amount) {
-      throw new BadRequestException(
-        `Insufficient wallet balance. Required: ${params.amount}, Available: ${availableBalance}`,
-      );
-    }
-
-    await tx.wallet.update({
-      where: { userId: params.userId },
+    const debitResult = await tx.wallet.updateMany({
+      where: {
+        userId: params.userId,
+        balance: { gte: params.amount },
+      },
       data: {
         balance: {
           decrement: params.amount,
         },
       },
     });
+
+    if (debitResult.count === 0) {
+      throw new BadRequestException(
+        'Insufficient wallet balance to complete this booking',
+      );
+    }
 
     await tx.transaction.create({
       data: {

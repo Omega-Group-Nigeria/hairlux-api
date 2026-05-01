@@ -19,7 +19,9 @@ export class MailProcessor {
   private transporter?: nodemailer.Transporter;
 
   constructor(private configService: ConfigService) {
-    this.resendApiKey = this.configService.get<string>('RESEND_API_KEY')?.trim();
+    this.resendApiKey = this.configService
+      .get<string>('RESEND_API_KEY')
+      ?.trim();
     this.emailFrom =
       this.configService.get<string>('EMAIL_FROM') ||
       'HairLux <noreply@hairlux.com.ng>';

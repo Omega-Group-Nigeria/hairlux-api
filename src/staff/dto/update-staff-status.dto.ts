@@ -25,9 +25,7 @@ export class UpdateStaffStatusDto {
     description: 'Required when status is EXITED or ARCHIVED',
     example: 'Resigned for personal reasons',
   })
-  @ValidateIf((o) =>
-    o.status === 'EXITED' || o.status === 'ARCHIVED',
-  )
+  @ValidateIf((o) => o.status === 'EXITED' || o.status === 'ARCHIVED')
   @IsNotEmpty()
   @IsString()
   @Transform(({ value }) => toTrimmedString(value))

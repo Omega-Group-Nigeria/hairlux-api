@@ -44,10 +44,9 @@ export class ServiceCatalogService {
         ? service.homeServicePrice
         : service.homeServicePrice.toNumber();
 
-    const {
-      imagePublicId: _pid,
-      ...rest
-    } = service as typeof service & { imagePublicId?: string | null };
+    const { imagePublicId: _pid, ...rest } = service as typeof service & {
+      imagePublicId?: string | null;
+    };
 
     return {
       ...rest,
