@@ -17,7 +17,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
 import { ErrorMessages } from '../common/constants/error-messages';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomInt } from 'crypto';
 import { UserRole, UserStatus } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
 import { ReferralService } from '../referral/referral.service';
@@ -242,18 +242,17 @@ export class AuthService {
         throw new UnauthorizedException(ErrorMessages.ACCOUNT_INACTIVE);
       }
 
-      // Generate new tokens
+      // Delete old refresh token then generate new ones atomically
+      await this.prisma.refreshToken.delete({
+        where: { id: storedToken.id },
+      });
+
       const tokens = await this.generateTokens(
         storedToken.userId,
         storedToken.user.email,
         storedToken.user.role,
         payload.sessionId,
       );
-
-      // Delete old refresh token
-      await this.prisma.refreshToken.delete({
-        where: { id: storedToken.id },
-      });
 
       return tokens;
     } catch (error) {
@@ -369,24 +368,25 @@ export class AuthService {
       expiresIn: this.configService.get<string>('JWT_EXPIRATION') || '15m',
     } as never);
 
-    const refreshToken = this.jwtService.sign({ ...payload }, {
-      secret:
-        this.configService.get<string>('JWT_REFRESH_SECRET') ||
-        'default-refresh-secret',
-      expiresIn:
-        this.configService.get<string>('JWT_REFRESH_EXPIRATION') || '7d',
-    } as never);
+    const refreshToken = this.jwtService.sign(
+      { ...payload, jti: randomBytes(16).toString('hex') },
+      {
+        secret:
+          this.configService.get<string>('JWT_REFRESH_SECRET') ||
+          'default-refresh-secret',
+        expiresIn:
+          this.configService.get<string>('JWT_REFRESH_EXPIRATION') || '7d',
+      } as never,
+    );
 
     // Store refresh token in database
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
 
-    await this.prisma.refreshToken.create({
-      data: {
-        token: refreshToken,
-        userId,
-        expiresAt,
-      },
+    await this.prisma.refreshToken.upsert({
+      where: { token: refreshToken },
+      create: { token: refreshToken, userId, expiresAt },
+      update: { expiresAt },
     });
 
     return {
@@ -632,8 +632,7 @@ export class AuthService {
   }
 
   private generateOtpCode(): string {
-    // Generate 6-digit OTP
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    return randomInt(100000, 1000000).toString();
   }
 
   private generateSessionId(): string {

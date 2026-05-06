@@ -1383,7 +1383,7 @@ export class BookingPaymentService {
     return {
       bookingPaymentReference,
       provider: metadata.provider ?? 'monnify',
-      status,
+      status: paymentIntent.status,
       amount: Number(paymentIntent.amount),
       gatewayReference: metadata.monnifyTransactionReference ?? null,
       paymentReference: metadata.monnifyPaymentReference ?? null,
