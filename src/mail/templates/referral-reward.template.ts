@@ -24,13 +24,9 @@ export function referralRewardTemplate(
 
   const content = `
     <!-- Icon + heading -->
-    <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="#C9A872">
-      <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
-      <path d="M12 1a1 1 0 0 1 .993 .883l.007 .117v1.354l1.172 -.676a1 1 0 0 1 1.284 .23l.07 .1a1 1 0 0 1 -.23 1.284l-.1 .07l-1.196 .69l1.196 .69a1 1 0 0 1 .364 1.284l-.064 .1a1 1 0 0 1 -1.284 .364l-.1 -.064l-1.172 -.677v1.354a1 1 0 0 1 -1.993 .117l-.007 -.117v-1.354l-1.172 .677a1 1 0 0 1 -1.348 -1.348l.064 -.1l1.196 -.69l-1.196 -.69a1 1 0 0 1 -.364 -1.284l.064 -.1a1 1 0 0 1 1.284 -.364l.1 .064l1.172 .676v-1.354a1 1 0 0 1 1 -1z"/>
-      <path d="M6 12a1 1 0 0 1 1 1v6a1 1 0 0 1 -2 0v-6a1 1 0 0 1 1 -1z"/>
-      <path d="M18 12a1 1 0 0 1 1 1v6a1 1 0 0 1 -2 0v-6a1 1 0 0 1 1 -1z"/>
-      <path d="M12 12a1 1 0 0 1 1 1v6a1 1 0 0 1 -2 0v-6a1 1 0 0 1 1 -1z"/>
-    </svg>
+    <div style="text-align:center;margin-bottom:16px;">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" enable-background="new 0 0 64 64" width="70" height="70"><path d="M32,2C15.431,2,2,15.432,2,32c0,16.568,13.432,30,30,30c16.568,0,30-13.432,30-30C62,15.432,48.568,2,32,2z M25.025,50  l-0.02-0.02L24.988,50L11,35.6l7.029-7.164l6.977,7.184l21-21.619L53,21.199L25.025,50z" fill="#43a047"/></svg>
+    </div>
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#1A1A1A;text-align:center;">You've Earned a Referral Reward!</h1>
     <p style="margin:0 0 28px;font-size:15px;color:#555555;line-height:1.6;text-align:center;">
       Hi <strong>${firstName}</strong>, your friend <strong>${data.referredName}</strong> just made their first deposit — and you've been rewarded!
