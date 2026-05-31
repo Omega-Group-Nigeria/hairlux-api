@@ -643,3 +643,13 @@ model StaffLocation {
 
   @@map("staff_locations")
 }
+
+model WaitlistEntry {
+  id        String   @id @default(uuid())
+  fullName  String   @map("full_name")
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("waitlist_entries")
+}

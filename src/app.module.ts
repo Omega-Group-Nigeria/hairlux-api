@@ -21,6 +21,7 @@ import { RedisModule } from './redis/redis.module';
 import { JobsModule } from './jobs/jobs.module';
 import { RolesModule } from './roles/roles.module';
 import { StaffModule } from './staff/staff.module';
+import { WaitlistModule } from './waitlist/waitlist.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { StaffModule } from './staff/staff.module';
     JobsModule,
     RolesModule,
     StaffModule,
+    WaitlistModule,
   ],
   controllers: [AppController],
   providers: [
