@@ -383,10 +383,8 @@ export class AuthService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
 
-    await this.prisma.refreshToken.upsert({
-      where: { token: refreshToken },
-      create: { token: refreshToken, userId, expiresAt },
-      update: { expiresAt },
+    await this.prisma.refreshToken.create({
+      data: { token: refreshToken, userId, expiresAt },
     });
 
     return {
