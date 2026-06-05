@@ -74,6 +74,7 @@ export class MonnifyService {
     amount: number,
     reference: string,
     customerName: string,
+    redirectUrl?: string,
   ): Promise<MonnifyInitResponse> {
     try {
       const token = await this.getAccessToken();
@@ -87,7 +88,7 @@ export class MonnifyService {
           paymentDescription: 'Wallet Deposit',
           currencyCode: 'NGN',
           contractCode: this.contractCode,
-          redirectUrl: this.configService.get<string>('MONNIFY_REDIRECT_URL'),
+          redirectUrl: redirectUrl ?? this.configService.get<string>('MONNIFY_REDIRECT_URL'),
           paymentMethods: ['CARD', 'ACCOUNT_TRANSFER'],
         },
         { headers: { Authorization: `Bearer ${token}` } },

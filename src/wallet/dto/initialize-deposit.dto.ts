@@ -5,6 +5,8 @@ import {
   Max,
   IsOptional,
   IsIn,
+  IsUrl,
+  IsString,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -34,4 +36,13 @@ export class InitializeDepositDto {
     message: 'Provider must be paystack or monnify',
   })
   provider?: PaymentProvider;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional redirect URL after payment (overrides MONNIFY_REDIRECT_URL). Useful for mobile deep links.',
+    example: 'myapp://payment/success',
+  })
+  @IsOptional()
+  @IsString()
+  redirectUrl?: string;
 }

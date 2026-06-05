@@ -164,6 +164,7 @@ export class WalletService {
         amount,
         reference,
         `${user.firstName} ${user.lastName}`,
+        dto.redirectUrl,
       );
 
       // Store the monnify transaction reference for later verification
