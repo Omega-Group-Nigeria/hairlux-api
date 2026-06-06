@@ -2,12 +2,13 @@ import {
   IsIn,
   IsNotEmpty,
   IsNumber,
+  IsOptional,
   IsString,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingPaymentPayloadDto } from './booking-payment-payload.dto';
 
 export class InitializeBookingPaymentDto {
@@ -46,4 +47,13 @@ export class InitializeBookingPaymentDto {
   @IsNotEmpty()
   @Transform(({ value }) => value?.trim())
   idempotencyKey: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional redirect URL after payment (overrides MONNIFY_REDIRECT_URL). Useful for mobile deep links.',
+    example: 'myapp://payment/success',
+  })
+  @IsOptional()
+  @IsString()
+  redirectUrl?: string;
 }

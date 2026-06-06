@@ -882,6 +882,7 @@ export class BookingPaymentService {
       requiredExternalAmount,
       bookingPaymentReference,
       `${context.user.firstName} ${context.user.lastName}`.trim(),
+      dto.redirectUrl,
     );
 
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
