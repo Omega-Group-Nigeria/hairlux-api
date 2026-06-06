@@ -38,6 +38,7 @@ export class MonnifyService {
   private readonly apiKey: string;
   private readonly secretKey: string;
   private readonly contractCode: string;
+  private readonly defaultPaymentMethods = ['CARD', 'ACCOUNT_TRANSFER', 'USSD', 'PHONE_NUMBER'];
 
   constructor(private configService: ConfigService) {
     this.baseUrl = this.configService.get<string>(
@@ -75,6 +76,7 @@ export class MonnifyService {
     reference: string,
     customerName: string,
     redirectUrl?: string,
+    paymentMethods?: string[],
   ): Promise<MonnifyInitResponse> {
     try {
       const token = await this.getAccessToken();
@@ -89,7 +91,7 @@ export class MonnifyService {
           currencyCode: 'NGN',
           contractCode: this.contractCode,
           redirectUrl: redirectUrl ?? this.configService.get<string>('MONNIFY_REDIRECT_URL'),
-          paymentMethods: ['CARD', 'ACCOUNT_TRANSFER'],
+          paymentMethods: paymentMethods ?? this.defaultPaymentMethods,
         },
         { headers: { Authorization: `Bearer ${token}` } },
       );
