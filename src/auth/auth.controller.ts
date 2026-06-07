@@ -1,7 +1,8 @@
 import {
   Controller,
-  Post,
   Get,
+  Post,
+  Put,
   Body,
   HttpCode,
   HttpStatus,
@@ -21,9 +22,13 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
+import { CreatePinDto } from './dto/create-pin.dto';
+import { VerifyPinDto } from './dto/verify-pin.dto';
+import { UpdatePinDto } from './dto/update-pin.dto';
 import { ResponseUtil } from '../common/utils/response.util';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GetUser } from './decorators/get-user.decorator';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -282,6 +287,146 @@ export class AuthController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async resendOtp(@Body() resendOtpDto: ResendOtpDto) {
     const result = await this.authService.resendOtp(resendOtpDto);
+    return ResponseUtil.success(result, result.message);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PIN Management Endpoints (secure, modular, single-responsibility via PinService)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @Post('pin')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Create / Set initial transaction PIN',
+    description:
+      'Sets a 4-6 digit numeric PIN for the authenticated user. ' +
+      'Requires current password for the initial setup. ' +
+      'On success, rotates the session and returns fresh tokens (same shape as login).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'PIN created successfully. Fresh tokens issued.',
+    example: {
+      success: true,
+      message: 'PIN created successfully',
+      data: {
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          email: 'jane@hairlux.com',
+          firstName: 'Jane',
+          lastName: 'Doe',
+          role: 'USER',
+        },
+        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'PIN already set or validation error' })
+  @ApiResponse({ status: 401, description: 'Invalid password or unauthorized' })
+  async createPin(
+    @GetUser('id') userId: string,
+    @Body() dto: CreatePinDto,
+  ) {
+    const result = await this.authService.createPin(userId, dto);
+    return ResponseUtil.success(result, result.message);
+  }
+
+  @Get('pin/status')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Get PIN status for current user',
+    description: 'Returns whether a PIN is configured and current lock state.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'PIN status retrieved',
+    example: {
+      success: true,
+      message: 'PIN status retrieved successfully',
+      data: {
+        hasPin: true,
+        isLocked: false,
+        lockedUntil: null,
+        failedAttempts: 0,
+      },
+    },
+  })
+  async getPinStatus(@GetUser('id') userId: string) {
+    const status = await this.authService.getPinStatus(userId);
+    return ResponseUtil.success(status, 'PIN status retrieved successfully');
+  }
+
+  @Post('pin/verify')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 8, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify transaction / security PIN',
+    description:
+      'Verifies the user\'s PIN. Use this before sensitive actions (e.g. large transfers, withdrawals). ' +
+      'Implements progressive lockout after repeated failures.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'PIN verified successfully',
+    example: {
+      success: true,
+      message: 'PIN verified successfully',
+      data: {
+        verified: true,
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Invalid PIN or PIN is locked' })
+  @ApiResponse({ status: 400, description: 'No PIN set on account' })
+  async verifyPin(
+    @GetUser('id') userId: string,
+    @Body() dto: VerifyPinDto,
+  ) {
+    const result = await this.authService.verifyPin(userId, dto);
+    return ResponseUtil.success(result, 'PIN verified successfully');
+  }
+
+  @Put('pin')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update / Change existing PIN',
+    description:
+      'Changes the user\'s PIN. Requires the current PIN. ' +
+      'On success, the session is rotated and fresh access/refresh tokens are returned.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'PIN updated successfully. New tokens returned.',
+    example: {
+      success: true,
+      message: 'PIN updated successfully',
+      data: {
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          email: 'jane@hairlux.com',
+        },
+        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation error or no PIN set' })
+  @ApiResponse({ status: 401, description: 'Current PIN incorrect or account locked' })
+  async updatePin(
+    @GetUser('id') userId: string,
+    @Body() dto: UpdatePinDto,
+  ) {
+    const result = await this.authService.updatePin(userId, dto);
     return ResponseUtil.success(result, result.message);
   }
 }

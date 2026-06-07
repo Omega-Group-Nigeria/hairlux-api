@@ -130,6 +130,12 @@ model User {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
+  // PIN (transaction / security PIN) - stored hashed
+  pin                String?   @map("pin")
+  pinSetAt           DateTime? @map("pin_set_at")
+  pinFailedAttempts  Int       @default(0) @map("pin_failed_attempts")
+  pinLockedUntil     DateTime? @map("pin_locked_until")
+
   adminRoleId      String?    @map("admin_role_id")
 
   // Relations

@@ -23,6 +23,10 @@ import { MailService } from '../mail/mail.service';
 import { ReferralService } from '../referral/referral.service';
 import { RedisService } from '../redis/redis.service';
 import { JwtPayload } from './types/jwt-payload.interface';
+import { PinService } from './pin.service';
+import { CreatePinDto } from './dto/create-pin.dto';
+import { VerifyPinDto } from './dto/verify-pin.dto';
+import { UpdatePinDto } from './dto/update-pin.dto';
 
 @Injectable()
 export class AuthService {
@@ -35,6 +39,7 @@ export class AuthService {
     private mailService: MailService,
     private referralService: ReferralService,
     private redis: RedisService,
+    private pinService: PinService,
   ) {}
 
   async register(registerDto: RegisterDto) {
@@ -626,6 +631,101 @@ export class AuthService {
 
     return {
       message: 'OTP has been resent to your email',
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PIN Management (delegates to PinService + handles post-change token rotation)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async createPin(userId: string, dto: CreatePinDto) {
+    await this.pinService.createPin(userId, dto);
+
+    // Security best practice: rotate session after setting a new security credential
+    const authPayload = await this.buildAuthPayloadAfterPinChange(userId);
+
+    return {
+      ...authPayload,
+      message: 'PIN created successfully',
+    };
+  }
+
+  async verifyPin(userId: string, dto: VerifyPinDto) {
+    const result = await this.pinService.verifyPin(userId, dto);
+    return result; // { verified: true }
+  }
+
+  async updatePin(userId: string, dto: UpdatePinDto) {
+    await this.pinService.updatePin(userId, dto);
+
+    // Rotate session + return fresh tokens after PIN change
+    const authPayload = await this.buildAuthPayloadAfterPinChange(userId);
+
+    return {
+      ...authPayload,
+      message: 'PIN updated successfully',
+    };
+  }
+
+  async getPinStatus(userId: string) {
+    return this.pinService.getPinStatus(userId);
+  }
+
+  /**
+   * After a PIN create or update, rotate the active session (invalidates other devices)
+   * and return a fresh authenticated payload (user + tokens) following the same shape
+   * as login / register responses.
+   */
+  private async buildAuthPayloadAfterPinChange(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        adminRole: {
+          select: { id: true, name: true },
+        },
+        influencer: {
+          select: { id: true, isActive: true },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    }
+
+    const sessionId = await this.rotateActiveSession(userId);
+    const tokens = await this.generateTokens(
+      userId,
+      user.email,
+      user.role,
+      sessionId,
+    );
+
+    const permissions = await this.getPermissionsForUser(
+      user.role,
+      user.adminRoleId ?? null,
+    );
+
+    // Remove sensitive fields
+    const {
+      password: _p,
+      otpCode: _o,
+      otpExpiry: _oe,
+      resetToken: _r,
+      resetTokenExpiry: _re,
+      pin: _pin,
+      pinFailedAttempts: _fa,
+      pinLockedUntil: _lu,
+      ...safeUser
+    } = user as any;
+
+    return {
+      user: {
+        ...safeUser,
+        adminRole: user.adminRole ?? null,
+        permissions,
+      },
+      ...tokens,
     };
   }
 
