@@ -415,6 +415,7 @@ export class AuthService {
       adminRoleId: string | null;
       currentSessionId: string | null;
       adminRole: { id: string; name: string } | null;
+      hasPin: boolean;
     }>(profileKey);
 
     let user: NonNullable<typeof cached>;
@@ -434,6 +435,7 @@ export class AuthService {
           status: true,
           adminRoleId: true,
           currentSessionId: true,
+          pin: true,
           adminRole: {
             select: { id: true, name: true },
           },
@@ -444,7 +446,11 @@ export class AuthService {
         throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
       }
 
-      user = dbUser;
+      const { pin, ...userWithoutPin } = dbUser;
+      user = {
+        ...userWithoutPin,
+        hasPin: !!pin,
+      };
       // Cache for 5 min — invalidated on status change, role reassign, or delete
       await this.redis.set(profileKey, user, 300);
     }
@@ -498,6 +504,7 @@ export class AuthService {
     otpExpiry: Date | null;
     resetToken: string | null;
     resetTokenExpiry: Date | null;
+    pin?: string | null;
     [key: string]: unknown;
   }) {
     const sessionId = await this.rotateActiveSession(user.id);
@@ -513,12 +520,15 @@ export class AuthService {
       user.adminRoleId ?? null,
     );
 
+    const hasPin = !!user.pin;
+
     const {
       password: _,
       otpCode,
       otpExpiry,
       resetToken,
       resetTokenExpiry,
+      pin: __,
       ...userWithoutSensitiveData
     } = user;
 
@@ -527,6 +537,7 @@ export class AuthService {
         ...userWithoutSensitiveData,
         adminRole: user.adminRole ?? null,
         permissions,
+        hasPin,
       },
       ...tokens,
     };
