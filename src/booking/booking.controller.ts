@@ -148,6 +148,7 @@ export class BookingController {
                 serviceMode: 'WALK_IN',
                 name: 'Box Braids',
                 price: 25000,
+                quantity: 1,
                 duration: 180,
               },
               {
@@ -155,6 +156,7 @@ export class BookingController {
                 serviceMode: 'HOME_SERVICE',
                 name: 'Deep Conditioning',
                 price: 20000,
+                quantity: 2,
                 duration: 60,
               },
             ],
@@ -409,6 +411,7 @@ export class BookingController {
               serviceId: 'svc-uuid-1',
               name: 'Box Braids',
               price: 25000,
+              quantity: 1,
               duration: 180,
             },
           ],

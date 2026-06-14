@@ -7,7 +7,7 @@ import {
 import { BookingStatus, BookingType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { formatBookingAddress } from '../utils/booking.utils';
+import { formatBookingAddress, formatBookingResponse } from '../utils/booking.utils';
 
 @Injectable()
 export class ReservationService {
@@ -55,7 +55,7 @@ export class ReservationService {
       throw new ForbiddenException('This reservation does not belong to you');
     }
 
-    return booking;
+    return formatBookingResponse(booking);
   }
 
   async adminFindByReservationCode(code: string) {
@@ -80,7 +80,7 @@ export class ReservationService {
     }
 
     return {
-      ...booking,
+      ...formatBookingResponse(booking),
       address: formatBookingAddress(booking.address),
       isValid:
         !booking.reservationUsed && booking.status !== BookingStatus.CANCELLED,
@@ -128,7 +128,7 @@ export class ReservationService {
     void this.redis.delByPattern('analytics:*');
 
     return {
-      ...updated,
+      ...formatBookingResponse(updated),
       address: formatBookingAddress(updated.address),
     };
   }

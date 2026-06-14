@@ -10,6 +10,9 @@ import {
   ArrayMinSize,
   IsIn,
   ValidateIf,
+  IsInt,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -59,6 +62,20 @@ export class ServiceBookingItemDto {
     message: 'serviceMode must be HOME_SERVICE or WALK_IN',
   })
   serviceMode?: BookingType;
+
+  @ApiPropertyOptional({
+    description: 'Number of units for this service (defaults to 1)',
+    example: 2,
+    minimum: 1,
+    maximum: 99,
+    default: 1,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(99)
+  quantity?: number;
 }
 
 export class CreateBookingDto {
@@ -69,10 +86,12 @@ export class CreateBookingDto {
       {
         serviceId: '123e4567-e89b-12d3-a456-426614174001',
         serviceMode: 'WALK_IN',
+        quantity: 1,
       },
       {
         serviceId: '123e4567-e89b-12d3-a456-426614174002',
         serviceMode: 'HOME_SERVICE',
+        quantity: 2,
         notes: 'Extra time needed',
       },
     ],

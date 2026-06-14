@@ -29,8 +29,15 @@ import {
 import { InitializeBookingPaymentDto } from '../dto/initialize-booking-payment.dto';
 import { VerifyBookingPaymentDto } from '../dto/verify-booking-payment.dto';
 import {
+  BookingServiceRecord,
+  buildBookingServiceRecord,
+  calculateBookingServicesTotal,
   formatBookingAddress,
+  formatBookingResponse,
+  normalizeBookingServices,
   resolvePriceForBookingType,
+  toBookingServicesJson,
+  toEmailServiceLines,
 } from '../utils/booking.utils';
 import { BookingWalletService } from './booking-wallet.service';
 import { ReservationService } from './reservation.service';
@@ -66,7 +73,7 @@ export class BookingPaymentService {
   }
 
   private deriveBookingTypeFromServiceRecords(
-    serviceRecords: Array<{ serviceMode: BookingType }>,
+    serviceRecords: Array<{ serviceMode?: BookingType }>,
   ): BookingType {
     const modeSet = new Set(
       serviceRecords.map((service) => service.serviceMode),
@@ -149,12 +156,10 @@ export class BookingPaymentService {
         ? 'Payment successful. Booking confirmed.'
         : 'Booking reserved. Payment will be collected on delivery.';
 
+    const formattedBooking = formatBookingResponse(booking);
+
     return {
-      booking: {
-        ...booking,
-        services: booking.services,
-        totalAmount,
-      },
+      booking: formattedBooking,
       reservationCode: booking.reservationCode,
       totalAmount,
       originalAmount,
@@ -172,8 +177,7 @@ export class BookingPaymentService {
   ) {
     return {
       booking: {
-        ...booking,
-        totalAmount: Number(booking.totalAmount),
+        ...formatBookingResponse(booking),
         address: formatBookingAddress(booking.address),
       },
       reservationCode,
@@ -370,14 +374,7 @@ export class BookingPaymentService {
 
     const bookingDate = new Date(`${date}T${time}`);
 
-    const serviceRecords: {
-      serviceId: string;
-      name: string;
-      price: number;
-      duration: number;
-      notes?: string;
-      serviceMode: BookingType;
-    }[] = [];
+    const serviceRecords: BookingServiceRecord[] = [];
 
     for (const item of services) {
       const service = await this.prisma.service.findUnique({
@@ -396,20 +393,20 @@ export class BookingPaymentService {
 
       const serviceMode = this.resolveServiceMode(item, bookingType);
 
-      serviceRecords.push({
-        serviceId: service.id,
-        name: service.name,
-        price: resolvePriceForBookingType(service, serviceMode),
-        duration: service.duration ?? 0,
-        serviceMode,
-        ...(item.notes ? { notes: item.notes } : {}),
-      });
+      serviceRecords.push(
+        buildBookingServiceRecord({
+          service,
+          unitPrice: resolvePriceForBookingType(service, serviceMode),
+          item,
+          serviceMode,
+        }),
+      );
     }
 
     const effectiveBookingType =
       this.deriveBookingTypeFromServiceRecords(serviceRecords);
 
-    const totalAmount = serviceRecords.reduce((sum, s) => sum + s.price, 0);
+    const totalAmount = calculateBookingServicesTotal(serviceRecords);
 
     let validatedDiscount: {
       id: string;
@@ -443,7 +440,7 @@ export class BookingPaymentService {
             const booking = await tx.booking.create({
               data: {
                 userId,
-                services: serviceRecords,
+                services: toBookingServicesJson(serviceRecords),
                 addressId: addressId ?? null,
                 bookingDate,
                 bookingTime: time,
@@ -500,11 +497,7 @@ export class BookingPaymentService {
         const { booking, influencerRewardUserId } = walletResult;
 
         const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
-        const emailServices = serviceRecords.map((s) => ({
-          name: s.name,
-          price: s.price,
-          duration: s.duration,
-        }));
+        const emailServices = toEmailServiceLines(serviceRecords);
 
         if (user) {
           void this.mailService.sendBookingConfirmationEmail(
@@ -545,7 +538,7 @@ export class BookingPaymentService {
 
         return {
           booking: {
-            ...booking,
+            ...formatBookingResponse(booking),
             services: serviceRecords,
             totalAmount: finalAmount,
           },
@@ -572,7 +565,7 @@ export class BookingPaymentService {
           const created = await tx.booking.create({
             data: {
               userId,
-              services: serviceRecords,
+              services: toBookingServicesJson(serviceRecords),
               addressId: addressId ?? null,
               bookingDate,
               bookingTime: time,
@@ -611,11 +604,7 @@ export class BookingPaymentService {
       });
 
       const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
-      const emailServices = serviceRecords.map((s) => ({
-        name: s.name,
-        price: s.price,
-        duration: s.duration,
-      }));
+      const emailServices = toEmailServiceLines(serviceRecords);
 
       if (user) {
         void this.mailService.sendBookingConfirmationEmail(
@@ -650,7 +639,7 @@ export class BookingPaymentService {
 
       return {
         booking: {
-          ...booking,
+          ...formatBookingResponse(booking),
           services: serviceRecords,
           totalAmount: finalAmount,
         },
@@ -737,14 +726,7 @@ export class BookingPaymentService {
 
     const bookingDate = new Date(`${date}T${time}`);
 
-    const serviceRecords: {
-      serviceId: string;
-      name: string;
-      price: number;
-      duration: number;
-      notes?: string;
-      serviceMode: BookingType;
-    }[] = [];
+    const serviceRecords: BookingServiceRecord[] = [];
 
     for (const item of services) {
       const service = await this.prisma.service.findUnique({
@@ -763,20 +745,20 @@ export class BookingPaymentService {
 
       const serviceMode = this.resolveServiceMode(item, bookingType);
 
-      serviceRecords.push({
-        serviceId: service.id,
-        name: service.name,
-        price: resolvePriceForBookingType(service, serviceMode),
-        duration: service.duration ?? 0,
-        serviceMode,
-        ...(item.notes ? { notes: item.notes } : {}),
-      });
+      serviceRecords.push(
+        buildBookingServiceRecord({
+          service,
+          unitPrice: resolvePriceForBookingType(service, serviceMode),
+          item,
+          serviceMode,
+        }),
+      );
     }
 
     const effectiveBookingType =
       this.deriveBookingTypeFromServiceRecords(serviceRecords);
 
-    const totalAmount = serviceRecords.reduce((sum, s) => sum + s.price, 0);
+    const totalAmount = calculateBookingServicesTotal(serviceRecords);
 
     let validatedDiscount: {
       id: string;
@@ -993,8 +975,7 @@ export class BookingPaymentService {
       if (existingBooking) {
         return {
           booking: {
-            ...existingBooking,
-            totalAmount: Number(existingBooking.totalAmount),
+            ...formatBookingResponse(existingBooking),
             address: formatBookingAddress(existingBooking.address),
           },
           reservationCode: String(
@@ -1144,7 +1125,7 @@ export class BookingPaymentService {
           const booking = await tx.booking.create({
             data: {
               userId,
-              services: context.serviceRecords,
+              services: toBookingServicesJson(context.serviceRecords),
               addressId: payload.addressId ?? null,
               bookingDate: context.bookingDate,
               bookingTime: payload.time,
@@ -1254,11 +1235,7 @@ export class BookingPaymentService {
       throw new ConflictException('Booking payment already processed');
     }
 
-    const emailServices = context.serviceRecords.map((s) => ({
-      name: s.name,
-      price: s.price,
-      duration: s.duration,
-    }));
+    const emailServices = toEmailServiceLines(context.serviceRecords);
 
     void this.mailService.sendBookingConfirmationEmail(
       context.user.email,
@@ -1302,8 +1279,7 @@ export class BookingPaymentService {
 
     return {
       booking: {
-        ...result.booking,
-        totalAmount: Number(result.booking.totalAmount),
+        ...formatBookingResponse(result.booking),
         address: formatBookingAddress(result.booking.address),
       },
       reservationCode: result.reservationCode,

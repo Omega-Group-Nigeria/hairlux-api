@@ -233,7 +233,7 @@ model Service {
 model Booking {
   id               String        @id @default(uuid())
   userId           String        @map("user_id")
-  // services is a JSON array: [{serviceId, name, price, duration, notes?}]
+  // services is a JSON array: [{serviceId, name, price, quantity, duration, notes?, serviceMode?}]
   services         Json          @map("services")
   addressId        String?       @map("address_id")  // null for WALK_IN-only bookings
   bookingDate      DateTime      @map("booking_date")

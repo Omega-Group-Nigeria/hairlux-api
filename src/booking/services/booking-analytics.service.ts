@@ -17,8 +17,14 @@ import { AdminQueryBookingsDto } from '../dto/admin-query-bookings.dto';
 import { GetCalendarDto } from '../dto/get-calendar.dto';
 import { GetStatsDto } from '../dto/get-stats.dto';
 import {
+  BookingServiceRecord,
+  buildBookingServiceRecord,
+  calculateBookingServicesTotal,
   formatBookingAddress,
+  formatBookingResponse,
+  normalizeBookingServices,
   resolvePriceForBookingType,
+  toBookingServicesJson,
 } from '../utils/booking.utils';
 import { BookingWalletService } from './booking-wallet.service';
 import { ReservationService } from './reservation.service';
@@ -140,8 +146,7 @@ export class BookingAnalyticsService {
 
     return {
       data: bookings.map((booking) => ({
-        ...booking,
-        totalAmount: Number(booking.totalAmount),
+        ...formatBookingResponse(booking),
         address: formatBookingAddress(booking.address),
       })),
       meta: {
@@ -175,8 +180,7 @@ export class BookingAnalyticsService {
     }
 
     return {
-      ...booking,
-      totalAmount: Number(booking.totalAmount),
+      ...formatBookingResponse(booking),
       address: formatBookingAddress(booking.address),
     };
   }
@@ -216,9 +220,7 @@ export class BookingAnalyticsService {
 
       if (existing) {
         return {
-          ...existing,
-          totalAmount: Number(existing.totalAmount),
-          services: existing.services,
+          ...formatBookingResponse(existing),
           reservationCode: existing.reservationCode,
           address: formatBookingAddress(existing.address),
         };
@@ -233,13 +235,7 @@ export class BookingAnalyticsService {
       throw new NotFoundException('User not found');
     }
 
-    const serviceRecords: {
-      serviceId: string;
-      name: string;
-      price: number;
-      duration: number;
-      notes?: string;
-    }[] = [];
+    const serviceRecords: BookingServiceRecord[] = [];
 
     for (const item of services) {
       const service = await this.prisma.service.findUnique({
@@ -256,16 +252,16 @@ export class BookingAnalyticsService {
         );
       }
 
-      serviceRecords.push({
-        serviceId: service.id,
-        name: service.name,
-        price: resolvePriceForBookingType(service, bookingType),
-        duration: service.duration,
-        ...(item.notes ? { notes: item.notes } : {}),
-      });
+      serviceRecords.push(
+        buildBookingServiceRecord({
+          service,
+          unitPrice: resolvePriceForBookingType(service, bookingType),
+          item,
+        }),
+      );
     }
 
-    const totalAmount = serviceRecords.reduce((sum, s) => sum + s.price, 0);
+    const totalAmount = calculateBookingServicesTotal(serviceRecords);
 
     let address: Awaited<
       ReturnType<typeof this.prisma.address.findUnique>
@@ -298,7 +294,7 @@ export class BookingAnalyticsService {
           const created = await tx.booking.create({
             data: {
               userId,
-              services: serviceRecords,
+              services: toBookingServicesJson(serviceRecords),
               addressId: addressId ?? null,
               bookingDate: new Date(bookingDate),
               bookingTime,
@@ -358,9 +354,7 @@ export class BookingAnalyticsService {
 
         if (existing) {
           return {
-            ...existing,
-            totalAmount: Number(existing.totalAmount),
-            services: existing.services,
+            ...formatBookingResponse(existing),
             reservationCode: existing.reservationCode,
             address: formatBookingAddress(existing.address),
           };
@@ -370,8 +364,7 @@ export class BookingAnalyticsService {
     }
 
     return {
-      ...booking,
-      totalAmount: Number(booking.totalAmount),
+      ...formatBookingResponse(booking),
       services: serviceRecords,
       reservationCode: booking.reservationCode,
       address: formatBookingAddress(booking.address),
@@ -461,8 +454,7 @@ export class BookingAnalyticsService {
     ]);
 
     return {
-      ...result,
-      totalAmount: Number(result.totalAmount),
+      ...formatBookingResponse(result),
       address: formatBookingAddress(result.address),
     };
   }
@@ -516,7 +508,7 @@ export class BookingAnalyticsService {
         time: booking.bookingTime,
         status: booking.status,
         user: booking.user,
-        services: booking.services,
+        services: normalizeBookingServices(booking.services),
       });
     });
 
@@ -597,7 +589,7 @@ export class BookingAnalyticsService {
     const serviceStats: Record<string, any> = {};
     bookings.forEach((booking) => {
       const isPaid = paidBookings.includes(booking);
-      (booking.services as any[]).forEach((svc) => {
+      normalizeBookingServices(booking.services).forEach((svc) => {
         const svcId = svc.serviceId;
         if (!serviceStats[svcId]) {
           serviceStats[svcId] = {
@@ -606,9 +598,9 @@ export class BookingAnalyticsService {
             revenue: 0,
           };
         }
-        serviceStats[svcId].count++;
+        serviceStats[svcId].count += svc.quantity;
         if (isPaid) {
-          serviceStats[svcId].revenue += Number(svc.price);
+          serviceStats[svcId].revenue += svc.price * svc.quantity;
         }
       });
     });

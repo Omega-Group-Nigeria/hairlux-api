@@ -14,6 +14,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { QueryBookingsDto } from '../dto/query-bookings.dto';
 import { RescheduleBookingDto } from '../dto/reschedule-booking.dto';
+import { formatBookingResponse } from '../utils/booking.utils';
 
 @Injectable()
 export class BookingCoreService {
@@ -55,7 +56,7 @@ export class BookingCoreService {
       },
     });
 
-    return bookings;
+    return bookings.map((booking) => formatBookingResponse(booking));
   }
 
   async findOne(id: string, userId: string) {
@@ -83,7 +84,7 @@ export class BookingCoreService {
       throw new ForbiddenException('You do not have access to this booking');
     }
 
-    return booking;
+    return formatBookingResponse(booking);
   }
 
   async reschedule(
@@ -128,7 +129,7 @@ export class BookingCoreService {
       },
     });
 
-    return updatedBooking;
+    return formatBookingResponse(updatedBooking);
   }
 
   async updateStatus(
@@ -217,6 +218,6 @@ export class BookingCoreService {
         : []),
     ]);
 
-    return result;
+    return formatBookingResponse(result);
   }
 }
