@@ -32,6 +32,7 @@ enum PaymentMethod {
   WALLET
   CASH
   MONNIFY
+  PAYSTACK
 }
 
 enum TransactionType {
@@ -41,6 +42,20 @@ enum TransactionType {
   CREDIT
   REFUND
   INFLUENCER_REWARD
+  SHOP_PURCHASE
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ShopOrderStatus {
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
 }
 
 enum TransactionStatus {
@@ -151,6 +166,7 @@ model User {
   discountUsages  DiscountUsage[] @relation("UserDiscountUsages")
   adminRole       AdminRole?     @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
   influencer      Influencer?
+  shopOrders      ShopOrder[]
 
   @@index([role])
   @@index([status])
@@ -187,11 +203,64 @@ model Address {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bookings Booking[]
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings   Booking[]
+  shopOrders ShopOrder[]
 
   @@index([userId])
   @@map("addresses")
+}
+
+model Product {
+  id            String        @id @default(uuid())
+  name          String
+  description   String?
+  price         Decimal       @db.Decimal(10, 2)
+  stock         Int           @default(0)
+  imageUrl      String?       @map("image_url")
+  imagePublicId String?       @map("image_public_id")
+  status        ProductStatus @default(ACTIVE)
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("products")
+}
+
+model DeliveryRegion {
+  id          String   @id @default(uuid())
+  name        String
+  state       String   @unique
+  deliveryFee Decimal  @db.Decimal(10, 2) @map("delivery_fee")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("delivery_regions")
+}
+
+model ShopOrder {
+  id                      String          @id @default(uuid())
+  userId                  String          @map("user_id")
+  addressId               String          @map("address_id")
+  items                   Json
+  deliveryAddressSnapshot Json            @map("delivery_address_snapshot")
+  subtotal                Decimal         @db.Decimal(10, 2)
+  deliveryFee             Decimal         @db.Decimal(10, 2) @map("delivery_fee")
+  totalAmount             Decimal         @db.Decimal(10, 2) @map("total_amount")
+  status                  ShopOrderStatus @default(CONFIRMED)
+  idempotencyKey          String?         @map("idempotency_key")
+  notes                   String?
+  createdAt               DateTime        @default(now()) @map("created_at")
+  updatedAt               DateTime        @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id])
+  address Address @relation(fields: [addressId], references: [id])
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([status])
+  @@map("shop_orders")
 }
 
 model ServiceCategory {

@@ -17,7 +17,9 @@ import {
   referralRewardTemplate,
   staffBirthdayTemplate,
   contactFormSubmissionTemplate,
+  shopOrderConfirmationTemplate,
 } from './templates';
+import type { ShopOrderConfirmationData } from './templates/shop-order-confirmation.template';
 
 @Injectable()
 export class MailService {
@@ -259,6 +261,36 @@ export class MailService {
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Error queuing staff birthday email:`, errorMessage);
       throw error;
+    }
+  }
+
+  async sendShopOrderConfirmationEmail(
+    email: string,
+    firstName: string,
+    order: ShopOrderConfirmationData,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: `Shop Order Confirmed [${order.orderId.slice(0, 8)}] — HairLux`,
+          html: shopOrderConfirmationTemplate(firstName, order),
+        },
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        },
+      );
+
+      this.logger.log(`Shop order confirmation email queued for ${email}`);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Error queuing shop order confirmation email:`,
+        errorMessage,
+      );
     }
   }
 

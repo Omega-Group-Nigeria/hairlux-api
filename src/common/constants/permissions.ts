@@ -60,6 +60,12 @@ export const PERMISSIONS = {
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
 
+  // ── Shop ─────────────────────────────────────────────────────────────────────
+  SHOP_READ: 'shop:read', // View products, delivery regions & orders
+  SHOP_MANAGE_PRODUCTS: 'shop:manage_products', // CRUD products
+  SHOP_MANAGE_DELIVERY: 'shop:manage_delivery', // CRUD delivery regions
+  SHOP_UPDATE_STATUS: 'shop:update_status', // Update shop order status / cancel
+
   // ── Roles ────────────────────────────────────────────────────────────────────
   ROLES_READ: 'roles:read', // View admin roles & permissions
   ROLES_CREATE: 'roles:create', // Create new roles
@@ -200,6 +206,21 @@ export const PERMISSION_GROUPS = [
       {
         key: PERMISSIONS.STAFF_MANAGE_LOCATIONS,
         label: 'Manage staff locations',
+      },
+    ],
+  },
+  {
+    group: 'Shop',
+    permissions: [
+      { key: PERMISSIONS.SHOP_READ, label: 'View shop catalog, regions & orders' },
+      { key: PERMISSIONS.SHOP_MANAGE_PRODUCTS, label: 'Manage shop products' },
+      {
+        key: PERMISSIONS.SHOP_MANAGE_DELIVERY,
+        label: 'Manage delivery regions & fees',
+      },
+      {
+        key: PERMISSIONS.SHOP_UPDATE_STATUS,
+        label: 'Update shop order status & cancel',
       },
     ],
   },

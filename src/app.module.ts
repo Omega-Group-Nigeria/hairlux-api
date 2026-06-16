@@ -22,6 +22,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { RolesModule } from './roles/roles.module';
 import { StaffModule } from './staff/staff.module';
 import { WaitlistModule } from './waitlist/waitlist.module';
+import { ShopModule } from './shop/shop.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { WaitlistModule } from './waitlist/waitlist.module';
     RolesModule,
     StaffModule,
     WaitlistModule,
+    ShopModule,
   ],
   controllers: [AppController],
   providers: [

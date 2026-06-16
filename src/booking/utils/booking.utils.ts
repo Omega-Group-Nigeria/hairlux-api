@@ -137,21 +137,4 @@ export function toEmailServiceLines(
   }));
 }
 
-export function formatBookingAddress(address: unknown) {
-  if (!address || typeof address !== 'object' || Array.isArray(address)) {
-    return null;
-  }
-
-  const raw = address as Record<string, unknown>;
-  return {
-    id: raw.id,
-    fullAddress: raw.fullAddress ?? null,
-    streetAddress: raw.streetAddress ?? null,
-    city: raw.city ?? null,
-    state: raw.state ?? null,
-    country: raw.country ?? null,
-    placeId: raw.placeId ?? null,
-    addressComponents: raw.addressComponents ?? null,
-    isDefault: raw.isDefault ?? false,
-  };
-}
+export { formatAddress as formatBookingAddress } from '../../common/utils/address.utils';

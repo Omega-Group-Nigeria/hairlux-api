@@ -26,7 +26,7 @@ import {
   resolvePriceForBookingType,
   toBookingServicesJson,
 } from '../utils/booking.utils';
-import { BookingWalletService } from './booking-wallet.service';
+import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
 
 @Injectable()
@@ -34,7 +34,7 @@ export class BookingAnalyticsService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
-    private bookingWalletService: BookingWalletService,
+    private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
   ) {}
 
@@ -323,11 +323,13 @@ export class BookingAnalyticsService {
           });
 
           if (paymentMethod === PaymentMethod.WALLET) {
-            await this.bookingWalletService.debitWalletAndRecordTx(tx, {
+            await this.walletDebitService.debitWalletAndRecordTx(tx, {
               userId,
               amount: totalAmount,
               reference: created.id,
               description: `Payment for booking #${created.id}`,
+              insufficientBalanceMessage:
+                'Insufficient wallet balance to complete this booking',
             });
           }
 

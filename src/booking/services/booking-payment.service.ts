@@ -39,7 +39,7 @@ import {
   toBookingServicesJson,
   toEmailServiceLines,
 } from '../utils/booking.utils';
-import { BookingWalletService } from './booking-wallet.service';
+import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
 
 @Injectable()
@@ -50,7 +50,7 @@ export class BookingPaymentService {
     private mailService: MailService,
     private redis: RedisService,
     private discountService: DiscountService,
-    private bookingWalletService: BookingWalletService,
+    private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
   ) {}
 
@@ -459,11 +459,13 @@ export class BookingPaymentService {
               },
             });
 
-            await this.bookingWalletService.debitWalletAndRecordTx(tx, {
+            await this.walletDebitService.debitWalletAndRecordTx(tx, {
               userId,
               amount: finalAmount,
               reference: `BOOK-${booking.id}-${Date.now()}`,
               description: `Payment for: ${serviceNames}${validatedDiscount ? ` (${validatedDiscount.percentage}% discount applied)` : ''}`,
+              insufficientBalanceMessage:
+                'Insufficient wallet balance to complete this booking',
             });
 
             let influencerRewardUserId: string | null = null;

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { BookingController } from './booking.controller';
 import { AdminBookingController } from './admin-booking.controller';
@@ -11,16 +11,21 @@ import { AvailabilityService } from './services/availability.service';
 import { BookingCoreService } from './services/booking-core.service';
 import { BookingAnalyticsService } from './services/booking-analytics.service';
 import { BookingPaymentService } from './services/booking-payment.service';
-import { BookingWalletService } from './services/booking-wallet.service';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
-  imports: [PrismaModule, PaymentModule, MailModule, DiscountModule],
+  imports: [
+    PrismaModule,
+    PaymentModule,
+    MailModule,
+    DiscountModule,
+    forwardRef(() => WalletModule),
+  ],
   controllers: [BookingController, AdminBookingController],
   providers: [
     BookingService,
     ReservationService,
     AvailabilityService,
-    BookingWalletService,
     BookingCoreService,
     BookingAnalyticsService,
     BookingPaymentService,

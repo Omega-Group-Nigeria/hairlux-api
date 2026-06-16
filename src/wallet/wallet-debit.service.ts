@@ -3,18 +3,29 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, TransactionStatus, TransactionType } from '@prisma/client';
+import {
+  Prisma,
+  TransactionPaymentMethod,
+  TransactionStatus,
+  TransactionType,
+} from '@prisma/client';
+
+export interface WalletDebitParams {
+  userId: string;
+  amount: number;
+  reference: string;
+  description: string;
+  type?: TransactionType;
+  paymentMethod?: TransactionPaymentMethod;
+  metadata?: Prisma.InputJsonValue;
+  insufficientBalanceMessage?: string;
+}
 
 @Injectable()
-export class BookingWalletService {
+export class WalletDebitService {
   async debitWalletAndRecordTx(
     tx: Prisma.TransactionClient,
-    params: {
-      userId: string;
-      amount: number;
-      reference: string;
-      description: string;
-    },
+    params: WalletDebitParams,
   ) {
     const wallet = await tx.wallet.findUnique({
       where: { userId: params.userId },
@@ -38,7 +49,8 @@ export class BookingWalletService {
 
     if (debitResult.count === 0) {
       throw new BadRequestException(
-        'Insufficient wallet balance to complete this booking',
+        params.insufficientBalanceMessage ??
+          'Insufficient wallet balance to complete this payment',
       );
     }
 
@@ -46,11 +58,12 @@ export class BookingWalletService {
       data: {
         walletId: wallet.id,
         amount: params.amount,
-        type: TransactionType.DEBIT,
-        paymentMethod: 'WALLET',
+        type: params.type ?? TransactionType.DEBIT,
+        paymentMethod: params.paymentMethod ?? 'WALLET',
         description: params.description,
         reference: params.reference,
         status: TransactionStatus.COMPLETED,
+        ...(params.metadata !== undefined ? { metadata: params.metadata } : {}),
       },
     });
 
