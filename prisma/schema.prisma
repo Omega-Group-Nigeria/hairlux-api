@@ -211,8 +211,21 @@ model Address {
   @@map("addresses")
 }
 
+model ProductCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
 model Product {
   id            String        @id @default(uuid())
+  categoryId    String        @map("category_id")
   name          String
   description   String?
   price         Decimal       @db.Decimal(10, 2)
@@ -223,7 +236,10 @@ model Product {
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
+  category ProductCategory @relation(fields: [categoryId], references: [id])
+
   @@index([status])
+  @@index([categoryId])
   @@map("products")
 }
 

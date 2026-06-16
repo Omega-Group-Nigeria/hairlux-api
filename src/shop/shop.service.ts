@@ -11,8 +11,11 @@ import { QuoteShopOrderDto } from './dto/quote-shop-order.dto';
 import { UpdateDeliveryRegionDto } from './dto/update-delivery-region.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateShopOrderStatusDto } from './dto/update-shop-order-status.dto';
+import { CreateProductCategoryDto } from './dto/create-product-category.dto';
+import { UpdateProductCategoryDto } from './dto/update-product-category.dto';
 import { DeliveryPricingService } from './services/delivery-pricing.service';
 import { ProductCatalogService } from './services/product-catalog.service';
+import { ProductCategoryService } from './services/product-category.service';
 import { ShopCheckoutService } from './services/shop-checkout.service';
 import { ShopOrderQueryService } from './services/shop-order-query.service';
 
@@ -20,10 +23,15 @@ import { ShopOrderQueryService } from './services/shop-order-query.service';
 export class ShopService {
   constructor(
     private readonly productCatalogService: ProductCatalogService,
+    private readonly productCategoryService: ProductCategoryService,
     private readonly deliveryPricingService: DeliveryPricingService,
     private readonly shopCheckoutService: ShopCheckoutService,
     private readonly shopOrderQueryService: ShopOrderQueryService,
   ) {}
+
+  findCategories() {
+    return this.productCategoryService.findAllPublic();
+  }
 
   findProducts(queryDto: QueryProductsDto) {
     return this.productCatalogService.findActiveProducts(queryDto);
@@ -47,6 +55,22 @@ export class ShopService {
 
   findUserOrderById(id: string, userId: string) {
     return this.shopOrderQueryService.findUserOrderById(id, userId);
+  }
+
+  findAdminCategories() {
+    return this.productCategoryService.findAllAdmin();
+  }
+
+  createCategory(dto: CreateProductCategoryDto) {
+    return this.productCategoryService.create(dto);
+  }
+
+  updateCategory(id: string, dto: UpdateProductCategoryDto) {
+    return this.productCategoryService.update(id, dto);
+  }
+
+  removeCategory(id: string) {
+    return this.productCategoryService.remove(id);
   }
 
   findAdminProducts(queryDto: AdminQueryProductsDto) {

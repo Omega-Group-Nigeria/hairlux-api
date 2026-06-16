@@ -63,6 +63,7 @@ export const PERMISSIONS = {
   // ── Shop ─────────────────────────────────────────────────────────────────────
   SHOP_READ: 'shop:read', // View products, delivery regions & orders
   SHOP_MANAGE_PRODUCTS: 'shop:manage_products', // CRUD products
+  SHOP_MANAGE_CATEGORIES: 'shop:manage_categories', // CRUD product categories
   SHOP_MANAGE_DELIVERY: 'shop:manage_delivery', // CRUD delivery regions
   SHOP_UPDATE_STATUS: 'shop:update_status', // Update shop order status / cancel
 
@@ -214,6 +215,10 @@ export const PERMISSION_GROUPS = [
     permissions: [
       { key: PERMISSIONS.SHOP_READ, label: 'View shop catalog, regions & orders' },
       { key: PERMISSIONS.SHOP_MANAGE_PRODUCTS, label: 'Manage shop products' },
+      {
+        key: PERMISSIONS.SHOP_MANAGE_CATEGORIES,
+        label: 'Manage shop product categories',
+      },
       {
         key: PERMISSIONS.SHOP_MANAGE_DELIVERY,
         label: 'Manage delivery regions & fees',

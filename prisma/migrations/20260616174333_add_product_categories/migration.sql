@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "users" ALTER COLUMN "pin_set_at" SET DATA TYPE TIMESTAMP(3),
+ALTER COLUMN "pin_locked_until" SET DATA TYPE TIMESTAMP(3);

@@ -28,6 +28,23 @@ import { ShopService } from './shop.service';
 export class ShopController {
   constructor(private readonly shopService: ShopService) {}
 
+  @Get('categories')
+  @Public()
+  @ApiOperation({
+    summary: 'List product categories',
+    description:
+      'Returns all categories with a count of active products in each.',
+  })
+  @ApiResponse({ status: 200, description: 'Categories retrieved successfully' })
+  async findCategories() {
+    const data = await this.shopService.findCategories();
+    return {
+      success: true,
+      message: 'Categories retrieved successfully',
+      data,
+    };
+  }
+
   @Get('products')
   @Public()
   @ApiOperation({

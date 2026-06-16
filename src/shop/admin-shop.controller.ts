@@ -34,7 +34,9 @@ import { PERMISSIONS } from '../common/constants/permissions';
 import { AdminQueryProductsDto } from './dto/admin-query-products.dto';
 import { AdminQueryShopOrdersDto } from './dto/admin-query-shop-orders.dto';
 import { CreateDeliveryRegionDto } from './dto/create-delivery-region.dto';
+import { CreateProductCategoryDto } from './dto/create-product-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductCategoryDto } from './dto/update-product-category.dto';
 import { UpdateDeliveryRegionDto } from './dto/update-delivery-region.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateProductStatusDto } from './dto/update-product-status.dto';
@@ -63,6 +65,62 @@ const imageInterceptor = FileInterceptor('image', {
 export class AdminShopController {
   constructor(private readonly shopService: ShopService) {}
 
+  @Get('categories')
+  @Permission(PERMISSIONS.SHOP_READ)
+  @ApiOperation({ summary: 'List product categories (admin)' })
+  @ApiResponse({ status: 200, description: 'Categories retrieved successfully' })
+  async findCategories() {
+    const data = await this.shopService.findAdminCategories();
+    return {
+      success: true,
+      message: 'Categories retrieved successfully',
+      data,
+    };
+  }
+
+  @Post('categories')
+  @Permission(PERMISSIONS.SHOP_MANAGE_CATEGORIES)
+  @ApiOperation({ summary: 'Create product category' })
+  @ApiResponse({ status: 201, description: 'Category created successfully' })
+  async createCategory(@Body() dto: CreateProductCategoryDto) {
+    const data = await this.shopService.createCategory(dto);
+    return {
+      success: true,
+      message: 'Category created successfully',
+      data,
+    };
+  }
+
+  @Put('categories/:id')
+  @Permission(PERMISSIONS.SHOP_MANAGE_CATEGORIES)
+  @ApiOperation({ summary: 'Update product category' })
+  @ApiParam({ name: 'id', description: 'Category ID' })
+  @ApiResponse({ status: 200, description: 'Category updated successfully' })
+  async updateCategory(
+    @Param('id') id: string,
+    @Body() dto: UpdateProductCategoryDto,
+  ) {
+    const data = await this.shopService.updateCategory(id, dto);
+    return {
+      success: true,
+      message: 'Category updated successfully',
+      data,
+    };
+  }
+
+  @Delete('categories/:id')
+  @Permission(PERMISSIONS.SHOP_MANAGE_CATEGORIES)
+  @ApiOperation({ summary: 'Delete product category' })
+  @ApiParam({ name: 'id', description: 'Category ID' })
+  @ApiResponse({ status: 200, description: 'Category deleted successfully' })
+  async removeCategory(@Param('id') id: string) {
+    await this.shopService.removeCategory(id);
+    return {
+      success: true,
+      message: 'Category deleted successfully',
+    };
+  }
+
   @Get('products')
   @Permission(PERMISSIONS.SHOP_READ)
   @ApiOperation({ summary: 'List shop products (admin)' })
@@ -86,9 +144,10 @@ export class AdminShopController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['image', 'name', 'price'],
+      required: ['image', 'categoryId', 'name', 'price'],
       properties: {
         image: { type: 'string', format: 'binary' },
+        categoryId: { type: 'string', example: '123e4567-e89b-12d3-a456-426614174000' },
         name: { type: 'string', example: 'Hair Growth Oil' },
         description: { type: 'string' },
         price: { type: 'number', example: 8500 },
@@ -120,6 +179,7 @@ export class AdminShopController {
       type: 'object',
       properties: {
         image: { type: 'string', format: 'binary' },
+        categoryId: { type: 'string' },
         name: { type: 'string' },
         description: { type: 'string' },
         price: { type: 'number' },
