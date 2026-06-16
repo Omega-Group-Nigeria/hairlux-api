@@ -77,6 +77,10 @@ export class ShopService {
     return this.productCatalogService.findAdminProducts(queryDto);
   }
 
+  findAdminProductById(id: string) {
+    return this.productCatalogService.findAdminProductById(id);
+  }
+
   createProduct(dto: CreateProductDto, image: Express.Multer.File) {
     return this.productCatalogService.create(dto, image);
   }

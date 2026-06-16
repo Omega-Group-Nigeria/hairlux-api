@@ -134,6 +134,21 @@ export class AdminShopController {
     };
   }
 
+  @Get('products/:id')
+  @Permission(PERMISSIONS.SHOP_READ)
+  @ApiOperation({ summary: 'Get shop product details (admin)' })
+  @ApiParam({ name: 'id', description: 'Product ID' })
+  @ApiResponse({ status: 200, description: 'Product retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Product not found' })
+  async findProductById(@Param('id') id: string) {
+    const data = await this.shopService.findAdminProductById(id);
+    return {
+      success: true,
+      message: 'Product retrieved successfully',
+      data,
+    };
+  }
+
   @Post('products')
   @Permission(PERMISSIONS.SHOP_MANAGE_PRODUCTS)
   @ApiConsumes('multipart/form-data')
