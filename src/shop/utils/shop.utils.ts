@@ -1,4 +1,5 @@
 import { Address, Prisma, ShopOrder } from '@prisma/client';
+import { resolveAddressFields } from '../../common/utils/address.utils';
 import {
   DeliveryAddressSnapshot,
   ShopOrderItem,
@@ -74,12 +75,14 @@ export function normalizeShopOrderItems(json: unknown): ShopOrderItem[] {
 export function buildDeliveryAddressSnapshot(
   address: Address,
 ): DeliveryAddressSnapshot {
+  const resolved = resolveAddressFields(address);
+
   return {
-    fullAddress: address.fullAddress,
-    streetAddress: address.streetAddress,
-    city: address.city,
-    state: address.state,
-    country: address.country,
+    fullAddress: resolved.fullAddress,
+    streetAddress: resolved.streetAddress,
+    city: resolved.city,
+    state: resolved.state,
+    country: resolved.country,
     label: address.label,
   };
 }

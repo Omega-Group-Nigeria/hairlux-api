@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Address } from '@prisma/client';
+import { resolveAddressFields } from '../../common/utils/address.utils';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateDeliveryRegionDto } from '../dto/create-delivery-region.dto';
 import { UpdateDeliveryRegionDto } from '../dto/update-delivery-region.dto';
@@ -49,7 +50,8 @@ export class DeliveryPricingService {
   }
 
   async resolveDeliveryFeeForAddress(address: Address) {
-    const state = address.state?.trim();
+    const { state: resolvedState } = resolveAddressFields(address);
+    const state = resolvedState?.trim();
 
     if (!state) {
       throw new BadRequestException(
