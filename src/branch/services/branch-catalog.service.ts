@@ -48,6 +48,7 @@ export class BranchCatalogService {
       select: {
         id: true,
         name: true,
+        address: true,
         _count: {
           select: {
             branchServices: {
@@ -62,6 +63,7 @@ export class BranchCatalogService {
     const result = branches.map((branch) => ({
       id: branch.id,
       name: branch.name,
+      address: branch.address,
       serviceCount: branch._count.branchServices,
     }));
 
@@ -81,6 +83,7 @@ export class BranchCatalogService {
       select: {
         id: true,
         name: true,
+        address: true,
         _count: {
           select: {
             branchServices: {
@@ -98,6 +101,7 @@ export class BranchCatalogService {
     const result = {
       id: branch.id,
       name: branch.name,
+      address: branch.address,
       serviceCount: branch._count.branchServices,
     };
 

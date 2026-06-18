@@ -75,6 +75,7 @@ type StaffEmploymentHistoryRecord = {
 type StaffLocationRecord = {
   id: string;
   name: string;
+  address: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -302,10 +303,11 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     const location = await this.staffLocationModel.create({
       data: {
         name: dto.name,
+        address: dto.address,
       },
     });
 
-    await this.redis.delByPattern('staff:locations:*');
+    await this.invalidateLocationCaches();
     return location;
   }
 
@@ -380,12 +382,13 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.address !== undefined && { address: dto.address }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
       },
     });
 
     await Promise.all([
-      this.redis.delByPattern('staff:locations:*'),
+      this.invalidateLocationCaches(),
       this.redis.delByPattern('staff:list:*'),
       this.redis.delByPattern('staff:one:*'),
       this.redis.delByPattern('staff:birthdays:*'),
@@ -407,7 +410,14 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.staffLocationModel.delete({ where: { id } });
-    await this.redis.delByPattern('staff:locations:*');
+    await this.invalidateLocationCaches();
+  }
+
+  private async invalidateLocationCaches() {
+    await Promise.all([
+      this.redis.delByPattern('staff:locations:*'),
+      this.redis.delByPattern('branches:open:*'),
+    ]);
   }
 
   async create(dto: CreateStaffDto) {

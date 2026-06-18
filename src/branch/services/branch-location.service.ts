@@ -29,7 +29,10 @@ export class BranchLocationService {
     }
 
     const branch = await this.prisma.staffLocation.create({
-      data: { name: dto.name },
+      data: {
+        name: dto.name,
+        address: dto.address,
+      },
     });
 
     await this.invalidateBranchCaches();
@@ -98,6 +101,7 @@ export class BranchLocationService {
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.address !== undefined && { address: dto.address }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
       },
     });

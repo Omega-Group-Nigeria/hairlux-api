@@ -205,7 +205,7 @@ export class AdminStaffController {
   @Patch('locations/:id')
   @ApiOperation({
     summary: 'Update staff location',
-    description: 'Updates location name and activation state.',
+    description: 'Updates location name, address, and activation state.',
   })
   @ApiParam({ name: 'id', description: 'Location ID' })
   @ApiResponse({
