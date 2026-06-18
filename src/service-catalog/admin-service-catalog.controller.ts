@@ -113,6 +113,8 @@ export class AdminServiceCatalogController {
             id: '123e4567-e89b-12d3-a456-426614174000',
             name: 'Hair Services',
             description: 'Professional hair styling',
+            imageUrl:
+              'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/hair-services.webp',
             createdAt: '2026-01-15T10:30:00.000Z',
             updatedAt: '2026-01-15T10:30:00.000Z',
           },
@@ -214,6 +216,8 @@ export class AdminServiceCatalogController {
             id: '123e4567-e89b-12d3-a456-426614174000',
             name: 'Hair Services',
             description: 'Professional hair styling',
+            imageUrl:
+              'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/hair-services.webp',
             createdAt: '2026-01-15T10:30:00.000Z',
             updatedAt: '2026-01-15T10:30:00.000Z',
           },
@@ -334,9 +338,29 @@ export class AdminServiceCatalogController {
   // ─── Category Management ───────────────────────────────────────────────────
 
   @Post('categories')
+  @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Create category',
-    description: 'Create a new service category.',
+    description:
+      'Create a new service category. Image is required (any format — stored as WebP on Cloudinary).',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['image', 'name'],
+      properties: {
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'Category image (jpg/png/webp etc.)',
+        },
+        name: { type: 'string', example: 'Nail Services' },
+        description: {
+          type: 'string',
+          example: 'Manicure, pedicure, and nail art',
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 201,
@@ -349,24 +373,65 @@ export class AdminServiceCatalogController {
           id: '123e4567-e89b-12d3-a456-426614174000',
           name: 'Nail Services',
           description: 'Manicure, pedicure, and nail art',
+          imageUrl:
+            'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/nail-services.webp',
+          imagePublicId: 'hairlux/service-categories/abc123',
           createdAt: '2026-02-22T10:00:00.000Z',
           updatedAt: '2026-02-22T10:00:00.000Z',
         },
       },
     },
   })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request — image missing or invalid',
+  })
   @ApiResponse({ status: 409, description: 'Category name already exists' })
-  async createCategory(@Body() dto: CreateCategoryDto) {
-    const data = await this.serviceCatalogService.createCategory(dto);
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (!file.mimetype.startsWith('image/')) {
+          return cb(
+            new BadRequestException('Only image files are allowed.'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async createCategory(
+    @Body() dto: CreateCategoryDto,
+    @UploadedFile() image: Express.Multer.File,
+  ) {
+    const data = await this.serviceCatalogService.createCategory(dto, image);
     return { success: true, message: 'Category created successfully', data };
   }
 
   @Put('categories/:id')
+  @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Update category',
-    description: 'Update category name or description.',
+    description:
+      'Update category name, description, or image. If a new image is provided, the old Cloudinary asset is deleted.',
   })
   @ApiParam({ name: 'id', description: 'Category ID' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        image: {
+          type: 'string',
+          format: 'binary',
+          description: 'New category image (optional)',
+        },
+        name: { type: 'string' },
+        description: { type: 'string' },
+      },
+    },
+  })
   @ApiResponse({
     status: 200,
     description: 'Category updated successfully',
@@ -378,19 +443,43 @@ export class AdminServiceCatalogController {
           id: '123e4567-e89b-12d3-a456-426614174000',
           name: 'Nail Services',
           description: 'Manicure, pedicure, and nail art',
+          imageUrl:
+            'https://res.cloudinary.com/demo/image/upload/v9876543210/hairlux/service-categories/nail-services-new.webp',
+          imagePublicId: 'hairlux/service-categories/xyz789',
           createdAt: '2026-01-15T10:30:00.000Z',
           updatedAt: '2026-02-22T10:00:00.000Z',
         },
       },
     },
   })
+  @ApiResponse({ status: 400, description: 'Bad Request' })
   @ApiResponse({ status: 404, description: 'Category not found' })
   @ApiResponse({ status: 409, description: 'Category name already exists' })
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        if (!file.mimetype.startsWith('image/')) {
+          return cb(
+            new BadRequestException('Only image files are allowed.'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+    }),
+  )
   async updateCategory(
     @Param('id') id: string,
     @Body() dto: UpdateCategoryDto,
+    @UploadedFile() image: Express.Multer.File,
   ) {
-    const data = await this.serviceCatalogService.updateCategory(id, dto);
+    const data = await this.serviceCatalogService.updateCategory(
+      id,
+      dto,
+      image,
+    );
     return { success: true, message: 'Category updated successfully', data };
   }
 
