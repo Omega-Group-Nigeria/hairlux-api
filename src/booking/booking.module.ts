@@ -12,6 +12,8 @@ import { BookingCoreService } from './services/booking-core.service';
 import { BookingAnalyticsService } from './services/booking-analytics.service';
 import { BookingPaymentService } from './services/booking-payment.service';
 import { WalletModule } from '../wallet/wallet.module';
+import { BranchModule } from '../branch/branch.module';
+import { BookingLinePricingService } from './services/booking-line-pricing.service';
 
 @Module({
   imports: [
@@ -19,6 +21,7 @@ import { WalletModule } from '../wallet/wallet.module';
     PaymentModule,
     MailModule,
     DiscountModule,
+    BranchModule,
     forwardRef(() => WalletModule),
   ],
   controllers: [BookingController, AdminBookingController],
@@ -29,6 +32,7 @@ import { WalletModule } from '../wallet/wallet.module';
     BookingCoreService,
     BookingAnalyticsService,
     BookingPaymentService,
+    BookingLinePricingService,
   ],
   exports: [BookingService],
 })

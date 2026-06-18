@@ -20,6 +20,10 @@ export const PERMISSIONS = {
   SERVICES_DELETE: 'services:delete', // Remove services
   SERVICES_MANAGE_CATEGORIES: 'services:manage_categories', // CRUD categories
 
+  // ── Branches ────────────────────────────────────────────────────────────────
+  BRANCHES_READ: 'branches:read', // View branches and branch service config
+  BRANCHES_MANAGE: 'branches:manage', // CRUD branches; manage availability & walk-in prices
+
   // ── Discounts ────────────────────────────────────────────────────────────────
   DISCOUNTS_READ: 'discounts:read', // View discount codes
   DISCOUNTS_CREATE: 'discounts:create', // Create general codes
@@ -129,6 +133,16 @@ export const PERMISSION_GROUPS = [
       {
         key: PERMISSIONS.SERVICES_MANAGE_CATEGORIES,
         label: 'Manage service categories',
+      },
+    ],
+  },
+  {
+    group: 'Branches',
+    permissions: [
+      { key: PERMISSIONS.BRANCHES_READ, label: 'View branches & service config' },
+      {
+        key: PERMISSIONS.BRANCHES_MANAGE,
+        label: 'Manage branches, availability & walk-in prices',
       },
     ],
   },

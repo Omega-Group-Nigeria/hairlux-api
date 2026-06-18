@@ -13,6 +13,8 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { BookingType, ServiceStatus } from '@prisma/client';
 import { RedisService } from '../redis/redis.service';
+import { BranchCatalogService } from '../branch/services/branch-catalog.service';
+import { resolveBranchWalkInPrice } from '../branch/utils/branch-pricing.utils';
 
 const TTL = 300; // 5 minutes
 const CATEGORY_IMAGE_FOLDER = 'hairlux/service-categories';
@@ -32,6 +34,7 @@ export class ServiceCatalogService {
     private prisma: PrismaService,
     private cloudinary: CloudinaryService,
     private redis: RedisService,
+    private branchCatalogService: BranchCatalogService,
   ) {}
 
   private mapPublicService(
@@ -89,7 +92,7 @@ export class ServiceCatalogService {
     const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
 
-    const { categoryId, search, status, bookingType } = queryDto;
+    const { categoryId, search, status, bookingType, branchId } = queryDto;
 
     // Build where clause
     const where: {
@@ -119,6 +122,17 @@ export class ServiceCatalogService {
       where.isHomeServiceAvailable = true;
     }
 
+    let assignmentMap: Map<
+      string,
+      { serviceId: string; isAvailable: boolean; walkInPrice: unknown }
+    > | null = null;
+
+    if (branchId) {
+      await this.branchCatalogService.assertOpenBranch(branchId);
+      assignmentMap =
+        await this.branchCatalogService.getAvailableAssignmentsMap(branchId);
+    }
+
     const services = await this.prisma.service.findMany({
       where,
       include: {
@@ -129,15 +143,26 @@ export class ServiceCatalogService {
       },
     });
 
-    const result = services.map((service) =>
-      this.mapPublicService(service, bookingType),
+    const scopedServices = branchId
+      ? services.filter((service) => assignmentMap?.has(service.id))
+      : services;
+
+    const result = scopedServices.map((service) =>
+      this.mapPublicService(
+        this.applyBranchWalkInPrice(service, assignmentMap?.get(service.id)),
+        bookingType,
+      ),
     );
     await this.redis.set(cacheKey, result, TTL);
     return result;
   }
 
-  async findOne(id: string, bookingType?: BookingType) {
-    const cacheKey = `services:one:${id}:${bookingType ?? 'all'}`;
+  async findOne(
+    id: string,
+    bookingType?: BookingType,
+    branchId?: string,
+  ) {
+    const cacheKey = `services:one:${id}:${bookingType ?? 'all'}:${branchId ?? 'global'}`;
     const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
 
@@ -168,9 +193,46 @@ export class ServiceCatalogService {
       throw new NotFoundException('Service not available for HOME_SERVICE');
     }
 
-    const publicService = this.mapPublicService(service, bookingType);
+    let assignment:
+      | { serviceId: string; isAvailable: boolean; walkInPrice: unknown }
+      | undefined;
+
+    if (branchId) {
+      await this.branchCatalogService.assertOpenBranch(branchId);
+      assignment =
+        (await this.branchCatalogService.getAssignmentForService(
+          branchId,
+          id,
+        )) ?? undefined;
+
+      if (!assignment?.isAvailable) {
+        throw new NotFoundException('Service not found');
+      }
+    }
+
+    const publicService = this.mapPublicService(
+      this.applyBranchWalkInPrice(service, assignment),
+      bookingType,
+    );
     await this.redis.set(cacheKey, publicService, TTL);
     return publicService;
+  }
+
+  private applyBranchWalkInPrice<T extends { walkInPrice: unknown }>(
+    service: T,
+    assignment?: { walkInPrice: unknown } | null,
+  ): T {
+    if (!assignment) {
+      return service;
+    }
+
+    return {
+      ...service,
+      walkInPrice: resolveBranchWalkInPrice(
+        service as T & { walkInPrice: { toNumber: () => number } | number },
+        assignment as { walkInPrice: { toNumber: () => number } | number | null },
+      ),
+    };
   }
 
   async findAllCategories() {

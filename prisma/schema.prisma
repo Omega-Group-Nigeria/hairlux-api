@@ -311,8 +311,9 @@ model Service {
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  category ServiceCategory @relation(fields: [categoryId], references: [id])
-  reviews  Review[]
+  category       ServiceCategory @relation(fields: [categoryId], references: [id])
+  reviews        Review[]
+  branchServices BranchService[]
 
   @@map("services")
 }
@@ -323,6 +324,7 @@ model Booking {
   // services is a JSON array: [{serviceId, name, price, quantity, duration, notes?, serviceMode?}]
   services         Json          @map("services")
   addressId        String?       @map("address_id")  // null for WALK_IN-only bookings
+  branchId         String?       @map("branch_id")
   bookingDate      DateTime      @map("booking_date")
   bookingTime      String        @map("booking_time") // Format: "HH:mm"
   bookingType      BookingType   @default(HOME_SERVICE) @map("booking_type")
@@ -343,6 +345,7 @@ model Booking {
   // Relations
   user    User     @relation(fields: [userId], references: [id])
   address Address? @relation(fields: [addressId], references: [id])
+  branch  StaffLocation? @relation(fields: [branchId], references: [id], onDelete: SetNull)
   review  Review?
   discountUsage DiscountUsage?
 
@@ -724,6 +727,24 @@ model StaffEmploymentHistory {
   @@map("staff_employment_history")
 }
 
+model BranchService {
+  id          String   @id @default(uuid())
+  branchId    String   @map("branch_id")
+  serviceId   String   @map("service_id")
+  isAvailable Boolean  @default(true) @map("is_available")
+  walkInPrice Decimal? @db.Decimal(10, 2) @map("walk_in_price")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  branch  StaffLocation @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  service Service       @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, serviceId])
+  @@index([branchId])
+  @@index([serviceId])
+  @@map("branch_services")
+}
+
 model StaffLocation {
   id        String   @id @default(uuid())
   name      String   @unique
@@ -731,8 +752,10 @@ model StaffLocation {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  staff     Staff[]
-  histories StaffEmploymentHistory[]
+  staff          Staff[]
+  histories      StaffEmploymentHistory[]
+  branchServices BranchService[]
+  bookings       Booking[]
 
   @@map("staff_locations")
 }

@@ -153,6 +153,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.staffLocation;
   }
 
+  get branchService() {
+    return this.client.branchService;
+  }
+
   get waitlistEntry() {
     return this.client.waitlistEntry;
   }

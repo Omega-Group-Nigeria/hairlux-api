@@ -219,9 +219,13 @@ export class ServiceCatalogController {
   })
   async findOne(
     @Param('id') id: string,
-    @Query('bookingType') bookingType?: BookingType,
+    @Query() queryDto: QueryServicesDto,
   ) {
-    const service = await this.serviceCatalogService.findOne(id, bookingType);
+    const service = await this.serviceCatalogService.findOne(
+      id,
+      queryDto.bookingType,
+      queryDto.branchId,
+    );
     return {
       success: true,
       message: 'Service retrieved successfully',

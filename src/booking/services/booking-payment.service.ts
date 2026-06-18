@@ -29,18 +29,16 @@ import {
 import { InitializeBookingPaymentDto } from '../dto/initialize-booking-payment.dto';
 import { VerifyBookingPaymentDto } from '../dto/verify-booking-payment.dto';
 import {
-  BookingServiceRecord,
-  buildBookingServiceRecord,
   calculateBookingServicesTotal,
   formatBookingAddress,
   formatBookingResponse,
   normalizeBookingServices,
-  resolvePriceForBookingType,
   toBookingServicesJson,
   toEmailServiceLines,
 } from '../utils/booking.utils';
 import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
+import { BookingLinePricingService } from './booking-line-pricing.service';
 
 @Injectable()
 export class BookingPaymentService {
@@ -52,6 +50,7 @@ export class BookingPaymentService {
     private discountService: DiscountService,
     private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
+    private bookingLinePricingService: BookingLinePricingService,
   ) {}
 
   private resolveServiceMode(
@@ -336,6 +335,7 @@ export class BookingPaymentService {
       guestEmail,
       paymentMethod,
       discountCode,
+      branchId,
       idempotencyKey: rawIdempotencyKey,
     } = createBookingDto;
 
@@ -374,34 +374,14 @@ export class BookingPaymentService {
 
     const bookingDate = new Date(`${date}T${time}`);
 
-    const serviceRecords: BookingServiceRecord[] = [];
-
-    for (const item of services) {
-      const service = await this.prisma.service.findUnique({
-        where: { id: item.serviceId },
+    const serviceRecords =
+      await this.bookingLinePricingService.buildServiceRecords({
+        services,
+        bookingType,
+        branchId,
+        resolveServiceMode: (item, fallback) =>
+          this.resolveServiceMode(item, fallback),
       });
-
-      if (!service) {
-        throw new NotFoundException(`Service ${item.serviceId} not found`);
-      }
-
-      if (service.status !== 'ACTIVE') {
-        throw new BadRequestException(
-          `Service "${service.name}" is not available`,
-        );
-      }
-
-      const serviceMode = this.resolveServiceMode(item, bookingType);
-
-      serviceRecords.push(
-        buildBookingServiceRecord({
-          service,
-          unitPrice: resolvePriceForBookingType(service, serviceMode),
-          item,
-          serviceMode,
-        }),
-      );
-    }
 
     const effectiveBookingType =
       this.deriveBookingTypeFromServiceRecords(serviceRecords);
@@ -442,6 +422,7 @@ export class BookingPaymentService {
                 userId,
                 services: toBookingServicesJson(serviceRecords),
                 addressId: addressId ?? null,
+                branchId: branchId ?? null,
                 bookingDate,
                 bookingTime: time,
                 bookingType: effectiveBookingType,
@@ -569,6 +550,7 @@ export class BookingPaymentService {
               userId,
               services: toBookingServicesJson(serviceRecords),
               addressId: addressId ?? null,
+              branchId: branchId ?? null,
               bookingDate,
               bookingTime: time,
               bookingType: effectiveBookingType,
@@ -696,7 +678,7 @@ export class BookingPaymentService {
     userId: string,
     payload: BookingPaymentPayloadDto,
   ) {
-    const { services, date, time, addressId, bookingType, discountCode } =
+    const { services, date, time, addressId, bookingType, discountCode, branchId } =
       payload;
 
     const hasHomeService = services.some(
@@ -728,34 +710,14 @@ export class BookingPaymentService {
 
     const bookingDate = new Date(`${date}T${time}`);
 
-    const serviceRecords: BookingServiceRecord[] = [];
-
-    for (const item of services) {
-      const service = await this.prisma.service.findUnique({
-        where: { id: item.serviceId },
+    const serviceRecords =
+      await this.bookingLinePricingService.buildServiceRecords({
+        services,
+        bookingType,
+        branchId,
+        resolveServiceMode: (item, fallback) =>
+          this.resolveServiceMode(item, fallback),
       });
-
-      if (!service) {
-        throw new NotFoundException(`Service ${item.serviceId} not found`);
-      }
-
-      if (service.status !== 'ACTIVE') {
-        throw new BadRequestException(
-          `Service "${service.name}" is not available`,
-        );
-      }
-
-      const serviceMode = this.resolveServiceMode(item, bookingType);
-
-      serviceRecords.push(
-        buildBookingServiceRecord({
-          service,
-          unitPrice: resolvePriceForBookingType(service, serviceMode),
-          item,
-          serviceMode,
-        }),
-      );
-    }
 
     const effectiveBookingType =
       this.deriveBookingTypeFromServiceRecords(serviceRecords);
@@ -787,6 +749,7 @@ export class BookingPaymentService {
       address,
       bookingType: effectiveBookingType,
       bookingDate,
+      branchId: branchId ?? null,
       serviceRecords,
       totalAmount,
       finalAmount,
@@ -1129,6 +1092,7 @@ export class BookingPaymentService {
               userId,
               services: toBookingServicesJson(context.serviceRecords),
               addressId: payload.addressId ?? null,
+              branchId: context.branchId,
               bookingDate: context.bookingDate,
               bookingTime: payload.time,
               bookingType: context.bookingType,

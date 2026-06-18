@@ -202,4 +202,13 @@ export class CreateBookingDto {
   @IsNotEmpty()
   @Transform(({ value }) => value?.trim())
   idempotencyKey: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Branch ID for walk-in pricing and availability. Optional until enforcement is enabled.',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 }
