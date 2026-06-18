@@ -29,6 +29,7 @@ import {
 import { InitializeBookingPaymentDto } from '../dto/initialize-booking-payment.dto';
 import { VerifyBookingPaymentDto } from '../dto/verify-booking-payment.dto';
 import {
+  bookingUserReadInclude,
   calculateBookingServicesTotal,
   formatBookingAddress,
   formatBookingResponse,
@@ -115,7 +116,7 @@ export class BookingPaymentService {
     return this.prisma.booking.findFirst({
       where: { userId, idempotencyKey },
       include: {
-        address: true,
+        ...bookingUserReadInclude,
         discountUsage: {
           include: {
             discountCode: true,
@@ -129,6 +130,7 @@ export class BookingPaymentService {
     booking: Prisma.BookingGetPayload<{
       include: {
         address: true;
+        branch: { select: { id: true; name: true; address: true } };
         discountUsage: { include: { discountCode: true } };
       };
     }>,
@@ -170,7 +172,10 @@ export class BookingPaymentService {
 
   private buildVerifyResponseFromBooking(
     booking: Prisma.BookingGetPayload<{
-      include: { address: true };
+      include: {
+        address: true;
+        branch: { select: { id: true; name: true; address: true } };
+      };
     }>,
     reservationCode: string,
   ) {
@@ -435,9 +440,7 @@ export class BookingPaymentService {
                 paymentMethod: PaymentMethod.WALLET,
                 status: BookingStatus.CONFIRMED,
               },
-              include: {
-                address: true,
-              },
+              include: bookingUserReadInclude,
             });
 
             await this.walletDebitService.debitWalletAndRecordTx(tx, {
@@ -563,9 +566,7 @@ export class BookingPaymentService {
               paymentMethod: PaymentMethod.CASH,
               status: BookingStatus.PENDING,
             },
-            include: {
-              address: true,
-            },
+            include: bookingUserReadInclude,
           });
 
           if (validatedDiscount) {
@@ -934,7 +935,7 @@ export class BookingPaymentService {
     ) {
       const existingBooking = await this.prisma.booking.findFirst({
         where: { id: String(metadata.bookingId), userId },
-        include: { address: true },
+        include: bookingUserReadInclude,
       });
 
       if (existingBooking) {
@@ -1108,9 +1109,7 @@ export class BookingPaymentService {
                 `Paid online via MONNIFY (${dto.bookingPaymentReference})` +
                 (addressLabel ? ` | ${addressLabel}` : ''),
             },
-            include: {
-              address: true,
-            },
+            include: bookingUserReadInclude,
           });
 
           let influencerRewardUserId: string | null = null;
@@ -1284,7 +1283,7 @@ export class BookingPaymentService {
       status: 'processed',
       bookingPaymentReference,
       reservationCode: result.reservationCode,
-      bookingId: result.booking.id,
+      bookingId: String((result.booking as Record<string, unknown>).id),
     };
   }
 

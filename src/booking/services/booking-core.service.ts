@@ -14,7 +14,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { QueryBookingsDto } from '../dto/query-bookings.dto';
 import { RescheduleBookingDto } from '../dto/reschedule-booking.dto';
-import { formatBookingResponse } from '../utils/booking.utils';
+import {
+  bookingUserReadInclude,
+  formatBookingResponse,
+} from '../utils/booking.utils';
 
 @Injectable()
 export class BookingCoreService {
@@ -48,9 +51,7 @@ export class BookingCoreService {
 
     const bookings = await this.prisma.booking.findMany({
       where,
-      include: {
-        address: true,
-      },
+      include: bookingUserReadInclude,
       orderBy: {
         bookingDate: 'desc',
       },
@@ -63,7 +64,7 @@ export class BookingCoreService {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
-        address: true,
+        ...bookingUserReadInclude,
         user: {
           select: {
             id: true,
@@ -124,9 +125,7 @@ export class BookingCoreService {
         bookingTime: time,
         notes: reason ? `Rescheduled: ${reason}` : booking.notes,
       },
-      include: {
-        address: true,
-      },
+      include: bookingUserReadInclude,
     });
 
     return formatBookingResponse(updatedBooking);
@@ -172,9 +171,7 @@ export class BookingCoreService {
           status,
           cancelReason: reason,
         },
-        include: {
-          address: true,
-        },
+        include: bookingUserReadInclude,
       });
 
       if (booking.paymentMethod === PaymentMethod.WALLET) {

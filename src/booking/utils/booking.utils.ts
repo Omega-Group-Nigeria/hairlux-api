@@ -108,16 +108,63 @@ export function normalizeBookingServices(services: unknown): BookingServiceRecor
   });
 }
 
-export function formatBookingResponse<T extends { services: unknown; totalAmount?: unknown }>(
-  booking: T,
-): Omit<T, 'services' | 'totalAmount'> & {
-  services: BookingServiceRecord[];
-  totalAmount: number;
-} {
+export const bookingBranchSelect = {
+  id: true,
+  name: true,
+  address: true,
+} as const;
+
+export const bookingUserReadInclude = {
+  address: true,
+  branch: { select: bookingBranchSelect },
+} as const;
+
+export type BookingBranchSummary = {
+  id: string;
+  name: string;
+  address: string;
+};
+
+type BookingBranchLike = BookingBranchSummary | null | undefined;
+
+export function formatBookingBranch(
+  branch: BookingBranchLike,
+): BookingBranchSummary | null {
+  if (!branch) {
+    return null;
+  }
+
   return {
-    ...booking,
-    services: normalizeBookingServices(booking.services),
-    totalAmount: Number(booking.totalAmount ?? 0),
+    id: branch.id,
+    name: branch.name,
+    address: branch.address,
+  };
+}
+
+export function formatBookingResponse(
+  booking: {
+    services: unknown;
+    totalAmount?: unknown;
+    branch?: BookingBranchLike;
+    [key: string]: unknown;
+  },
+) {
+  const hasBranchRelation = 'branch' in booking;
+  const { branch, services, totalAmount, ...rest } = booking;
+
+  const formatted = {
+    ...rest,
+    services: normalizeBookingServices(services),
+    totalAmount: Number(totalAmount ?? 0),
+  };
+
+  if (!hasBranchRelation) {
+    return formatted;
+  }
+
+  return {
+    ...formatted,
+    branch: formatBookingBranch(branch),
   };
 }
 

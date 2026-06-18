@@ -7,7 +7,11 @@ import {
 import { BookingStatus, BookingType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { formatBookingAddress, formatBookingResponse } from '../utils/booking.utils';
+import {
+  bookingUserReadInclude,
+  formatBookingAddress,
+  formatBookingResponse,
+} from '../utils/booking.utils';
 
 @Injectable()
 export class ReservationService {
@@ -42,9 +46,7 @@ export class ReservationService {
   async findByReservationCode(code: string, userId: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { reservationCode: code.toUpperCase() },
-      include: {
-        address: true,
-      },
+      include: bookingUserReadInclude,
     });
 
     if (!booking) {
