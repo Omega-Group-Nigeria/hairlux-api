@@ -119,6 +119,19 @@ export const bookingUserReadInclude = {
   branch: { select: bookingBranchSelect },
 } as const;
 
+export const bookingAdminUserSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+} as const;
+
+export const bookingAdminReadInclude = {
+  ...bookingUserReadInclude,
+  user: { select: bookingAdminUserSelect },
+} as const;
+
 export type BookingBranchSummary = {
   id: string;
   name: string;

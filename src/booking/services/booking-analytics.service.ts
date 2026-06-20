@@ -18,9 +18,12 @@ import { GetCalendarDto } from '../dto/get-calendar.dto';
 import { GetStatsDto } from '../dto/get-stats.dto';
 import {
   BookingServiceRecord,
+  bookingAdminReadInclude,
+  bookingUserReadInclude,
   buildBookingServiceRecord,
   calculateBookingServicesTotal,
   formatBookingAddress,
+  formatBookingBranch,
   formatBookingResponse,
   normalizeBookingServices,
   resolvePriceForBookingType,
@@ -125,18 +128,7 @@ export class BookingAnalyticsService {
         where,
         skip,
         take: limit,
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
-          address: true,
-        },
+        include: bookingAdminReadInclude,
         orderBy: {
           bookingDate: 'desc',
         },
@@ -161,18 +153,7 @@ export class BookingAnalyticsService {
   async findOneAdmin(id: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
-        address: true,
-      },
+      include: bookingAdminReadInclude,
     });
 
     if (!booking) {
@@ -204,18 +185,7 @@ export class BookingAnalyticsService {
     if (idempotencyKey) {
       const existing = await this.prisma.booking.findFirst({
         where: { userId, idempotencyKey },
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
-          address: true,
-        },
+        include: bookingAdminReadInclude,
       });
 
       if (existing) {
@@ -308,18 +278,7 @@ export class BookingAnalyticsService {
               paymentMethod: paymentMethod || PaymentMethod.CASH,
               notes,
             },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  phone: true,
-                },
-              },
-              address: true,
-            },
+            include: bookingAdminReadInclude,
           });
 
           if (paymentMethod === PaymentMethod.WALLET) {
@@ -340,18 +299,7 @@ export class BookingAnalyticsService {
       if (idempotencyKey && this.isUniqueConstraintError(err, 'idempotencyKey')) {
         const existing = await this.prisma.booking.findFirst({
           where: { userId, idempotencyKey },
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                phone: true,
-              },
-            },
-            address: true,
-          },
+          include: bookingAdminReadInclude,
         });
 
         if (existing) {
@@ -397,18 +345,7 @@ export class BookingAnalyticsService {
       const updatedBooking = await prisma.booking.update({
         where: { id },
         data: { status },
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
-          address: true,
-        },
+        include: bookingAdminReadInclude,
       });
 
       if (
@@ -479,6 +416,7 @@ export class BookingAnalyticsService {
         },
       },
       include: {
+        ...bookingUserReadInclude,
         user: {
           select: {
             id: true,
@@ -509,6 +447,9 @@ export class BookingAnalyticsService {
         id: booking.id,
         time: booking.bookingTime,
         status: booking.status,
+        bookingType: booking.bookingType,
+        branchId: booking.branchId,
+        branch: formatBookingBranch(booking.branch),
         user: booking.user,
         services: normalizeBookingServices(booking.services),
       });

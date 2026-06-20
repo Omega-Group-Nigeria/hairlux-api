@@ -8,6 +8,7 @@ import { BookingStatus, BookingType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import {
+  bookingAdminReadInclude,
   bookingUserReadInclude,
   formatBookingAddress,
   formatBookingResponse,
@@ -63,18 +64,7 @@ export class ReservationService {
   async adminFindByReservationCode(code: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { reservationCode: code.toUpperCase() },
-      include: {
-        address: true,
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
-      },
+      include: bookingAdminReadInclude,
     });
 
     if (!booking) {
@@ -119,12 +109,7 @@ export class ReservationService {
             ? BookingStatus.COMPLETED
             : BookingStatus.IN_PROGRESS,
       },
-      include: {
-        user: {
-          select: { id: true, firstName: true, lastName: true, phone: true },
-        },
-        address: true,
-      },
+      include: bookingAdminReadInclude,
     });
 
     void this.redis.delByPattern('analytics:*');
