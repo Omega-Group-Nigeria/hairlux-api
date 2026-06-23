@@ -114,9 +114,70 @@ export const bookingBranchSelect = {
   address: true,
 } as const;
 
+export const assignedBeauticianSummarySelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
+  beauticianProfile: {
+    select: {
+      profilePhotoUrl: true,
+      ratingAverage: true,
+      specialties: true,
+      yearsOfExperience: true,
+    },
+  },
+} as const;
+
+export type AssignedBeauticianSummary = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  profilePhotoUrl: string | null;
+  ratingAverage: number | null;
+  specialties: string[];
+  yearsOfExperience: number | null;
+};
+
+type AssignedBeauticianLike = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  beauticianProfile?: {
+    profilePhotoUrl: string | null;
+    ratingAverage: unknown;
+    specialties: string[];
+    yearsOfExperience: number | null;
+  } | null;
+} | null | undefined;
+
+export function formatAssignedBeauticianSummary(
+  beautician: AssignedBeauticianLike,
+): AssignedBeauticianSummary | null {
+  if (!beautician) {
+    return null;
+  }
+
+  const profile = beautician.beauticianProfile;
+
+  return {
+    id: beautician.id,
+    firstName: beautician.firstName,
+    lastName: beautician.lastName,
+    phone: beautician.phone,
+    profilePhotoUrl: profile?.profilePhotoUrl ?? null,
+    ratingAverage: profile ? Number(profile.ratingAverage) : null,
+    specialties: profile?.specialties ?? [],
+    yearsOfExperience: profile?.yearsOfExperience ?? null,
+  };
+}
+
 export const bookingUserReadInclude = {
   address: true,
   branch: { select: bookingBranchSelect },
+  assignedBeautician: { select: assignedBeauticianSummarySelect },
 } as const;
 
 export const bookingAdminUserSelect = {
@@ -159,11 +220,13 @@ export function formatBookingResponse(
     services: unknown;
     totalAmount?: unknown;
     branch?: BookingBranchLike;
+    assignedBeautician?: AssignedBeauticianLike;
     [key: string]: unknown;
   },
 ) {
   const hasBranchRelation = 'branch' in booking;
-  const { branch, services, totalAmount, ...rest } = booking;
+  const hasAssignedBeautician = 'assignedBeautician' in booking;
+  const { branch, services, totalAmount, assignedBeautician, ...rest } = booking;
 
   const formatted = {
     ...rest,
@@ -171,13 +234,17 @@ export function formatBookingResponse(
     totalAmount: Number(totalAmount ?? 0),
   };
 
-  if (!hasBranchRelation) {
-    return formatted;
+  const withBranch = hasBranchRelation
+    ? { ...formatted, branch: formatBookingBranch(branch) }
+    : formatted;
+
+  if (!hasAssignedBeautician) {
+    return withBranch;
   }
 
   return {
-    ...formatted,
-    branch: formatBookingBranch(branch),
+    ...withBranch,
+    assignedBeautician: formatAssignedBeauticianSummary(assignedBeautician),
   };
 }
 

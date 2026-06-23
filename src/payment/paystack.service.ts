@@ -27,6 +27,40 @@ export interface PaystackVerifyResponse {
   };
 }
 
+export interface PaystackResolveAccountResponse {
+  status: boolean;
+  message: string;
+  data: {
+    account_number: string;
+    account_name: string;
+    bank_id: number;
+  };
+}
+
+export interface PaystackTransferRecipientResponse {
+  status: boolean;
+  message: string;
+  data: {
+    recipient_code: string;
+    name: string;
+    details: {
+      account_number: string;
+      bank_code: string;
+    };
+  };
+}
+
+export interface PaystackTransferResponse {
+  status: boolean;
+  message: string;
+  data: {
+    reference: string;
+    transfer_code: string;
+    status: string;
+    amount: number;
+  };
+}
+
 @Injectable()
 export class PaystackService {
   private readonly logger = new Logger(PaystackService.name);
@@ -97,6 +131,111 @@ export class PaystackService {
    * Verifies the x-paystack-signature header using HMAC-SHA512.
    * Paystack signs the raw request body with the secret key.
    */
+  async resolveAccountNumber(
+    accountNumber: string,
+    bankCode: string,
+  ): Promise<PaystackResolveAccountResponse['data']> {
+    try {
+      const response = await axios.get<PaystackResolveAccountResponse>(
+        `${this.baseUrl}/bank/resolve`,
+        {
+          params: {
+            account_number: accountNumber,
+            bank_code: bankCode,
+          },
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+          },
+        },
+      );
+
+      if (!response.data.status) {
+        throw new Error(response.data.message || 'Account resolution failed');
+      }
+
+      return response.data.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to resolve account number: ${errorMessage}`);
+      throw new Error('Failed to resolve bank account with Paystack');
+    }
+  }
+
+  async createTransferRecipient(input: {
+    name: string;
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<PaystackTransferRecipientResponse['data']> {
+    try {
+      const response = await axios.post<PaystackTransferRecipientResponse>(
+        `${this.baseUrl}/transferrecipient`,
+        {
+          type: 'nuban',
+          name: input.name,
+          account_number: input.accountNumber,
+          bank_code: input.bankCode,
+          currency: 'NGN',
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      if (!response.data.status) {
+        throw new Error(response.data.message || 'Recipient creation failed');
+      }
+
+      return response.data.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to create transfer recipient: ${errorMessage}`);
+      throw new Error('Failed to create Paystack transfer recipient');
+    }
+  }
+
+  async initiateTransfer(input: {
+    amount: number;
+    recipientCode: string;
+    reference: string;
+    reason?: string;
+  }): Promise<PaystackTransferResponse['data']> {
+    try {
+      const response = await axios.post<PaystackTransferResponse>(
+        `${this.baseUrl}/transfer`,
+        {
+          source: 'balance',
+          amount: Math.round(input.amount * 100),
+          recipient: input.recipientCode,
+          reference: input.reference,
+          reason: input.reason ?? 'HairLux beautician payout',
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      if (!response.data.status) {
+        throw new Error(response.data.message || 'Transfer initiation failed');
+      }
+
+      this.logger.log(`Transfer initiated: ${input.reference}`);
+      return response.data.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to initiate transfer: ${errorMessage}`);
+      throw new Error('Failed to initiate Paystack transfer');
+    }
+  }
+
   verifyWebhookSignature(rawBody: string, signature: string): boolean {
     if (!signature || !this.secretKey || !rawBody) {
       return false;

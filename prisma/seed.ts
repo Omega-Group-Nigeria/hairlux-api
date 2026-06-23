@@ -8,7 +8,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-async function main() {
+async function seedSuperAdmin() {
   const email = 'superadmin@gmail.com';
   const password = 'SuperAdmin123$';
 
@@ -40,9 +40,41 @@ async function main() {
   console.log(`   Role  : ${superAdmin.role}`);
 }
 
+async function seedHomeServiceSettings() {
+  const existing = await prisma.homeServiceSettings.findFirst();
+
+  if (existing) {
+    console.log(`⚠️  Home service settings already exist (id: ${existing.id})`);
+    return;
+  }
+
+  const settings = await prisma.homeServiceSettings.create({
+    data: {
+      commissionRate: 0.7,
+      jobOfferTimeoutMinutes: 4,
+      defaultMatchingRadiusKm: 20,
+      kycAutoApprove: true,
+      arrivalVerificationExpiryMinutes: 15,
+      serviceCompletionBufferMinutes: 60,
+      payoutMode: 'MANUAL',
+      arrivalGeoFenceMeters: 250,
+      noShowPenaltyEnabled: true,
+      noShowSuspendThreshold: 3,
+      noShowWindowDays: 30,
+    },
+  });
+
+  console.log(`✅ Home service settings seeded (id: ${settings.id})`);
+}
+
+async function main() {
+  await seedSuperAdmin();
+  await seedHomeServiceSettings();
+}
+
 main()
   .catch((e) => {
-    console.error('❌ Error seeding super admin:', e);
+    console.error('❌ Error seeding database:', e);
     process.exit(1);
   })
   .finally(async () => {

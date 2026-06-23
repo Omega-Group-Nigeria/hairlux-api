@@ -40,6 +40,7 @@ import {
 import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
 import { BookingLinePricingService } from './booking-line-pricing.service';
+import { HomeServiceBookingService } from '../../beautician/home-service-booking/home-service-booking.service';
 
 @Injectable()
 export class BookingPaymentService {
@@ -52,6 +53,7 @@ export class BookingPaymentService {
     private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
     private bookingLinePricingService: BookingLinePricingService,
+    private homeServiceBookingService: HomeServiceBookingService,
   ) {}
 
   private resolveServiceMode(
@@ -414,6 +416,10 @@ export class BookingPaymentService {
     }
 
     const serviceNames = serviceRecords.map((s) => s.name).join(', ');
+    const initialStatus = this.homeServiceBookingService.resolveInitialStatus(
+      effectiveBookingType,
+      serviceRecords,
+    );
 
     try {
       if (paymentMethod === PaymentMethod.WALLET) {
@@ -438,7 +444,7 @@ export class BookingPaymentService {
                 guestEmail: guestEmail ?? null,
                 totalAmount: finalAmount,
                 paymentMethod: PaymentMethod.WALLET,
-                status: BookingStatus.CONFIRMED,
+                status: initialStatus,
               },
               include: bookingUserReadInclude,
             });
@@ -522,6 +528,10 @@ export class BookingPaymentService {
             : []),
         ]);
 
+        if (initialStatus === BookingStatus.PENDING_ASSIGNMENT) {
+          void this.homeServiceBookingService.triggerMatching(booking.id);
+        }
+
         return {
           booking: {
             ...formatBookingResponse(booking),
@@ -539,7 +549,10 @@ export class BookingPaymentService {
               }
             : undefined,
           paymentMethod: PaymentMethod.WALLET,
-          message: 'Payment successful. Booking confirmed.',
+          message:
+            this.homeServiceBookingService.getPaymentConfirmationMessage(
+              initialStatus,
+            ),
         };
       }
 
@@ -675,6 +688,25 @@ export class BookingPaymentService {
     });
   }
 
+  private computePaymentSplit(finalAmount: number, walletBalance: number) {
+    const walletContribution = Math.min(walletBalance, finalAmount);
+    const requiredExternalAmount = Math.max(
+      0,
+      Math.round((finalAmount - walletContribution) * 100) / 100,
+    );
+
+    return { walletContribution, requiredExternalAmount };
+  }
+
+  private async lockTransactionForUpdate(
+    tx: Prisma.TransactionClient,
+    transactionId: string,
+  ) {
+    await tx.$executeRaw(
+      Prisma.sql`SELECT id FROM transactions WHERE id = ${transactionId}::uuid FOR UPDATE`,
+    );
+  }
+
   private async prepareBookingPaymentContext(
     userId: string,
     payload: BookingPaymentPayloadDto,
@@ -776,11 +808,8 @@ export class BookingPaymentService {
 
     const wallet = await this.getOrCreateWallet(userId);
     const walletBalance = Number(wallet.balance);
-    const walletContribution = Math.min(walletBalance, context.finalAmount);
-    const requiredExternalAmount = Math.max(
-      0,
-      Math.round((context.finalAmount - walletContribution) * 100) / 100,
-    );
+    const { walletContribution, requiredExternalAmount } =
+      this.computePaymentSplit(context.finalAmount, walletBalance);
 
     if (requiredExternalAmount <= 0) {
       throw new BadRequestException(
@@ -788,7 +817,10 @@ export class BookingPaymentService {
       );
     }
 
-    if (Math.abs(Number(dto.amount) - requiredExternalAmount) > 0.001) {
+    if (
+      dto.amount !== undefined &&
+      Math.abs(Number(dto.amount) - requiredExternalAmount) > 0.001
+    ) {
       throw new BadRequestException(
         `Amount mismatch. Expected wallet shortfall ${requiredExternalAmount}, got ${dto.amount}`,
       );
@@ -1019,9 +1051,23 @@ export class BookingPaymentService {
       );
     }
 
+    const wallet = await this.getOrCreateWallet(userId);
+    const currentWalletBalance = Number(wallet.balance);
+    if (expectedWalletContribution > currentWalletBalance) {
+      throw new BadRequestException(
+        `Wallet balance changed before verification. Needed ${expectedWalletContribution}, available ${currentWalletBalance}`,
+      );
+    }
+
+    const walletDebitReference = `BOOK-WAL-${dto.bookingPaymentReference}`;
+
     const addressLabel = context.address
       ? context.address.fullAddress
       : 'In-store (Walk-in)';
+    const initialStatus = this.homeServiceBookingService.resolveInitialStatus(
+      context.bookingType,
+      context.serviceRecords,
+    );
     let result: {
       booking: Prisma.BookingGetPayload<{ include: { address: true } }> | null;
       reservationCode: string;
@@ -1034,6 +1080,8 @@ export class BookingPaymentService {
           await this.reservationService.generateReservationCode();
 
         return this.prisma.$transaction(async (tx) => {
+          await this.lockTransactionForUpdate(tx, paymentIntent.id);
+
           const lockedIntent = await tx.transaction.findUnique({
             where: { id: paymentIntent.id },
           });
@@ -1063,28 +1111,22 @@ export class BookingPaymentService {
             };
           }
 
+          if (lockedIntent?.status !== TransactionStatus.PENDING) {
+            throw new ConflictException('Booking payment is no longer pending');
+          }
+
           if (walletContributionToDebit > 0) {
-            const wallet = await tx.wallet.findUnique({
-              where: { id: paymentIntent.walletId },
-            });
-
-            if (!wallet) {
-              throw new NotFoundException('Wallet not found');
-            }
-
-            if (Number(wallet.balance) < walletContributionToDebit) {
-              throw new BadRequestException(
-                `Wallet balance changed before verification. Needed ${walletContributionToDebit}, available ${Number(wallet.balance)}`,
-              );
-            }
-
-            await tx.wallet.update({
-              where: { id: paymentIntent.walletId },
-              data: {
-                balance: {
-                  decrement: walletContributionToDebit,
-                },
+            await this.walletDebitService.debitWalletAndRecordTx(tx, {
+              userId,
+              amount: walletContributionToDebit,
+              reference: walletDebitReference,
+              description: `Wallet contribution for booking payment ${dto.bookingPaymentReference}`,
+              metadata: {
+                purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
+                bookingPaymentReference: dto.bookingPaymentReference,
               },
+              insufficientBalanceMessage:
+                `Wallet balance changed before verification. Needed ${walletContributionToDebit}`,
             });
           }
 
@@ -1104,7 +1146,7 @@ export class BookingPaymentService {
               guestEmail: payload.guestEmail ?? null,
               totalAmount: context.finalAmount,
               paymentMethod: PaymentMethod.MONNIFY,
-              status: BookingStatus.CONFIRMED,
+              status: initialStatus,
               notes:
                 `Paid online via MONNIFY (${dto.bookingPaymentReference})` +
                 (addressLabel ? ` | ${addressLabel}` : ''),
@@ -1115,15 +1157,13 @@ export class BookingPaymentService {
           let influencerRewardUserId: string | null = null;
 
           if (walletContributionToDebit > 0) {
-            await tx.transaction.create({
-              data: {
+            await tx.transaction.updateMany({
+              where: {
                 walletId: paymentIntent.walletId,
-                amount: walletContributionToDebit,
+                reference: walletDebitReference,
                 type: TransactionType.DEBIT,
-                paymentMethod: 'WALLET',
-                reference: `BOOK-WAL-${booking.id}`,
-                description: `Wallet contribution for booking payment ${dto.bookingPaymentReference}`,
-                status: TransactionStatus.COMPLETED,
+              },
+              data: {
                 metadata: {
                   purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
                   bookingId: booking.id,
@@ -1156,8 +1196,11 @@ export class BookingPaymentService {
               );
           }
 
-          await tx.transaction.update({
-            where: { id: paymentIntent.id },
+          const finalized = await tx.transaction.updateMany({
+            where: {
+              id: paymentIntent.id,
+              status: TransactionStatus.PENDING,
+            },
             data: {
               status: TransactionStatus.COMPLETED,
               metadata: {
@@ -1172,6 +1215,10 @@ export class BookingPaymentService {
               } as any,
             },
           });
+
+          if (finalized.count === 0) {
+            throw new ConflictException('Booking payment already processed');
+          }
 
           return {
             booking,
@@ -1242,13 +1289,22 @@ export class BookingPaymentService {
       void this.redis.del(`wallet:balance:${result.influencerRewardUserId}`);
     }
 
+    if (
+      result.booking &&
+      initialStatus === BookingStatus.PENDING_ASSIGNMENT
+    ) {
+      void this.homeServiceBookingService.triggerMatching(result.booking.id);
+    }
+
     return {
       booking: {
         ...formatBookingResponse(result.booking),
         address: formatBookingAddress(result.booking.address),
       },
       reservationCode: result.reservationCode,
-      message: 'Booking payment verified and booking created',
+      message: this.homeServiceBookingService.getPaymentConfirmationMessage(
+        initialStatus,
+      ),
     };
   }
 

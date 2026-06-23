@@ -13,6 +13,7 @@ enum UserRole {
   USER
   ADMIN
   SUPER_ADMIN
+  BEAUTICIAN
 }
 
 enum UserStatus {
@@ -22,9 +23,15 @@ enum UserStatus {
 
 enum BookingStatus {
   PENDING
+  PENDING_ASSIGNMENT
   CONFIRMED
+  ASSIGNED
+  EN_ROUTE
+  ARRIVED
+  ARRIVED_VERIFIED
   IN_PROGRESS
   COMPLETED
+  AWAITING_CUSTOMER_CONFIRM
   CANCELLED
 }
 
@@ -43,6 +50,58 @@ enum TransactionType {
   REFUND
   INFLUENCER_REWARD
   SHOP_PURCHASE
+  SERVICE_EARNINGS
+  PAYOUT_REQUEST
+  PAYOUT_COMPLETED
+}
+
+enum KycStatus {
+  PENDING
+  IN_PROGRESS
+  VERIFIED
+  REJECTED
+  SUSPENDED
+  NEEDS_REVIEW
+}
+
+enum ProfileReviewStatus {
+  NOT_SUBMITTED
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum AvailabilityStatus {
+  OFFLINE
+  ONLINE
+  ON_JOB
+}
+
+enum JobOfferStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  TIMED_OUT
+}
+
+enum PayoutMode {
+  MANUAL
+  AUTO
+}
+
+enum PayoutRequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+enum FcmPlatform {
+  IOS
+  ANDROID
+  WEB
 }
 
 enum ProductStatus {
@@ -167,6 +226,15 @@ model User {
   adminRole       AdminRole?     @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
   influencer      Influencer?
   shopOrders      ShopOrder[]
+  beauticianProfile        BeauticianProfile?
+  assignedBookings         Booking[] @relation("AssignedBeautician")
+  jobOffers                JobOffer[]
+  beauticianServicesAssigned BeauticianService[] @relation("BeauticianServiceAssignedBy")
+  profileReviewsPerformed  BeauticianProfile[] @relation("ProfileReviewedBy")
+  payoutRequests           PayoutRequest[] @relation("UserPayoutRequests")
+  payoutsProcessed         PayoutRequest[] @relation("PayoutProcessedBy")
+  fcmTokens                FcmToken[]
+  beauticianLocationHistory BeauticianLocationHistory[] @relation("BeauticianLocationHistory")
 
   @@index([role])
   @@index([status])
@@ -198,6 +266,8 @@ model Address {
   country      String   @default("Nigeria")
   placeId      String?  @map("place_id")
   addressComponents Json? @map("address_components")
+  latitude     Decimal? @db.Decimal(10, 7)
+  longitude    Decimal? @db.Decimal(10, 7)
   isDefault    Boolean  @default(false) @map("is_default")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
@@ -311,9 +381,10 @@ model Service {
   updatedAt   DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  category       ServiceCategory @relation(fields: [categoryId], references: [id])
-  reviews        Review[]
-  branchServices BranchService[]
+  category            ServiceCategory @relation(fields: [categoryId], references: [id])
+  reviews             Review[]
+  branchServices      BranchService[]
+  beauticianServices  BeauticianService[]
 
   @@map("services")
 }
@@ -339,6 +410,14 @@ model Booking {
   totalAmount      Decimal       @db.Decimal(10, 2) @map("total_amount")
   notes            String?
   cancelReason     String?       @map("cancel_reason")
+  assignedBeauticianUserId String? @map("assigned_beautician_user_id")
+  arrivalVerifiedAt        DateTime? @map("arrival_verified_at")
+  serviceStartedAt         DateTime? @map("service_started_at")
+  serviceCompletedAt       DateTime? @map("service_completed_at")
+  beauticianArrivalLat     Decimal?  @db.Decimal(10, 7) @map("beautician_arrival_lat")
+  beauticianArrivalLng     Decimal?  @db.Decimal(10, 7) @map("beautician_arrival_lng")
+  customerRating           Int?      @map("customer_rating")
+  customerReview           String?   @map("customer_review")
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
 
@@ -346,14 +425,18 @@ model Booking {
   user    User     @relation(fields: [userId], references: [id])
   address Address? @relation(fields: [addressId], references: [id])
   branch  StaffLocation? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedBeautician User? @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
   review  Review?
   discountUsage DiscountUsage?
+  jobOffers JobOffer[]
+  locationHistory BeauticianLocationHistory[]
 
   @@index([reservationCode])
   @@index([userId])
   @@index([status])
   @@index([bookingDate])
   @@index([userId, status])
+  @@index([assignedBeauticianUserId])
   @@unique([userId, idempotencyKey])
   @@map("bookings")
 }
@@ -389,6 +472,7 @@ model Transaction {
   wallet           Wallet           @relation(fields: [walletId], references: [id], onDelete: Cascade)
   influencerReward InfluencerReward?
   referralCampaignUsage ReferralCampaignCodeUsage?
+  payoutRequest    PayoutRequest?
 
   @@index([walletId])
   @@index([walletId, status])
@@ -769,4 +853,171 @@ model WaitlistEntry {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("waitlist_entries")
+}
+
+// ─── Beautician Provider App ───────────────────────────────────────────────────
+
+model BeauticianProfile {
+  id                    String               @id @default(uuid())
+  userId                String               @unique @map("user_id")
+  bio                   String?
+  profilePhotoUrl       String?              @map("profile_photo_url")
+  specialties           String[]             @default([])
+  yearsOfExperience     Int?                 @map("years_of_experience")
+  certifications        String[]             @default([])
+  baseAddress           String?              @map("base_address")
+  baseLat               Decimal?             @db.Decimal(10, 7) @map("base_lat")
+  baseLng               Decimal?             @db.Decimal(10, 7) @map("base_lng")
+  serviceRadiusKm       Decimal              @default(20) @db.Decimal(5, 2) @map("service_radius_km")
+  currentLat            Decimal?             @db.Decimal(10, 7) @map("current_lat")
+  currentLng            Decimal?             @db.Decimal(10, 7) @map("current_lng")
+  lastLocationUpdate    DateTime?            @map("last_location_update")
+  availabilityStatus    AvailabilityStatus   @default(OFFLINE) @map("availability_status")
+  kycStatus             KycStatus            @default(PENDING) @map("kyc_status")
+  kycVerifiedAt         DateTime?            @map("kyc_verified_at")
+  qoreIdCustomerId      String?              @map("qore_id_customer_id")
+  qoreIdSessionId       String?              @map("qore_id_session_id")
+  profileStatus         ProfileReviewStatus  @default(NOT_SUBMITTED) @map("profile_status")
+  profileSubmittedAt    DateTime?            @map("profile_submitted_at")
+  profileReviewedAt     DateTime?            @map("profile_reviewed_at")
+  profileReviewedById   String?              @map("profile_reviewed_by_id")
+  reviewNotes           String?              @map("review_notes")
+  ratingAverage         Decimal              @default(0) @db.Decimal(3, 2) @map("rating_average")
+  totalJobsCompleted    Int                  @default(0) @map("total_jobs_completed")
+  totalEarnings         Decimal              @default(0) @db.Decimal(12, 2) @map("total_earnings")
+  commissionRateOverride Decimal?            @db.Decimal(5, 4) @map("commission_rate_override")
+  payoutBankCode         String?              @map("payout_bank_code")
+  payoutAccountNumber    String?              @map("payout_account_number")
+  payoutAccountName      String?              @map("payout_account_name")
+  paystackRecipientCode  String?              @map("paystack_recipient_code")
+  payoutBankVerifiedAt   DateTime?            @map("payout_bank_verified_at")
+  isActive              Boolean              @default(true) @map("is_active")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileReviewedBy User?               @relation("ProfileReviewedBy", fields: [profileReviewedById], references: [id], onDelete: SetNull)
+  assignedServices  BeauticianService[]
+
+  @@index([kycStatus])
+  @@index([profileStatus])
+  @@index([availabilityStatus])
+  @@index([isActive])
+  @@map("beautician_profiles")
+}
+
+model BeauticianService {
+  id                  String   @id @default(uuid())
+  beauticianProfileId String   @map("beautician_profile_id")
+  serviceId           String   @map("service_id")
+  assignedById        String   @map("assigned_by_id")
+  assignedAt          DateTime @default(now()) @map("assigned_at")
+
+  beauticianProfile BeauticianProfile @relation(fields: [beauticianProfileId], references: [id], onDelete: Cascade)
+  service           Service           @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  assignedBy        User              @relation("BeauticianServiceAssignedBy", fields: [assignedById], references: [id])
+
+  @@unique([beauticianProfileId, serviceId])
+  @@index([beauticianProfileId])
+  @@index([serviceId])
+  @@map("beautician_services")
+}
+
+model JobOffer {
+  id                 String         @id @default(uuid())
+  bookingId          String         @map("booking_id")
+  beauticianUserId   String         @map("beautician_user_id")
+  status             JobOfferStatus @default(OFFERED)
+  offeredAt          DateTime       @default(now()) @map("offered_at")
+  respondedAt        DateTime?      @map("responded_at")
+  expiresAt          DateTime       @map("expires_at")
+  distanceKmAtOffer  Decimal?       @db.Decimal(8, 2) @map("distance_km_at_offer")
+  estEarningsAtOffer Decimal?       @db.Decimal(10, 2) @map("est_earnings_at_offer")
+
+  booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  beautician User    @relation(fields: [beauticianUserId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([beauticianUserId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("job_offers")
+}
+
+model HomeServiceSettings {
+  id                              String     @id @default(uuid())
+  commissionRate                    Decimal    @default(0.70) @db.Decimal(5, 4) @map("commission_rate")
+  jobOfferTimeoutMinutes          Int        @default(4) @map("job_offer_timeout_minutes")
+  defaultMatchingRadiusKm         Decimal    @default(20) @db.Decimal(5, 2) @map("default_matching_radius_km")
+  kycAutoApprove                  Boolean    @default(true) @map("kyc_auto_approve")
+  arrivalVerificationExpiryMinutes Int       @default(15) @map("arrival_verification_expiry_minutes")
+  serviceCompletionBufferMinutes  Int        @default(60) @map("service_completion_buffer_minutes")
+  payoutMode                      PayoutMode @default(MANUAL) @map("payout_mode")
+  arrivalGeoFenceMeters           Int        @default(250) @map("arrival_geo_fence_meters")
+  noShowPenaltyEnabled            Boolean    @default(true) @map("no_show_penalty_enabled")
+  noShowSuspendThreshold          Int        @default(3) @map("no_show_suspend_threshold")
+  noShowWindowDays                Int        @default(30) @map("no_show_window_days")
+  createdAt                       DateTime   @default(now()) @map("created_at")
+  updatedAt                       DateTime   @updatedAt @map("updated_at")
+
+  @@map("home_service_settings")
+}
+
+model PayoutRequest {
+  id              String              @id @default(uuid())
+  userId          String              @map("user_id")
+  amount          Decimal             @db.Decimal(10, 2)
+  status          PayoutRequestStatus @default(PENDING)
+  bankCode        String              @map("bank_code")
+  accountNumber   String              @map("account_number")
+  accountName     String?             @map("account_name")
+  processedById   String?             @map("processed_by_id")
+  processedAt     DateTime?           @map("processed_at")
+  rejectionReason String?             @map("rejection_reason")
+  transactionId   String?             @unique @map("transaction_id")
+  paystackTransferReference String?     @unique @map("paystack_transfer_reference")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+
+  user        User         @relation("UserPayoutRequests", fields: [userId], references: [id], onDelete: Cascade)
+  processedBy User?        @relation("PayoutProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([userId, status])
+  @@map("payout_requests")
+}
+
+model FcmToken {
+  id         String      @id @default(uuid())
+  userId     String      @map("user_id")
+  token      String
+  platform   FcmPlatform
+  lastUsedAt DateTime    @default(now()) @map("last_used_at")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@map("fcm_tokens")
+}
+
+model BeauticianLocationHistory {
+  id               String   @id @default(uuid())
+  beauticianUserId String   @map("beautician_user_id")
+  lat              Decimal  @db.Decimal(10, 7)
+  lng              Decimal  @db.Decimal(10, 7)
+  accuracy         Decimal? @db.Decimal(8, 2)
+  bookingId        String?  @map("booking_id")
+  recordedAt       DateTime @default(now()) @map("recorded_at")
+
+  beautician User     @relation("BeauticianLocationHistory", fields: [beauticianUserId], references: [id], onDelete: Cascade)
+  booking    Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([beauticianUserId, recordedAt])
+  @@index([bookingId])
+  @@map("beautician_location_history")
 }

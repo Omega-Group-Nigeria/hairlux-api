@@ -64,6 +64,13 @@ export const PERMISSIONS = {
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
 
+  // ── Beauticians ───────────────────────────────────────────────────────────────
+  BEAUTICIANS_READ: 'beauticians:read', // View beautician list & profiles
+  BEAUTICIANS_MANAGE: 'beauticians:manage', // Suspend, override commission, force status
+  BEAUTICIANS_REVIEW: 'beauticians:review', // KYC & profile review approve/reject
+  BEAUTICIANS_ASSIGN_SERVICES: 'beauticians:assign_services', // Assign eligible services
+  BEAUTICIANS_PROCESS_PAYOUTS: 'beauticians:process_payouts', // Process payout requests
+
   // ── Shop ─────────────────────────────────────────────────────────────────────
   SHOP_READ: 'shop:read', // View products, delivery regions & orders
   SHOP_MANAGE_PRODUCTS: 'shop:manage_products', // CRUD products
@@ -240,6 +247,32 @@ export const PERMISSION_GROUPS = [
       {
         key: PERMISSIONS.SHOP_UPDATE_STATUS,
         label: 'Update shop order status & cancel',
+      },
+    ],
+  },
+  {
+    group: 'Settings',
+    permissions: [
+      { key: PERMISSIONS.SETTINGS_READ, label: 'View system settings' },
+      { key: PERMISSIONS.SETTINGS_MANAGE, label: 'Update system settings' },
+    ],
+  },
+  {
+    group: 'Beauticians',
+    permissions: [
+      { key: PERMISSIONS.BEAUTICIANS_READ, label: 'View beauticians & profiles' },
+      { key: PERMISSIONS.BEAUTICIANS_MANAGE, label: 'Manage beautician accounts' },
+      {
+        key: PERMISSIONS.BEAUTICIANS_REVIEW,
+        label: 'Review KYC & professional profiles',
+      },
+      {
+        key: PERMISSIONS.BEAUTICIANS_ASSIGN_SERVICES,
+        label: 'Assign eligible services to beauticians',
+      },
+      {
+        key: PERMISSIONS.BEAUTICIANS_PROCESS_PAYOUTS,
+        label: 'Process beautician payout requests',
       },
     ],
   },

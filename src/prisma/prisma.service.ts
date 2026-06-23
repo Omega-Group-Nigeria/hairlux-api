@@ -177,6 +177,34 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.shopOrder;
   }
 
+  get beauticianProfile() {
+    return this.client.beauticianProfile;
+  }
+
+  get beauticianService() {
+    return this.client.beauticianService;
+  }
+
+  get jobOffer() {
+    return this.client.jobOffer;
+  }
+
+  get homeServiceSettings() {
+    return this.client.homeServiceSettings;
+  }
+
+  get payoutRequest() {
+    return this.client.payoutRequest;
+  }
+
+  get fcmToken() {
+    return this.client.fcmToken;
+  }
+
+  get beauticianLocationHistory() {
+    return this.client.beauticianLocationHistory;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }

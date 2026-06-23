@@ -72,6 +72,43 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async setNx(
+    key: string,
+    value: string,
+    ttlSeconds: number,
+  ): Promise<boolean> {
+    try {
+      const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+      return result === 'OK';
+    } catch (err) {
+      this.logger.warn(
+        `Cache SET NX failed for key "${key}": ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  async incr(key: string): Promise<number> {
+    try {
+      return await this.client.incr(key);
+    } catch (err) {
+      this.logger.warn(
+        `Cache INCR failed for key "${key}": ${(err as Error).message}`,
+      );
+      return 0;
+    }
+  }
+
+  async expire(key: string, ttlSeconds: number): Promise<void> {
+    try {
+      await this.client.expire(key, ttlSeconds);
+    } catch (err) {
+      this.logger.warn(
+        `Cache EXPIRE failed for key "${key}": ${(err as Error).message}`,
+      );
+    }
+  }
+
   async del(...keys: string[]): Promise<void> {
     try {
       if (keys.length) await this.client.del(...keys);

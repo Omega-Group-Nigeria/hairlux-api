@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { NoShowPenaltyService } from '../../beautician/services/no-show-penalty.service';
 import { AdminCreateBookingDto } from '../dto/admin-create-booking.dto';
 import { AdminQueryBookingsDto } from '../dto/admin-query-bookings.dto';
 import { GetCalendarDto } from '../dto/get-calendar.dto';
@@ -39,6 +40,7 @@ export class BookingAnalyticsService {
     private redis: RedisService,
     private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
+    private readonly noShowPenaltyService: NoShowPenaltyService,
   ) {}
 
   private isUniqueConstraintError(err: unknown, field: string): boolean {
@@ -389,6 +391,9 @@ export class BookingAnalyticsService {
       ...(status === BookingStatus.CANCELLED &&
       booking.paymentMethod === PaymentMethod.WALLET
         ? [this.redis.del(`wallet:balance:${booking.userId}`)]
+        : []),
+      ...(status === BookingStatus.CANCELLED
+        ? [this.noShowPenaltyService.recordIfApplicable(id)]
         : []),
     ]);
 

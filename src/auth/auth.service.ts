@@ -166,6 +166,99 @@ export class AuthService {
     };
   }
 
+  async registerBeautician(registerDto: RegisterDto) {
+    const { email, password, firstName, lastName, phone } = registerDto;
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+
+    if (existingUser) {
+      throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
+    }
+
+    if (phone) {
+      const existingPhone = await this.prisma.user.findFirst({
+        where: { phone },
+        select: { id: true },
+      });
+      if (existingPhone) {
+        throw new ConflictException(
+          'Phone number is already associated with an account',
+        );
+      }
+    }
+
+    const hashedPassword = await argon2.hash(password, {
+      type: argon2.argon2id,
+      memoryCost: 65536,
+      timeCost: 4,
+      parallelism: 1,
+    });
+
+    const otpCode = this.generateOtpCode();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          email: email.toLowerCase(),
+          password: hashedPassword,
+          firstName,
+          lastName,
+          phone,
+          role: UserRole.BEAUTICIAN,
+          status: UserStatus.ACTIVE,
+          otpCode,
+          otpExpiry,
+        },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          role: true,
+          status: true,
+          emailVerified: true,
+          createdAt: true,
+        },
+      });
+
+      await tx.wallet.create({
+        data: {
+          userId: newUser.id,
+          balance: 0,
+        },
+      });
+
+      await tx.beauticianProfile.create({
+        data: {
+          userId: newUser.id,
+        },
+      });
+
+      return newUser;
+    });
+
+    await this.mailService.sendOtpEmail(user.email, otpCode, user.firstName);
+
+    const sessionId = await this.rotateActiveSession(user.id);
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      sessionId,
+    );
+
+    return {
+      user,
+      ...tokens,
+      message:
+        'Beautician registration successful. Please verify your email with the OTP sent to your email address.',
+    };
+  }
+
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 

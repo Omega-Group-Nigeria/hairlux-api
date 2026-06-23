@@ -20,15 +20,16 @@ export class InitializeBookingPaymentDto {
   @Type(() => BookingPaymentPayloadDto)
   bookingPayload: BookingPaymentPayloadDto;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description:
-      'Expected total amount to pay (must match server-calculated total)',
-    example: 15500,
+      'Optional client-side shortfall hint. Server always computes the authoritative amount; if sent, it must match the server-calculated wallet shortfall.',
+    example: 3500,
   })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(1)
-  amount: number;
+  @Min(0.01)
+  amount?: number;
 
   @ApiProperty({
     description: 'Payment provider',

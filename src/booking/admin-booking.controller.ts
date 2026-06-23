@@ -20,6 +20,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { BookingService } from './booking.service';
+import { ActiveHomeServiceBookingsService } from '../beautician/admin/services/active-home-service-bookings.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -41,7 +42,24 @@ import { CreateBusinessExceptionDto } from './dto/create-business-exception.dto'
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminBookingController {
-  constructor(private readonly bookingService: BookingService) {}
+  constructor(
+    private readonly bookingService: BookingService,
+    private readonly activeHomeServiceBookings: ActiveHomeServiceBookingsService,
+  ) {}
+
+  @Get('home-services/active')
+  @ApiOperation({
+    summary: 'Active home service bookings for ops map',
+    description: 'Up to 100 in-flight home service jobs with masked addresses.',
+  })
+  async listActiveHomeServices() {
+    const data = await this.activeHomeServiceBookings.listActive();
+    return {
+      success: true,
+      message: 'Active home service bookings retrieved successfully',
+      data,
+    };
+  }
 
   @Get()
   @ApiOperation({

@@ -66,6 +66,40 @@ export class AuthController {
     return ResponseUtil.success(result, 'User registered successfully');
   }
 
+  @Post('register-beautician')
+  @ApiOperation({
+    summary: 'Register a new beautician account',
+    description:
+      'Creates a user with role BEAUTICIAN, an empty beautician profile, and a wallet.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Beautician registered successfully',
+    example: {
+      success: true,
+      message: 'Beautician registered successfully',
+      data: {
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          email: 'stylist@example.com',
+          firstName: 'Ada',
+          lastName: 'Okafor',
+          phone: '+2348012345678',
+          role: 'BEAUTICIAN',
+          status: 'ACTIVE',
+          createdAt: '2026-06-20T12:00:00.000Z',
+        },
+        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
+  @ApiResponse({ status: 409, description: 'User already exists' })
+  async registerBeautician(@Body() registerDto: RegisterDto) {
+    const result = await this.authService.registerBeautician(registerDto);
+    return ResponseUtil.success(result, 'Beautician registered successfully');
+  }
+
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'User login' })

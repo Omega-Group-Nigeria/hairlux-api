@@ -18,12 +18,14 @@ import {
   bookingUserReadInclude,
   formatBookingResponse,
 } from '../utils/booking.utils';
+import { NoShowPenaltyService } from '../../beautician/services/no-show-penalty.service';
 
 @Injectable()
 export class BookingCoreService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
+    private readonly noShowPenaltyService: NoShowPenaltyService,
   ) {}
 
   async findUserBookings(userId: string, queryDto: QueryBookingsDto) {
@@ -213,6 +215,7 @@ export class BookingCoreService {
       ...(booking.paymentMethod === PaymentMethod.WALLET
         ? [this.redis.del(`wallet:balance:${userId}`)]
         : []),
+      this.noShowPenaltyService.recordIfApplicable(id),
     ]);
 
     return formatBookingResponse(result);

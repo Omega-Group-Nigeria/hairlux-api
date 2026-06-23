@@ -18,6 +18,13 @@ import {
   staffBirthdayTemplate,
   contactFormSubmissionTemplate,
   shopOrderConfirmationTemplate,
+  beauticianKycResultTemplate,
+  beauticianProfileReviewTemplate,
+  beauticianJobOfferTemplate,
+  arrivalVerificationNeededTemplate,
+  arrivalVerifiedTemplate,
+  serviceAwaitingConfirmationTemplate,
+  serviceCompletedTemplate,
 } from './templates';
 import type { ShopOrderConfirmationData } from './templates/shop-order-confirmation.template';
 
@@ -334,6 +341,192 @@ export class MailService {
       this.logger.error(`Error queuing contact form email:`, errorMessage);
       throw new InternalServerErrorException(
         'Unable to process contact request at the moment',
+      );
+    }
+  }
+
+  async sendBeauticianKycResultEmail(
+    email: string,
+    firstName: string,
+    outcome: 'VERIFIED' | 'REJECTED' | 'NEEDS_REVIEW',
+    reason?: string,
+  ) {
+    try {
+      const subject =
+        outcome === 'VERIFIED'
+          ? 'KYC Verified — HairLux Beautician'
+          : outcome === 'REJECTED'
+            ? 'KYC Not Approved — HairLux Beautician'
+            : 'KYC Under Review — HairLux Beautician';
+
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject,
+          html: beauticianKycResultTemplate(firstName, outcome, reason),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing beautician KYC email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async sendBeauticianJobOfferEmail(
+    email: string,
+    firstName: string,
+    bookingId: string,
+    estEarnings: number,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'New Home Service Job — HairLux',
+          html: beauticianJobOfferTemplate(firstName, bookingId, estEarnings),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing beautician job offer email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async sendBeauticianProfileReviewEmail(
+    email: string,
+    firstName: string,
+    outcome: 'APPROVED' | 'REJECTED' | 'SUBMITTED',
+    notes?: string,
+  ) {
+    try {
+      const subject =
+        outcome === 'APPROVED'
+          ? 'Profile Approved — HairLux Beautician'
+          : outcome === 'REJECTED'
+            ? 'Profile Not Approved — HairLux Beautician'
+            : 'Profile Submitted — HairLux Beautician';
+
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject,
+          html: beauticianProfileReviewTemplate(firstName, outcome, notes),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing beautician profile review email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async sendArrivalVerificationNeededEmail(
+    email: string,
+    firstName: string,
+    bookingId: string,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Verify Your Beautician — HairLux',
+          html: arrivalVerificationNeededTemplate(firstName, bookingId),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing arrival verification email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async sendArrivalVerifiedEmail(
+    email: string,
+    firstName: string,
+    bookingId: string,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Arrival Verified — HairLux',
+          html: arrivalVerifiedTemplate(firstName, bookingId),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing arrival verified email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async sendServiceAwaitingConfirmationEmail(
+    email: string,
+    firstName: string,
+    bookingId: string,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Confirm Your Service — HairLux',
+          html: serviceAwaitingConfirmationTemplate(firstName, bookingId),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing service confirmation email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async sendServiceCompletedEmail(
+    email: string,
+    firstName: string,
+    bookingId: string,
+    rating: number,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: 'Service Completed — HairLux',
+          html: serviceCompletedTemplate(firstName, bookingId, rating),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing service completed email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   }

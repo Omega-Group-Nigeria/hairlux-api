@@ -24,6 +24,8 @@ import { StaffModule } from './staff/staff.module';
 import { WaitlistModule } from './waitlist/waitlist.module';
 import { ShopModule } from './shop/shop.module';
 import { BranchModule } from './branch/branch.module';
+import { CommonModule } from './common/common.module';
+import { BeauticianModule } from './beautician/beautician.module';
 
 @Module({
   imports: [
@@ -83,6 +85,8 @@ import { BranchModule } from './branch/branch.module';
     WaitlistModule,
     ShopModule,
     BranchModule,
+    CommonModule,
+    BeauticianModule,
   ],
   controllers: [AppController],
   providers: [

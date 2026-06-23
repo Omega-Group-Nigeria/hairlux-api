@@ -1,4 +1,6 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { AdminHomeServiceAnalyticsService } from '../beautician/admin/services/admin-home-service-analytics.service';
+import { PerformanceQueryDto } from '../beautician/dto/performance-query.dto';
 import {
   ApiTags,
   ApiOperation,
@@ -19,7 +21,10 @@ import { GetBookingTrendsDto } from './dto/get-booking-trends.dto';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AnalyticsController {
-  constructor(private readonly analyticsService: AnalyticsService) {}
+  constructor(
+    private readonly analyticsService: AnalyticsService,
+    private readonly homeServiceAnalytics: AdminHomeServiceAnalyticsService,
+  ) {}
 
   @Get('dashboard')
   @ApiOperation({
@@ -203,5 +208,19 @@ export class AnalyticsController {
   })
   async getBookingTrends(@Query() dto: GetBookingTrendsDto) {
     return this.analyticsService.getBookingTrends(dto);
+  }
+
+  @Get('home-service')
+  @ApiOperation({
+    summary: 'Home service operations KPIs',
+    description: 'Fill rate, assignment time, and offer acceptance metrics.',
+  })
+  async getHomeServiceKpis(@Query() query: PerformanceQueryDto) {
+    const data = await this.homeServiceAnalytics.getKpis(query.periodDays);
+    return {
+      success: true,
+      message: 'Home service analytics retrieved successfully',
+      data,
+    };
   }
 }

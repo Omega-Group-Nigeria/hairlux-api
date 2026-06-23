@@ -14,6 +14,9 @@ import { BookingPaymentService } from './services/booking-payment.service';
 import { WalletModule } from '../wallet/wallet.module';
 import { BranchModule } from '../branch/branch.module';
 import { BookingLinePricingService } from './services/booking-line-pricing.service';
+import { BeauticianModule } from '../beautician/beautician.module';
+import { HomeServiceLifecycleModule } from '../beautician/home-service-booking/home-service-lifecycle.module';
+import { TrackingModule } from '../beautician/tracking/tracking.module';
 
 @Module({
   imports: [
@@ -23,6 +26,9 @@ import { BookingLinePricingService } from './services/booking-line-pricing.servi
     DiscountModule,
     BranchModule,
     forwardRef(() => WalletModule),
+    forwardRef(() => BeauticianModule),
+    HomeServiceLifecycleModule,
+    TrackingModule,
   ],
   controllers: [BookingController, AdminBookingController],
   providers: [

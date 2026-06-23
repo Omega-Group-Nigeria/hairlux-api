@@ -34,6 +34,7 @@ import type { Queue } from 'bull';
 import type { Request } from 'express';
 import type { RawBodyRequest } from '@nestjs/common';
 
+
 @ApiTags('Wallet')
 @Controller('wallet')
 @UseGuards(JwtAuthGuard)
