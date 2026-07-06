@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -37,10 +38,13 @@ import { UpdateLocationDto } from './dto/update-location.dto';
 import { EarningsSummaryService } from './payout/services/earnings-summary.service';
 import { PayoutRequestService } from './payout/services/payout-request.service';
 import { BeauticianBankAccountService } from './payout/services/beautician-bank-account.service';
+import { BeauticianQueryPayoutsDto } from './payout/dto/beautician-query-payouts.dto';
 import { RequestPayoutDto } from './payout/dto/request-payout.dto';
 import { SetupBankAccountDto } from './payout/dto/setup-bank-account.dto';
+import { ResolveBankAccountDto } from './payout/dto/resolve-bank-account.dto';
 import { BeauticianWithdrawalGuard } from './guards/beautician-withdrawal.guard';
 import { FcmTokenService } from './fcm/fcm-token.service';
+import { StreamDeviceSyncService } from '../comms/services/stream-device-sync.service';
 import { RegisterFcmTokenDto } from './dto/register-fcm-token.dto';
 
 const imageInterceptor = (field: string) =>
@@ -72,6 +76,7 @@ export class BeauticianController {
     private readonly payoutRequestService: PayoutRequestService,
     private readonly bankAccountService: BeauticianBankAccountService,
     private readonly fcmTokenService: FcmTokenService,
+    private readonly streamDeviceSync: StreamDeviceSyncService,
   ) {}
 
   @Get('me')
@@ -190,6 +195,36 @@ export class BeauticianController {
     };
   }
 
+  @Get('payout/banks')
+  @ApiOperation({
+    summary: 'List NIP banks for payout setup',
+    description: 'Fetches active Nigerian banks from Paystack (NGN / NUBAN).',
+  })
+  async listPayoutBanks() {
+    const data = await this.bankAccountService.listBanks();
+    return {
+      success: true,
+      message: 'Banks retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('payout/banks/resolve')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Resolve NUBAN account name',
+    description:
+      'Looks up account holder name via Paystack before saving payout details.',
+  })
+  async resolvePayoutBankAccount(@Query() query: ResolveBankAccountDto) {
+    const data = await this.bankAccountService.resolveBankAccount(query);
+    return {
+      success: true,
+      message: 'Bank account resolved successfully',
+      data,
+    };
+  }
+
   @Post('payout/bank-account')
   @UseGuards(BeauticianWithdrawalGuard)
   @HttpCode(HttpStatus.OK)
@@ -217,6 +252,20 @@ export class BeauticianController {
     return {
       success: true,
       message: 'Payout bank account retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('payouts')
+  @ApiOperation({ summary: 'List my withdrawal requests' })
+  async listMyPayouts(
+    @GetUser('id') userId: string,
+    @Query() query: BeauticianQueryPayoutsDto,
+  ) {
+    const data = await this.payoutRequestService.listMyPayouts(userId, query);
+    return {
+      success: true,
+      message: 'Payout requests retrieved successfully',
       data,
     };
   }
@@ -252,6 +301,9 @@ export class BeauticianController {
       dto.token,
       dto.platform,
     );
+
+    void this.streamDeviceSync.syncUserDevices(userId);
+
     return {
       success: true,
       message: 'FCM token registered successfully',

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BookingStatus, Prisma } from '@prisma/client';
+import { BookingStatus, Prisma, ReviewStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 @Injectable()
@@ -10,7 +10,6 @@ export class BeauticianStatsService {
     tx: Prisma.TransactionClient,
     beauticianUserId: string,
     earningsAmount: number,
-    customerRating?: number | null,
   ): Promise<void> {
     const profile = await tx.beauticianProfile.findUnique({
       where: { userId: beauticianUserId },
@@ -24,7 +23,6 @@ export class BeauticianStatsService {
     const ratingAverage = await this.calculateRatingAverage(
       tx,
       beauticianUserId,
-      customerRating,
     );
 
     await tx.beauticianProfile.update({
@@ -37,33 +35,50 @@ export class BeauticianStatsService {
     });
   }
 
+  async syncRatingAverage(
+    tx: Prisma.TransactionClient,
+    beauticianUserId: string,
+  ): Promise<void> {
+    const profile = await tx.beauticianProfile.findUnique({
+      where: { userId: beauticianUserId },
+      select: { id: true },
+    });
+
+    if (!profile) {
+      return;
+    }
+
+    const ratingAverage = await this.calculateRatingAverage(
+      tx,
+      beauticianUserId,
+    );
+
+    await tx.beauticianProfile.update({
+      where: { userId: beauticianUserId },
+      data: { ratingAverage },
+    });
+  }
+
   private async calculateRatingAverage(
     tx: Prisma.TransactionClient,
     beauticianUserId: string,
-    latestRating?: number | null,
   ): Promise<number> {
-    const ratings = await tx.booking.findMany({
+    const reviews = await tx.review.findMany({
       where: {
-        assignedBeauticianUserId: beauticianUserId,
-        status: BookingStatus.COMPLETED,
-        customerRating: { not: null },
+        status: ReviewStatus.APPROVED,
+        booking: {
+          assignedBeauticianUserId: beauticianUserId,
+          status: BookingStatus.COMPLETED,
+        },
       },
-      select: { customerRating: true },
+      select: { rating: true },
     });
 
-    const values = ratings
-      .map((booking) => booking.customerRating)
-      .filter((rating): rating is number => rating != null);
-
-    if (latestRating != null && !values.length) {
-      return latestRating;
-    }
-
-    if (!values.length) {
+    if (!reviews.length) {
       return 0;
     }
 
-    const sum = values.reduce((total, rating) => total + rating, 0);
-    return Math.round((sum / values.length) * 100) / 100;
+    const sum = reviews.reduce((total, review) => total + review.rating, 0);
+    return Math.round((sum / reviews.length) * 100) / 100;
   }
 }

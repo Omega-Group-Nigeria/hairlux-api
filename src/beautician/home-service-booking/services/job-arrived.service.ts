@@ -9,7 +9,7 @@ import { ArrivalPinService } from '../../arrival-verification/services/arrival-p
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 
 @Injectable()
 export class JobArrivedService {
@@ -21,7 +21,7 @@ export class JobArrivedService {
     private readonly settingsService: HomeServiceSettingsService,
     private readonly geocodingService: GeocodingService,
     private readonly notificationService: BeauticianNotificationService,
-    private readonly realtimePublisher: RealtimePublisherService,
+    private readonly commsRealtime: CommsRealtimeService,
   ) {}
 
   async markArrived(
@@ -101,7 +101,10 @@ export class JobArrivedService {
       bookingId,
     );
 
-    this.realtimePublisher.emitBookingStatus(bookingId, BookingStatus.ARRIVED);
+    await this.commsRealtime.emitBookingStatus(
+      bookingId,
+      BookingStatus.ARRIVED,
+    );
 
     return {
       booking: formatBookingResponse(updated),

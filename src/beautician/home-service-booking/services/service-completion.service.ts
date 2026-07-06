@@ -11,7 +11,7 @@ import {
   FINALIZE_BOOKING_DELAY_MS,
   HOME_SERVICE_LIFECYCLE_QUEUE,
 } from '../home-service-lifecycle.constants';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 
 @Injectable()
 export class ServiceCompletionService {
@@ -20,7 +20,7 @@ export class ServiceCompletionService {
     private readonly participantService: BookingParticipantService,
     private readonly statusService: HomeServiceStatusService,
     private readonly notificationService: BeauticianNotificationService,
-    private readonly realtimePublisher: RealtimePublisherService,
+    private readonly commsRealtime: CommsRealtimeService,
     @InjectQueue(HOME_SERVICE_LIFECYCLE_QUEUE)
     private readonly lifecycleQueue: Queue,
   ) {}
@@ -86,7 +86,7 @@ export class ServiceCompletionService {
       bookingId,
     );
 
-    this.realtimePublisher.emitBookingStatus(
+    await this.commsRealtime.emitBookingStatus(
       bookingId,
       BookingStatus.AWAITING_CUSTOMER_CONFIRM,
     );

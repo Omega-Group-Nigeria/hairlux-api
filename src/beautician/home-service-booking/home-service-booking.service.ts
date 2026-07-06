@@ -4,6 +4,12 @@ import type { Queue } from 'bull';
 import { BookingStatus, BookingType } from '@prisma/client';
 import { BookingServiceRecord } from '../../booking/utils/booking.utils';
 import { bookingNeedsBeauticianAssignment } from '../matching/utils/booking-assignment.utils';
+import {
+  MATCHING_SEARCHING_MESSAGE,
+  resolveAssignmentStatusMessage,
+  resolveExhaustedMessage,
+} from '../matching/utils/matching-radius.util';
+import { MatchingExhaustedReason } from '@prisma/client';
 
 export const HOME_SERVICE_MATCHING_QUEUE = 'home-service-matching';
 
@@ -29,7 +35,7 @@ export class HomeServiceBookingService {
     try {
       await this.matchingQueue.add(
         'create-offers',
-        { bookingId },
+        { bookingId, matchingAttempt: 1 },
         {
           attempts: 3,
           backoff: { type: 'exponential', delay: 2000 },
@@ -46,9 +52,27 @@ export class HomeServiceBookingService {
     }
   }
 
-  getPaymentConfirmationMessage(status: BookingStatus): string {
-    return status === BookingStatus.PENDING_ASSIGNMENT
-      ? 'Payment successful. We are finding a beautician for your home service.'
-      : 'Payment successful. Booking confirmed.';
+  getPaymentConfirmationMessage(
+    status: BookingStatus,
+    matchingExhaustedAt?: Date | string | null,
+    matchingExhaustedReason?: MatchingExhaustedReason | null,
+  ): string {
+    if (status === BookingStatus.PENDING_ASSIGNMENT) {
+      if (matchingExhaustedAt) {
+        return `Payment successful. ${resolveExhaustedMessage(matchingExhaustedReason)}`;
+      }
+
+      return `Payment successful. ${MATCHING_SEARCHING_MESSAGE}`;
+    }
+
+    return 'Payment successful. Booking confirmed.';
+  }
+
+  getAssignmentStatusMessage(booking: {
+    status: BookingStatus;
+    matchingExhaustedAt?: Date | string | null;
+    matchingExhaustedReason?: MatchingExhaustedReason | null;
+  }): string | null {
+    return resolveAssignmentStatusMessage(booking);
   }
 }

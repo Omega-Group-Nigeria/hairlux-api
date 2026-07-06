@@ -13,6 +13,18 @@ describe('accountNameMatchesProfile', () => {
     ).toBe(true);
   });
 
+  it('accepts reversed first and last name order', () => {
+    expect(
+      accountNameMatchesProfile('Zecarias Ezana', 'Ezana', 'ZECARIAS'),
+    ).toBe(true);
+  });
+
+  it('accepts reversed order with different casing', () => {
+    expect(
+      accountNameMatchesProfile('ZECARIAS EZANA', 'Ezana', 'Zecarias'),
+    ).toBe(true);
+  });
+
   it('rejects unrelated account names', () => {
     expect(
       accountNameMatchesProfile('JOHN DOE SMITH', 'Ada', 'Okafor'),

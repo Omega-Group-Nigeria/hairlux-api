@@ -21,6 +21,21 @@ enum UserStatus {
   INACTIVE
 }
 
+enum MatchingExhaustedReason {
+  NO_BEAUTICIANS_ONLINE
+  NO_CANDIDATES_IN_AREA
+  OFFERS_NOT_ACCEPTED
+  COVERAGE_GAP
+}
+
+enum DispatchStatus {
+  PENDING_MATCH
+  OFFERING
+  MATCH_EXHAUSTED
+  ASSIGNED
+  CANCELLED
+}
+
 enum BookingStatus {
   PENDING
   PENDING_ASSIGNMENT
@@ -74,6 +89,7 @@ enum ProfileReviewStatus {
 enum AvailabilityStatus {
   OFFLINE
   ONLINE
+  OFFERED
   ON_JOB
 }
 
@@ -83,6 +99,7 @@ enum JobOfferStatus {
   DECLINED
   EXPIRED
   TIMED_OUT
+  CANCELLED
 }
 
 enum PayoutMode {
@@ -96,6 +113,24 @@ enum PayoutRequestStatus {
   COMPLETED
   REJECTED
   CANCELLED
+}
+
+enum BookingCommsSessionStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum BookingCommsCloseReason {
+  CUSTOMER_CONFIRMED
+  AUTO_FINALIZED
+  CANCELLED
+  REASSIGNED
+}
+
+enum BookingCommsEventType {
+  CHAT_MESSAGE
+  CALL_STARTED
+  CALL_ENDED
 }
 
 enum FcmPlatform {
@@ -418,6 +453,11 @@ model Booking {
   beauticianArrivalLng     Decimal?  @db.Decimal(10, 7) @map("beautician_arrival_lng")
   customerRating           Int?      @map("customer_rating")
   customerReview           String?   @map("customer_review")
+  matchingAttempt          Int                     @default(1) @map("matching_attempt")
+  matchingStartedAt        DateTime?               @map("matching_started_at")
+  matchingExhaustedAt      DateTime?               @map("matching_exhausted_at")
+  matchingExhaustedReason  MatchingExhaustedReason? @map("matching_exhausted_reason")
+  dispatchStatus           DispatchStatus?         @map("dispatch_status")
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
 
@@ -429,7 +469,9 @@ model Booking {
   review  Review?
   discountUsage DiscountUsage?
   jobOffers JobOffer[]
+  dispatchEvents DispatchEvent[]
   locationHistory BeauticianLocationHistory[]
+  commsSession BookingCommsSession?
 
   @@index([reservationCode])
   @@index([userId])
@@ -865,13 +907,10 @@ model BeauticianProfile {
   specialties           String[]             @default([])
   yearsOfExperience     Int?                 @map("years_of_experience")
   certifications        String[]             @default([])
-  baseAddress           String?              @map("base_address")
-  baseLat               Decimal?             @db.Decimal(10, 7) @map("base_lat")
-  baseLng               Decimal?             @db.Decimal(10, 7) @map("base_lng")
-  serviceRadiusKm       Decimal              @default(20) @db.Decimal(5, 2) @map("service_radius_km")
   currentLat            Decimal?             @db.Decimal(10, 7) @map("current_lat")
   currentLng            Decimal?             @db.Decimal(10, 7) @map("current_lng")
   lastLocationUpdate    DateTime?            @map("last_location_update")
+  maxTravelRadiusKm     Decimal?             @db.Decimal(6, 2) @map("max_travel_radius_km")
   availabilityStatus    AvailabilityStatus   @default(OFFLINE) @map("availability_status")
   kycStatus             KycStatus            @default(PENDING) @map("kyc_status")
   kycVerifiedAt         DateTime?            @map("kyc_verified_at")
@@ -892,6 +931,7 @@ model BeauticianProfile {
   paystackRecipientCode  String?              @map("paystack_recipient_code")
   payoutBankVerifiedAt   DateTime?            @map("payout_bank_verified_at")
   isActive              Boolean              @default(true) @map("is_active")
+  dispatchSuspended     Boolean              @default(false) @map("dispatch_suspended")
   createdAt             DateTime             @default(now()) @map("created_at")
   updatedAt             DateTime             @updatedAt @map("updated_at")
 
@@ -903,6 +943,7 @@ model BeauticianProfile {
   @@index([profileStatus])
   @@index([availabilityStatus])
   @@index([isActive])
+  @@index([dispatchSuspended])
   @@map("beautician_profiles")
 }
 
@@ -933,6 +974,9 @@ model JobOffer {
   expiresAt          DateTime       @map("expires_at")
   distanceKmAtOffer  Decimal?       @db.Decimal(8, 2) @map("distance_km_at_offer")
   estEarningsAtOffer Decimal?       @db.Decimal(10, 2) @map("est_earnings_at_offer")
+  tier               Int?           @db.SmallInt
+  scoreSnapshot      Json?          @map("score_snapshot")
+  declineReason      String?        @map("decline_reason")
 
   booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   beautician User    @relation(fields: [beauticianUserId], references: [id], onDelete: Cascade)
@@ -944,11 +988,78 @@ model JobOffer {
   @@map("job_offers")
 }
 
+model BookingCommsSession {
+  id               String                    @id @default(uuid())
+  bookingId        String                    @unique @map("booking_id")
+  streamChannelId  String                    @map("stream_channel_id")
+  streamCallCid    String?                   @map("stream_call_cid")
+  customerUserId   String                    @map("customer_user_id")
+  beauticianUserId String                    @map("beautician_user_id")
+  status           BookingCommsSessionStatus
+  openedAt         DateTime                  @map("opened_at")
+  closedAt         DateTime?                 @map("closed_at")
+  closeReason      BookingCommsCloseReason?  @map("close_reason")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+
+  booking Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  events  BookingCommsEvent[]
+
+  @@index([customerUserId])
+  @@index([beauticianUserId])
+  @@index([status])
+  @@index([openedAt])
+  @@index([closedAt])
+  @@map("booking_comms_sessions")
+}
+
+model BookingCommsEvent {
+  id             String               @id @default(uuid())
+  sessionId      String               @map("session_id")
+  eventType      BookingCommsEventType @map("event_type")
+  actorUserId    String?              @map("actor_user_id")
+  streamEventId  String               @unique @map("stream_event_id")
+  payload        Json?
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  session BookingCommsSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("booking_comms_events")
+}
+
+model DispatchEvent {
+  id              String   @id @default(uuid())
+  bookingId       String   @map("booking_id")
+  eventType       String   @map("event_type")
+  payload         Json?
+  idempotencyKey  String?  @map("idempotency_key")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+  @@map("dispatch_events")
+}
+
+model DispatchConfig {
+  id        String   @id @default(uuid())
+  region    String   @default("default")
+  key       String
+  value     String
+  valueType String   @default("string") @map("value_type")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([region, key])
+  @@map("dispatch_config")
+}
+
 model HomeServiceSettings {
   id                              String     @id @default(uuid())
   commissionRate                    Decimal    @default(0.70) @db.Decimal(5, 4) @map("commission_rate")
   jobOfferTimeoutMinutes          Int        @default(4) @map("job_offer_timeout_minutes")
-  defaultMatchingRadiusKm         Decimal    @default(20) @db.Decimal(5, 2) @map("default_matching_radius_km")
   kycAutoApprove                  Boolean    @default(true) @map("kyc_auto_approve")
   arrivalVerificationExpiryMinutes Int       @default(15) @map("arrival_verification_expiry_minutes")
   serviceCompletionBufferMinutes  Int        @default(60) @map("service_completion_buffer_minutes")
@@ -976,6 +1087,7 @@ model PayoutRequest {
   rejectionReason String?             @map("rejection_reason")
   transactionId   String?             @unique @map("transaction_id")
   paystackTransferReference String?     @unique @map("paystack_transfer_reference")
+  paystackTransferCode      String?     @map("paystack_transfer_code")
   createdAt       DateTime            @default(now()) @map("created_at")
   updatedAt       DateTime            @updatedAt @map("updated_at")
 

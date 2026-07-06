@@ -4,7 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { formatBookingResponse } from '../../../booking/utils/booking.utils';
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 
 @Injectable()
 export class JobEnRouteService {
@@ -12,7 +12,7 @@ export class JobEnRouteService {
     private readonly prisma: PrismaService,
     private readonly participantService: BookingParticipantService,
     private readonly statusService: HomeServiceStatusService,
-    private readonly realtimePublisher: RealtimePublisherService,
+    private readonly commsRealtime: CommsRealtimeService,
   ) {}
 
   async markEnRoute(bookingId: string, beauticianUserId: string) {
@@ -34,7 +34,10 @@ export class JobEnRouteService {
       data: { status: BookingStatus.EN_ROUTE },
     });
 
-    this.realtimePublisher.emitBookingStatus(bookingId, BookingStatus.EN_ROUTE);
+    await this.commsRealtime.emitBookingStatus(
+      bookingId,
+      BookingStatus.EN_ROUTE,
+    );
 
     return { booking: formatBookingResponse(updated) };
   }

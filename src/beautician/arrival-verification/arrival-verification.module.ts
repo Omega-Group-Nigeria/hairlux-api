@@ -10,6 +10,7 @@ import { ArrivalQrTokenService } from './services/arrival-qr-token.service';
 import { ArrivalVerificationReadService } from './services/arrival-verification-read.service';
 import { VerifyArrivalService } from './services/verify-arrival.service';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { CommsModule } from '../../comms/comms.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     BeauticianNotificationModule,
     HomeServiceSharedModule,
     RealtimeModule,
+    CommsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

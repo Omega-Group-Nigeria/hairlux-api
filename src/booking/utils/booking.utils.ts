@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { BookingType, Prisma } from '@prisma/client';
+import {
+  canRetryMatching,
+  resolveAssignmentStatusMessage,
+} from '../../beautician/matching/utils/matching-radius.util';
 import { ServiceBookingItemDto } from '../dto/create-booking.dto';
 
 export interface BookingServiceRecord {
@@ -238,12 +242,46 @@ export function formatBookingResponse(
     ? { ...formatted, branch: formatBookingBranch(branch) }
     : formatted;
 
+  const assignmentMessage = resolveAssignmentStatusMessage({
+    status: String(rest.status ?? ''),
+    matchingAttempt: rest.matchingAttempt as number | null | undefined,
+    matchingExhaustedAt: rest.matchingExhaustedAt as
+      | Date
+      | string
+      | null
+      | undefined,
+    matchingExhaustedReason: rest.matchingExhaustedReason as
+      | import('@prisma/client').MatchingExhaustedReason
+      | null
+      | undefined,
+  });
+  const retryMatchingAvailable = canRetryMatching({
+    status: String(rest.status ?? ''),
+    matchingExhaustedAt: rest.matchingExhaustedAt as
+      | Date
+      | string
+      | null
+      | undefined,
+  });
+
+  const withAssignmentMessage = {
+    ...withBranch,
+    ...(rest.matchingAttempt != null
+      ? { matchingTier: rest.matchingAttempt as number }
+      : {}),
+    ...(rest.dispatchStatus != null
+      ? { dispatchStatus: rest.dispatchStatus }
+      : {}),
+    ...(assignmentMessage ? { assignmentMessage } : {}),
+    ...(retryMatchingAvailable ? { canRetryMatching: true } : {}),
+  };
+
   if (!hasAssignedBeautician) {
-    return withBranch;
+    return withAssignmentMessage;
   }
 
   return {
-    ...withBranch,
+    ...withAssignmentMessage,
     assignedBeautician: formatAssignedBeauticianSummary(assignedBeautician),
   };
 }

@@ -1,16 +1,33 @@
 import { Injectable } from '@nestjs/common';
-import { BookingStatus } from '@prisma/client';
+import {
+  BookingCommsCloseReason,
+  BookingCommsSessionStatus,
+  BookingStatus,
+  BookingType,
+} from '@prisma/client';
 import {
   formatBookingResponse,
   normalizeBookingServices,
 } from '../../../booking/utils/booking.utils';
 import { maskAddress } from '../../matching/utils/booking-assignment.utils';
+import { CommsPresenterService } from '../../../comms/services/comms-presenter.service';
 
 @Injectable()
 export class JobPresentationService {
+  constructor(private readonly commsPresenter: CommsPresenterService) {}
+
   bookingInclude() {
     return {
       address: true,
+      commsSession: true,
+      assignedBeautician: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+        },
+      },
       user: {
         select: {
           id: true,
@@ -22,26 +39,43 @@ export class JobPresentationService {
     } as const;
   }
 
-  buildAcceptedResponse(booking: {
-    id: string;
-    services: unknown;
-    totalAmount: unknown;
-    bookingDate: Date;
-    bookingTime: string;
-    status: BookingStatus;
-    address: {
-      fullAddress: string;
-      latitude: unknown;
-      longitude: unknown;
-      city: string | null;
-      state: string | null;
-    } | null;
-    user: {
-      firstName: string;
-      lastName: string;
-      phone: string | null;
-    };
-  }) {
+  buildAcceptedResponse(
+    booking: {
+      id: string;
+      bookingType: BookingType;
+      services: unknown;
+      totalAmount: unknown;
+      bookingDate: Date;
+      bookingTime: string;
+      status: BookingStatus;
+      commsSession?: {
+        streamChannelId: string;
+        streamCallCid: string | null;
+        status: BookingCommsSessionStatus;
+        closeReason: BookingCommsCloseReason | null;
+      } | null;
+      assignedBeautician?: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        phone: string | null;
+      } | null;
+      address: {
+        fullAddress: string;
+        latitude: unknown;
+        longitude: unknown;
+        city: string | null;
+        state: string | null;
+      } | null;
+      user: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        phone: string | null;
+      };
+    },
+    meta?: { payoutAmount: number; commissionRate: number },
+  ) {
     const services = normalizeBookingServices(booking.services);
     const formatted = formatBookingResponse(booking);
 
@@ -68,6 +102,8 @@ export class JobPresentationService {
     return {
       booking: formatted,
       services,
+      payoutAmount: meta?.payoutAmount ?? null,
+      commissionRate: meta?.commissionRate ?? null,
       customer: {
         firstName: booking.user.firstName,
         lastName: booking.user.lastName,
@@ -77,6 +113,69 @@ export class JobPresentationService {
       navigationDeepLink: navigationQuery
         ? `https://maps.google.com/?q=${navigationQuery}`
         : null,
+      comms: this.commsPresenter.embedForBooking({
+        id: booking.id,
+        bookingType: booking.bookingType,
+        status: booking.status,
+        commsSession: booking.commsSession ?? null,
+        user: booking.user,
+        assignedBeautician: booking.assignedBeautician ?? null,
+      }),
+    };
+  }
+
+  buildHistoryResponse(
+    booking: {
+      id: string;
+      services: unknown;
+      totalAmount: unknown;
+      bookingDate: Date;
+      bookingTime: string;
+      status: BookingStatus;
+      reservationCode: string | null;
+      cancelReason: string | null;
+      customerRating: number | null;
+      customerReview: string | null;
+      serviceCompletedAt: Date | null;
+      updatedAt: Date;
+      address: {
+        fullAddress: string;
+        city: string | null;
+        state: string | null;
+      } | null;
+      user: {
+        firstName: string;
+        lastName: string;
+      };
+    },
+    meta: { earningsAmount: number | null },
+  ) {
+    const services = normalizeBookingServices(booking.services);
+    const formatted = formatBookingResponse(booking);
+
+    return {
+      booking: formatted,
+      services,
+      customer: {
+        firstName: booking.user.firstName,
+        lastName: booking.user.lastName,
+      },
+      customerAddress: booking.address
+        ? {
+            fullAddress: booking.address.fullAddress,
+            city: booking.address.city,
+            state: booking.address.state,
+          }
+        : null,
+      customerRating: booking.customerRating,
+      customerReview: booking.customerReview,
+      cancelReason: booking.cancelReason,
+      serviceCompletedAt: booking.serviceCompletedAt,
+      completedAt:
+        booking.status === BookingStatus.COMPLETED
+          ? booking.serviceCompletedAt ?? booking.updatedAt
+          : null,
+      earningsAmount: meta.earningsAmount,
     };
   }
 

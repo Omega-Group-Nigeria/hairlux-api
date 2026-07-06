@@ -29,11 +29,15 @@ import { JobAssignmentModule } from './job-assignment/job-assignment.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { PayoutModule } from './payout/payout.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { CommsModule } from '../comms/comms.module';
+import { WalletModule } from '../wallet/wallet.module';
+import { BeauticianMeCacheService } from './services/beautician-me-cache.service';
 
 @Module({
   imports: [
     PrismaModule,
     RedisModule,
+    WalletModule,
     CloudinaryModule,
     FcmModule,
     BeauticianNotificationModule,
@@ -45,6 +49,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     TrackingModule,
     PayoutModule,
     RealtimeModule,
+    CommsModule,
   ],
   controllers: [
     BeauticianController,
@@ -52,6 +57,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     AdminHomeServiceSettingsController,
   ],
   providers: [
+    BeauticianMeCacheService,
     BeauticianReadService,
     BeauticianProfileService,
     BeauticianAdminService,
@@ -68,6 +74,7 @@ import { RealtimeModule } from './realtime/realtime.module';
     FullyVerifiedGuard,
   ],
   exports: [
+    BeauticianMeCacheService,
     BeauticianReadService,
     BeauticianProfileService,
     HomeServiceSettingsService,

@@ -23,6 +23,7 @@ import { CustomerCompletionService } from '../beautician/home-service-booking/se
 import { ServiceCompletionService } from '../beautician/home-service-booking/services/service-completion.service';
 import { LiveTrackingService } from '../beautician/tracking/live-tracking.service';
 import { UserRole } from '@prisma/client';
+import { BookingMatchingService } from './services/booking-matching.service';
 
 @Injectable()
 export class BookingService {
@@ -37,6 +38,7 @@ export class BookingService {
     private readonly customerCompletionService: CustomerCompletionService,
     private readonly serviceCompletionService: ServiceCompletionService,
     private readonly liveTrackingService: LiveTrackingService,
+    private readonly bookingMatchingService: BookingMatchingService,
   ) {}
 
   async checkAvailability(queryDto: CheckAvailabilityDto) {
@@ -207,5 +209,28 @@ export class BookingService {
     role: UserRole,
   ) {
     return this.liveTrackingService.getLiveTracking(bookingId, userId, role);
+  }
+
+  async retryMatchingForUser(userId: string, bookingId: string) {
+    return this.bookingMatchingService.retryMatchingForUser(userId, bookingId);
+  }
+
+  async retryMatchingAdmin(bookingId: string, startAtTier = 1) {
+    return this.bookingMatchingService.retryMatchingAdmin(
+      bookingId,
+      startAtTier,
+    );
+  }
+
+  async forceAssignAdmin(
+    bookingId: string,
+    beauticianUserId: string,
+    adminUserId: string,
+  ) {
+    return this.bookingMatchingService.forceAssignAdmin(
+      bookingId,
+      beauticianUserId,
+      adminUserId,
+    );
   }
 }

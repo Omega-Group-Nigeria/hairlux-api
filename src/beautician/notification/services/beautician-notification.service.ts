@@ -118,11 +118,6 @@ export class BeauticianNotificationService {
     user: BeauticianUserContact,
     bookingId: string,
   ) {
-    await this.mailService.sendArrivalVerifiedEmail(
-      user.email,
-      user.firstName,
-      bookingId,
-    );
     await this.push(
       user,
       'Arrival confirmed',
@@ -135,11 +130,6 @@ export class BeauticianNotificationService {
     user: BeauticianUserContact,
     bookingId: string,
   ) {
-    await this.mailService.sendServiceAwaitingConfirmationEmail(
-      user.email,
-      user.firstName,
-      bookingId,
-    );
     await this.push(
       user,
       'Service complete',

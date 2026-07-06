@@ -4,10 +4,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
 @Injectable()
 export class BeauticianServiceAssignmentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly meCache: BeauticianMeCacheService,
+  ) {}
 
   async assignServices(
     profileId: string,
@@ -51,6 +55,8 @@ export class BeauticianServiceAssignmentService {
         });
       }
     });
+
+    await this.meCache.invalidate(profile.userId);
 
     return this.getAssignedServices(profileId);
   }

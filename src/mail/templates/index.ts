@@ -13,8 +13,6 @@ export { beauticianProfileReviewTemplate } from './beautician-profile-review.tem
 export { beauticianJobOfferTemplate } from './beautician-job-offer.template';
 export {
   arrivalVerificationNeededTemplate,
-  arrivalVerifiedTemplate,
-  serviceAwaitingConfirmationTemplate,
   serviceCompletedTemplate,
 } from './beautician-home-service-lifecycle.template';
 export type { BaseEmailOptions } from './base.template';

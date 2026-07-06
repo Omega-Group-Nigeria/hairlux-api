@@ -6,19 +6,19 @@ import {
 } from '@nestjs/common';
 import { KycStatus, ProfileReviewStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GeocodingService } from '../../common/services/geocoding.service';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { UpdateBeauticianProfileDto } from '../dto/update-beautician-profile.dto';
 import { BeauticianNotificationService } from '../notification/services/beautician-notification.service';
 import { serializeBeauticianProfile } from '../utils/beautician-profile.utils';
+import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
 @Injectable()
 export class BeauticianProfileService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly geocodingService: GeocodingService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly notificationService: BeauticianNotificationService,
+    private readonly meCache: BeauticianMeCacheService,
   ) {}
 
   async updateProfile(userId: string, dto: UpdateBeauticianProfileDto) {
@@ -34,22 +34,10 @@ export class BeauticianProfileService {
       ...(dto.certifications !== undefined && {
         certifications: dto.certifications,
       }),
-      ...(dto.serviceRadiusKm !== undefined && {
-        serviceRadiusKm: dto.serviceRadiusKm,
-      }),
       ...(dto.profilePhotoUrl !== undefined && {
         profilePhotoUrl: dto.profilePhotoUrl,
       }),
     };
-
-    if (dto.baseAddress !== undefined) {
-      updateData.baseAddress = dto.baseAddress;
-      const geo = await this.geocodingService.geocodeAddress(dto.baseAddress);
-      if (geo) {
-        updateData.baseLat = geo.latitude;
-        updateData.baseLng = geo.longitude;
-      }
-    }
 
     const updated = await this.prisma.beauticianProfile.update({
       where: { userId },
@@ -67,6 +55,8 @@ export class BeauticianProfileService {
       },
     });
 
+    await this.meCache.invalidate(userId);
+
     return serializeBeauticianProfile(updated);
   }
 
@@ -83,6 +73,8 @@ export class BeauticianProfileService {
       where: { userId },
       data: { profilePhotoUrl: upload.secureUrl },
     });
+
+    await this.meCache.invalidate(userId);
 
     return {
       profilePhotoUrl: updated.profilePhotoUrl,
@@ -272,8 +264,6 @@ export class BeauticianProfileService {
     profilePhotoUrl: string | null;
     specialties: string[];
     yearsOfExperience: number | null;
-    baseAddress: string | null;
-    serviceRadiusKm: Prisma.Decimal;
   }) {
     const missing: string[] = [];
 
@@ -281,7 +271,6 @@ export class BeauticianProfileService {
     if (!profile.profilePhotoUrl) missing.push('profilePhotoUrl');
     if (!profile.specialties?.length) missing.push('specialties');
     if (profile.yearsOfExperience == null) missing.push('yearsOfExperience');
-    if (!profile.baseAddress?.trim()) missing.push('baseAddress');
 
     if (missing.length > 0) {
       throw new BadRequestException(

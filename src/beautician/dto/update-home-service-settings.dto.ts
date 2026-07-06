@@ -25,13 +25,6 @@ export class UpdateHomeServiceSettingsDto {
   @Max(60)
   jobOfferTimeoutMinutes?: number;
 
-  @ApiPropertyOptional({ example: 20 })
-  @IsOptional()
-  @IsNumber()
-  @Min(1)
-  @Max(100)
-  defaultMatchingRadiusKm?: number;
-
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   @IsBoolean()

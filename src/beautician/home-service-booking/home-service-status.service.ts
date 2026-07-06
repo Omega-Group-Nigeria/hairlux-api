@@ -25,6 +25,12 @@ export const ACTIVE_HOME_SERVICE_STATUSES: readonly BookingStatus[] = [
   BookingStatus.AWAITING_CUSTOMER_CONFIRM,
 ];
 
+export const BEAUTICIAN_JOB_HISTORY_STATUSES: readonly BookingStatus[] = [
+  ...ACTIVE_HOME_SERVICE_STATUSES,
+  BookingStatus.COMPLETED,
+  BookingStatus.CANCELLED,
+];
+
 @Injectable()
 export class HomeServiceStatusService {
   canTransition(from: BookingStatus, to: BookingStatus): boolean {

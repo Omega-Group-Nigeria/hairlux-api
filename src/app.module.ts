@@ -26,6 +26,7 @@ import { ShopModule } from './shop/shop.module';
 import { BranchModule } from './branch/branch.module';
 import { CommonModule } from './common/common.module';
 import { BeauticianModule } from './beautician/beautician.module';
+import { CommsModule } from './comms/comms.module';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { BeauticianModule } from './beautician/beautician.module';
     BranchModule,
     CommonModule,
     BeauticianModule,
+    CommsModule,
   ],
   controllers: [AppController],
   providers: [

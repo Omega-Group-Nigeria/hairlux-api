@@ -703,8 +703,124 @@ export class BookingPaymentService {
     transactionId: string,
   ) {
     await tx.$executeRaw(
-      Prisma.sql`SELECT id FROM transactions WHERE id = ${transactionId}::uuid FOR UPDATE`,
+      Prisma.sql`SELECT id FROM transactions WHERE id = ${transactionId} FOR UPDATE`,
     );
+  }
+
+  private isGatewayPaymentConfirmed(
+    metadata: Record<string, any>,
+  ): boolean {
+    return metadata.gatewayPaymentStatus === 'PAID';
+  }
+
+  private isPrismaClientError(err: unknown): boolean {
+    if (typeof err !== 'object' || err === null || !('code' in err)) {
+      return false;
+    }
+
+    const code = (err as { code?: unknown }).code;
+    return typeof code === 'string' && code.startsWith('P');
+  }
+
+  private isRetryableFulfillmentError(err: unknown): boolean {
+    if (
+      err instanceof BadRequestException ||
+      err instanceof NotFoundException ||
+      err instanceof ConflictException
+    ) {
+      return false;
+    }
+
+    return this.isPrismaClientError(err);
+  }
+
+  private async withBookingFulfillmentRetry<T>(
+    operation: () => Promise<T>,
+    maxAttempts = 3,
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (err) {
+        if (!this.isRetryableFulfillmentError(err)) {
+          throw err;
+        }
+        lastError = err;
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Booking fulfillment failed after retries');
+  }
+
+  private async confirmGatewayPaymentOnIntent(
+    paymentIntentId: string,
+    verification: { responseBody: Record<string, any> },
+    metadata: Record<string, any>,
+  ) {
+    if (this.isGatewayPaymentConfirmed(metadata)) {
+      return;
+    }
+
+    const paidAmount = Number(verification.responseBody.amountPaid);
+    await this.prisma.transaction.updateMany({
+      where: {
+        id: paymentIntentId,
+        status: TransactionStatus.PENDING,
+      },
+      data: {
+        metadata: {
+          ...metadata,
+          gatewayPaymentStatus: 'PAID',
+          gatewayAmountPaid: paidAmount,
+          gatewayVerifiedAt: new Date().toISOString(),
+          paymentStatus: verification.responseBody.paymentStatus,
+          ...verification.responseBody,
+        } as any,
+      },
+    });
+  }
+
+  private async recordFulfillmentFailure(
+    paymentIntentId: string,
+    metadata: Record<string, any>,
+    error: unknown,
+  ) {
+    const message = error instanceof Error ? error.message : String(error);
+    const attempts = Number(metadata.bookingFulfillmentAttempts ?? 0) + 1;
+
+    try {
+      await this.prisma.transaction.update({
+        where: { id: paymentIntentId },
+        data: {
+          metadata: {
+            ...metadata,
+            gatewayPaymentStatus: metadata.gatewayPaymentStatus ?? 'PAID',
+            lastBookingFulfillmentError: message,
+            lastBookingFulfillmentAttemptAt: new Date().toISOString(),
+            bookingFulfillmentAttempts: attempts,
+          } as any,
+        },
+      });
+    } catch {
+      // Non-fatal: payment confirmation must not be lost because audit write failed.
+    }
+  }
+
+  private throwPaymentReceivedBookingPending(
+    bookingPaymentReference: string,
+    message: string,
+    retryable = true,
+  ): never {
+    throw new ConflictException({
+      message,
+      paymentReceived: true,
+      bookingCreated: false,
+      bookingPaymentReference,
+      retryable,
+    });
   }
 
   private async prepareBookingPaymentContext(
@@ -942,6 +1058,7 @@ export class BookingPaymentService {
 
     if (
       status === TransactionStatus.PENDING &&
+      !this.isGatewayPaymentConfirmed(metadata) &&
       expiresAt &&
       expiresAt.getTime() <= Date.now()
     ) {
@@ -1004,37 +1121,64 @@ export class BookingPaymentService {
       );
     }
 
-    const verification = await this.monnifyService.verifyPayment(
-      String(monnifyTransactionReference),
-    );
+    let activeMetadata = { ...metadata };
+    let verification: { responseBody: Record<string, any> };
 
-    if (verification.responseBody.paymentStatus !== 'PAID') {
-      await this.prisma.transaction.update({
-        where: { id: paymentIntent.id },
-        data: {
-          status: TransactionStatus.FAILED,
-          metadata: {
-            ...metadata,
-            paymentStatus: verification.responseBody.paymentStatus,
-          } as any,
+    if (this.isGatewayPaymentConfirmed(activeMetadata)) {
+      verification = {
+        responseBody: {
+          paymentStatus: 'PAID',
+          amountPaid:
+            activeMetadata.gatewayAmountPaid ?? Number(paymentIntent.amount),
         },
-      });
-
-      throw new BadRequestException(
-        `Payment not completed. Status: ${verification.responseBody.paymentStatus}`,
+      };
+    } else {
+      verification = await this.monnifyService.verifyPayment(
+        String(monnifyTransactionReference),
       );
+
+      if (verification.responseBody.paymentStatus !== 'PAID') {
+        await this.prisma.transaction.update({
+          where: { id: paymentIntent.id },
+          data: {
+            status: TransactionStatus.FAILED,
+            metadata: {
+              ...activeMetadata,
+              paymentStatus: verification.responseBody.paymentStatus,
+            } as any,
+          },
+        });
+
+        throw new BadRequestException(
+          `Payment not completed. Status: ${verification.responseBody.paymentStatus}`,
+        );
+      }
+
+      const paidAmount = Number(verification.responseBody.amountPaid);
+      const expectedAmount = Number(paymentIntent.amount);
+      if (
+        !Number.isFinite(paidAmount) ||
+        Math.abs(paidAmount - expectedAmount) > 0.001
+      ) {
+        throw new BadRequestException('Payment amount mismatch');
+      }
+
+      await this.confirmGatewayPaymentOnIntent(
+        paymentIntent.id,
+        verification,
+        activeMetadata,
+      );
+      activeMetadata = {
+        ...activeMetadata,
+        gatewayPaymentStatus: 'PAID',
+        gatewayAmountPaid: paidAmount,
+        gatewayVerifiedAt: new Date().toISOString(),
+        paymentStatus: verification.responseBody.paymentStatus,
+        ...verification.responseBody,
+      };
     }
 
-    const paidAmount = Number(verification.responseBody.amountPaid);
-    const expectedAmount = Number(paymentIntent.amount);
-    if (
-      !Number.isFinite(paidAmount) ||
-      Math.abs(paidAmount - expectedAmount) > 0.001
-    ) {
-      throw new BadRequestException('Payment amount mismatch');
-    }
-
-    const payload = metadata.bookingPayload as
+    const payload = activeMetadata.bookingPayload as
       | BookingPaymentPayloadDto
       | undefined;
     if (!payload) {
@@ -1042,21 +1186,32 @@ export class BookingPaymentService {
     }
 
     const context = await this.prepareBookingPaymentContext(userId, payload);
-    const expectedWalletContribution = Number(metadata.walletContribution ?? 0);
+    const expectedAmount = Number(paymentIntent.amount);
+    const expectedWalletContribution = Number(
+      activeMetadata.walletContribution ?? 0,
+    );
     const expectedTotalFromParts =
       Math.round((expectedAmount + expectedWalletContribution) * 100) / 100;
     if (Math.abs(context.finalAmount - expectedTotalFromParts) > 0.001) {
-      throw new BadRequestException(
-        `Current booking amount (${context.finalAmount}) no longer matches initialized split (${expectedTotalFromParts})`,
-      );
+      throw new BadRequestException({
+        message: `Current booking amount (${context.finalAmount}) no longer matches initialized split (${expectedTotalFromParts})`,
+        paymentReceived: true,
+        bookingCreated: false,
+        retryable: false,
+        bookingPaymentReference: dto.bookingPaymentReference,
+      });
     }
 
     const wallet = await this.getOrCreateWallet(userId);
     const currentWalletBalance = Number(wallet.balance);
     if (expectedWalletContribution > currentWalletBalance) {
-      throw new BadRequestException(
-        `Wallet balance changed before verification. Needed ${expectedWalletContribution}, available ${currentWalletBalance}`,
-      );
+      throw new BadRequestException({
+        message: `Wallet balance changed before verification. Needed ${expectedWalletContribution}, available ${currentWalletBalance}`,
+        paymentReceived: true,
+        bookingCreated: false,
+        retryable: true,
+        bookingPaymentReference: dto.bookingPaymentReference,
+      });
     }
 
     const walletDebitReference = `BOOK-WAL-${dto.bookingPaymentReference}`;
@@ -1075,7 +1230,8 @@ export class BookingPaymentService {
     };
 
     try {
-      result = await this.withReservationCodeRetry(async () => {
+      result = await this.withBookingFulfillmentRetry(async () =>
+        this.withReservationCodeRetry(async () => {
         const reservationCode =
           await this.reservationService.generateReservationCode();
 
@@ -1226,7 +1382,8 @@ export class BookingPaymentService {
             influencerRewardUserId,
           };
         });
-      });
+      }),
+      );
     } catch (err) {
       if (idempotencyKey && this.isUniqueConstraintError(err, 'idempotencyKey')) {
         const existing = await this.findBookingByIdempotencyKey(
@@ -1240,6 +1397,32 @@ export class BookingPaymentService {
           );
         }
       }
+
+      if (this.isGatewayPaymentConfirmed(activeMetadata)) {
+        await this.recordFulfillmentFailure(
+          paymentIntent.id,
+          activeMetadata,
+          err,
+        );
+
+        if (err instanceof ConflictException) {
+          const response = err.getResponse();
+          if (
+            typeof response === 'string' &&
+            response === 'Booking payment already processed'
+          ) {
+            throw err;
+          }
+        }
+
+        if (!(err instanceof BadRequestException)) {
+          this.throwPaymentReceivedBookingPending(
+            dto.bookingPaymentReference,
+            'Your payment was received, but booking creation is still pending. Please retry verification shortly.',
+          );
+        }
+      }
+
       throw err;
     }
 
@@ -1378,6 +1561,12 @@ export class BookingPaymentService {
         })
       : null;
 
+    const gatewayPaymentConfirmed = this.isGatewayPaymentConfirmed(metadata);
+    const bookingPending =
+      gatewayPaymentConfirmed &&
+      paymentIntent.status === TransactionStatus.PENDING &&
+      !linkedBooking;
+
     return {
       bookingPaymentReference,
       provider: metadata.provider ?? 'monnify',
@@ -1386,6 +1575,13 @@ export class BookingPaymentService {
       gatewayReference: metadata.monnifyTransactionReference ?? null,
       paymentReference: metadata.monnifyPaymentReference ?? null,
       expiresAt: metadata.expiresAt ?? null,
+      gatewayPaymentConfirmed,
+      bookingPending,
+      canRetryVerification: bookingPending,
+      lastBookingFulfillmentError:
+        typeof metadata.lastBookingFulfillmentError === 'string'
+          ? metadata.lastBookingFulfillmentError
+          : null,
       booking: linkedBooking
         ? {
             ...linkedBooking,

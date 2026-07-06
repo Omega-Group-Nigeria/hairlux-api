@@ -1,31 +1,79 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
+import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { RedisModule } from '../../redis/redis.module';
 import { BeauticianNotificationModule } from '../notification/notification.module';
 import { HOME_SERVICE_MATCHING_QUEUE } from '../home-service-booking/home-service-booking.service';
 import { HomeServiceSettingsService } from '../services/home-service-settings.service';
 import { CandidateFinderService } from './services/candidate-finder.service';
-import { OfferFactoryService } from './services/offer-factory.service';
+import { CandidateEligibilityService } from './services/candidate-eligibility.service';
+import { CandidateMetricsService } from './services/candidate-metrics.service';
+import { CandidateScorerService } from './services/candidate-scorer.service';
+import { CandidatePoolAnalyzerService } from './services/candidate-pool-analyzer.service';
+import { MatchingExhaustionResolverService } from './services/matching-exhaustion-resolver.service';
+import { OfferExclusionService } from './services/offer-exclusion.service';
+import { OfferManagerService } from './services/offer-manager.service';
+import { MatchingConfigService } from './services/matching-config.service';
+import { DispatchConfigStoreService } from './services/dispatch-config-store.service';
+import { DispatchConfigResolverService } from './services/dispatch-config-resolver.service';
+import { DispatchConfigAdminService } from './services/dispatch-config-admin.service';
 import { MatchingOrchestratorService } from './services/matching-orchestrator.service';
+import { DispatchStateService } from './services/dispatch-state.service';
+import { DispatchTraceService } from './services/dispatch-trace.service';
+import { AdminDispatchSettingsController } from './admin-dispatch-settings.controller';
+import { PendingBookingMatcherService } from './services/pending-booking-matcher.service';
+import { BeauticianLocationIndexService } from './services/beautician-location-index.service';
+import { DispatchAdminService } from './services/dispatch-admin.service';
 import { CreateJobOffersProcessor } from './processors/create-job-offers.processor';
 import { ExpireJobOfferProcessor } from './processors/expire-job-offer.processor';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { CommsModule } from '../../comms/comms.module';
 
 @Module({
   imports: [
+    ConfigModule,
     PrismaModule,
+    RedisModule,
     BeauticianNotificationModule,
     RealtimeModule,
     BullModule.registerQueue({ name: HOME_SERVICE_MATCHING_QUEUE }),
+    CommsModule,
   ],
+  controllers: [AdminDispatchSettingsController],
   providers: [
     HomeServiceSettingsService,
+    DispatchConfigStoreService,
+    DispatchConfigResolverService,
+    DispatchConfigAdminService,
+    MatchingConfigService,
+    CandidateEligibilityService,
+    CandidateMetricsService,
+    CandidateScorerService,
+    CandidatePoolAnalyzerService,
+    MatchingExhaustionResolverService,
+    OfferExclusionService,
+    BeauticianLocationIndexService,
     CandidateFinderService,
-    OfferFactoryService,
+    OfferManagerService,
+    DispatchStateService,
+    DispatchTraceService,
     MatchingOrchestratorService,
+    PendingBookingMatcherService,
     CreateJobOffersProcessor,
     ExpireJobOfferProcessor,
+    DispatchAdminService,
   ],
-  exports: [MatchingOrchestratorService],
+  exports: [
+    MatchingOrchestratorService,
+    OfferManagerService,
+    PendingBookingMatcherService,
+    MatchingConfigService,
+    DispatchConfigAdminService,
+    DispatchStateService,
+    DispatchTraceService,
+    BeauticianLocationIndexService,
+    DispatchAdminService,
+  ],
 })
 export class MatchingModule {}

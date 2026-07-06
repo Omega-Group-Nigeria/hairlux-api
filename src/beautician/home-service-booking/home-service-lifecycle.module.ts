@@ -14,6 +14,7 @@ import { FinalizeBookingService } from './services/finalize-booking.service';
 import { FinalizeBookingProcessor } from './processors/finalize-booking.processor';
 import { PayoutModule } from '../payout/payout.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { CommsModule } from '../../comms/comms.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     PayoutModule,
     RealtimeModule,
     BullModule.registerQueue({ name: HOME_SERVICE_LIFECYCLE_QUEUE }),
+    CommsModule,
   ],
   providers: [
     JobEnRouteService,

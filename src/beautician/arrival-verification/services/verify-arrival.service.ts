@@ -12,7 +12,7 @@ import { HomeServiceStatusService } from '../../home-service-booking/home-servic
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { ArrivalPinService } from './arrival-pin.service';
 import { ArrivalQrTokenService } from './arrival-qr-token.service';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 
 @Injectable()
 export class VerifyArrivalService {
@@ -24,7 +24,7 @@ export class VerifyArrivalService {
     private readonly statusService: HomeServiceStatusService,
     private readonly settingsService: HomeServiceSettingsService,
     private readonly notificationService: BeauticianNotificationService,
-    private readonly realtimePublisher: RealtimePublisherService,
+    private readonly commsRealtime: CommsRealtimeService,
   ) {}
 
   async verify(
@@ -97,7 +97,7 @@ export class VerifyArrivalService {
       );
     }
 
-    this.realtimePublisher.emitBookingStatus(
+    await this.commsRealtime.emitBookingStatus(
       bookingId,
       BookingStatus.IN_PROGRESS,
       { serviceStartedAt: now.toISOString() },

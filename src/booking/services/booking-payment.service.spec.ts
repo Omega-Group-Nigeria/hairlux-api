@@ -1,6 +1,11 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { TransactionStatus, TransactionType } from '@prisma/client';
+import {
+  BookingStatus,
+  PaymentMethod,
+  TransactionStatus,
+  TransactionType,
+} from '@prisma/client';
 import { BookingPaymentService } from './booking-payment.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MonnifyService } from '../../payment/monnify.service';
@@ -22,16 +27,27 @@ describe('BookingPaymentService security', () => {
     },
     transaction: {
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
     },
     booking: {
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
     },
     address: {
       findFirst: jest.fn(),
     },
     user: {
       findUnique: jest.fn(),
+    },
+    discountUsage: {
+      create: jest.fn(),
+    },
+    discountCode: {
+      update: jest.fn(),
     },
     $transaction: jest.fn(),
     $executeRaw: jest.fn(),
@@ -52,6 +68,10 @@ describe('BookingPaymentService security', () => {
 
   const mockWalletDebitService = {
     debitWalletAndRecordTx: jest.fn(),
+  };
+
+  const mockReservationService = {
+    generateReservationCode: jest.fn(),
   };
 
   const basePayload = {
@@ -75,7 +95,7 @@ describe('BookingPaymentService security', () => {
         { provide: WalletDebitService, useValue: mockWalletDebitService },
         {
           provide: ReservationService,
-          useValue: { generateReservationCode: jest.fn() },
+          useValue: mockReservationService,
         },
         {
           provide: BookingLinePricingService,
@@ -162,6 +182,167 @@ describe('BookingPaymentService security', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('verifyBookingPayment', () => {
+    const paymentIntent = {
+      id: 'intent-1',
+      walletId: 'wallet-1',
+      amount: 3500,
+      status: TransactionStatus.PENDING,
+      reference: 'BOOKPAY-MONF-TEST',
+      metadata: {
+        provider: 'monnify',
+        monnifyTransactionReference: 'MNFY|TEST',
+        walletContribution: 5000,
+        bookingPayload: basePayload,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+
+    beforeEach(() => {
+      mockPrisma.transaction.findFirst.mockResolvedValue(paymentIntent);
+      mockPrisma.booking.findFirst.mockResolvedValue(null);
+      mockPrisma.wallet.upsert.mockResolvedValue({
+        id: 'wallet-1',
+        userId: 'user-1',
+        balance: 5000,
+      });
+      mockMonnifyService.verifyPayment.mockResolvedValue({
+        responseBody: {
+          paymentStatus: 'PAID',
+          amountPaid: 3500,
+        },
+      });
+      mockPrisma.transaction.updateMany.mockResolvedValue({ count: 1 });
+      mockReservationService.generateReservationCode.mockResolvedValue('HLX-TEST');
+    });
+
+    it('persists gateway payment before fulfillment and allows retry after fulfillment failure', async () => {
+      const prismaError = Object.assign(new Error('operator does not exist'), {
+        code: 'P2010',
+      });
+      const successfulFulfillment = async (
+        callback: (tx: typeof mockPrisma) => unknown,
+      ) =>
+        callback({
+            ...mockPrisma,
+            transaction: {
+              ...mockPrisma.transaction,
+              findUnique: jest.fn().mockResolvedValue(paymentIntent),
+            },
+            booking: {
+              create: jest.fn().mockResolvedValue({
+                id: 'booking-1',
+                reservationCode: 'HLX-TEST',
+                status: BookingStatus.CONFIRMED,
+                paymentMethod: PaymentMethod.MONNIFY,
+                totalAmount: 8500,
+                bookingDate: new Date('2026-06-23T14:00:00.000Z'),
+                bookingTime: '14:00',
+                bookingType: 'WALK_IN',
+                services: [],
+                address: null,
+                branch: null,
+              }),
+            },
+          } as typeof mockPrisma);
+
+      mockPrisma.$transaction
+        .mockRejectedValueOnce(prismaError)
+        .mockRejectedValueOnce(prismaError)
+        .mockRejectedValueOnce(prismaError)
+        .mockImplementation(successfulFulfillment);
+      mockPrisma.transaction.update.mockResolvedValue(paymentIntent);
+
+      await expect(
+        service.verifyBookingPayment('user-1', {
+          bookingPaymentReference: 'BOOKPAY-MONF-TEST',
+          provider: 'monnify',
+        }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(mockPrisma.transaction.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 'intent-1',
+            status: TransactionStatus.PENDING,
+          }),
+          data: expect.objectContaining({
+            metadata: expect.objectContaining({
+              gatewayPaymentStatus: 'PAID',
+            }),
+          }),
+        }),
+      );
+      expect(mockMonnifyService.verifyPayment).toHaveBeenCalledTimes(1);
+
+      mockPrisma.transaction.findFirst.mockResolvedValue({
+        ...paymentIntent,
+        metadata: {
+          ...paymentIntent.metadata,
+          gatewayPaymentStatus: 'PAID',
+          gatewayAmountPaid: 3500,
+        },
+      });
+
+      const result = await service.verifyBookingPayment('user-1', {
+        bookingPaymentReference: 'BOOKPAY-MONF-TEST',
+        provider: 'monnify',
+      });
+
+      expect(mockMonnifyService.verifyPayment).toHaveBeenCalledTimes(1);
+      expect(result.reservationCode).toBe('HLX-TEST');
+    });
+
+    it('skips gateway re-verification when payment was already confirmed', async () => {
+      mockPrisma.transaction.findFirst.mockResolvedValue({
+        ...paymentIntent,
+        metadata: {
+          ...paymentIntent.metadata,
+          gatewayPaymentStatus: 'PAID',
+          gatewayAmountPaid: 3500,
+        },
+      });
+      mockPrisma.$transaction.mockImplementation(
+        async (callback: (tx: typeof mockPrisma) => unknown) =>
+          callback({
+            ...mockPrisma,
+            transaction: {
+              ...mockPrisma.transaction,
+              findUnique: jest.fn().mockResolvedValue({
+                ...paymentIntent,
+                metadata: {
+                  ...paymentIntent.metadata,
+                  gatewayPaymentStatus: 'PAID',
+                },
+              }),
+            },
+            booking: {
+              create: jest.fn().mockResolvedValue({
+                id: 'booking-1',
+                reservationCode: 'HLX-TEST',
+                status: BookingStatus.CONFIRMED,
+                paymentMethod: PaymentMethod.MONNIFY,
+                totalAmount: 8500,
+                bookingDate: new Date('2026-06-23T14:00:00.000Z'),
+                bookingTime: '14:00',
+                bookingType: 'WALK_IN',
+                services: [],
+                address: null,
+                branch: null,
+              }),
+            },
+          } as typeof mockPrisma),
+      );
+
+      await service.verifyBookingPayment('user-1', {
+        bookingPaymentReference: 'BOOKPAY-MONF-TEST',
+        provider: 'monnify',
+      });
+
+      expect(mockMonnifyService.verifyPayment).not.toHaveBeenCalled();
     });
   });
 });

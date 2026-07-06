@@ -7,6 +7,7 @@ import { LocationUpdateService } from './location-update.service';
 import { LiveTrackingService } from './live-tracking.service';
 import { LocationHistoryWriterService } from './location-history-writer.service';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { MatchingModule } from '../matching/matching.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
     HomeServiceSharedModule,
     ArrivalVerificationModule,
     RealtimeModule,
+    MatchingModule,
   ],
   providers: [
     LocationUpdateService,

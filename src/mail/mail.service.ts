@@ -22,8 +22,6 @@ import {
   beauticianProfileReviewTemplate,
   beauticianJobOfferTemplate,
   arrivalVerificationNeededTemplate,
-  arrivalVerifiedTemplate,
-  serviceAwaitingConfirmationTemplate,
   serviceCompletedTemplate,
 } from './templates';
 import type { ShopOrderConfirmationData } from './templates/shop-order-confirmation.template';
@@ -452,54 +450,6 @@ export class MailService {
     } catch (error) {
       this.logger.error(
         `Error queuing arrival verification email: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  async sendArrivalVerifiedEmail(
-    email: string,
-    firstName: string,
-    bookingId: string,
-  ) {
-    try {
-      await this.emailQueue.add(
-        'send',
-        {
-          to: email,
-          subject: 'Arrival Verified — HairLux',
-          html: arrivalVerifiedTemplate(firstName, bookingId),
-        },
-        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-      );
-    } catch (error) {
-      this.logger.error(
-        `Error queuing arrival verified email: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  async sendServiceAwaitingConfirmationEmail(
-    email: string,
-    firstName: string,
-    bookingId: string,
-  ) {
-    try {
-      await this.emailQueue.add(
-        'send',
-        {
-          to: email,
-          subject: 'Confirm Your Service — HairLux',
-          html: serviceAwaitingConfirmationTemplate(firstName, bookingId),
-        },
-        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-      );
-    } catch (error) {
-      this.logger.error(
-        `Error queuing service confirmation email: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

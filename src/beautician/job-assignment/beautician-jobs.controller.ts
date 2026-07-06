@@ -5,6 +5,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -24,6 +25,7 @@ import { JobEnRouteService } from '../home-service-booking/services/job-en-route
 import { JobArrivedService } from '../home-service-booking/services/job-arrived.service';
 import { ServiceCompletionService } from '../home-service-booking/services/service-completion.service';
 import { ArrivalVerificationReadService } from '../arrival-verification/services/arrival-verification-read.service';
+import { QueryJobHistoryDto } from './dto/query-job-history.dto';
 import { DeclineJobDto } from '../dto/decline-job.dto';
 import { MarkArrivedDto } from '../dto/mark-arrived.dto';
 import { CompleteServiceDto } from '../dto/complete-service.dto';
@@ -61,6 +63,22 @@ export class BeauticianJobsController {
     return {
       success: true,
       message: 'Active jobs retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('history')
+  @ApiOperation({
+    summary: 'List assigned job history (all statuses since assignment)',
+  })
+  async listHistory(
+    @GetUser('id') userId: string,
+    @Query() query: QueryJobHistoryDto,
+  ) {
+    const data = await this.jobQueryService.listHistory(userId, query);
+    return {
+      success: true,
+      message: 'Job history retrieved successfully',
       data,
     };
   }

@@ -6,9 +6,11 @@ import {
 import {
   PayoutMode,
   PayoutRequestStatus,
+  Prisma,
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { BeauticianQueryPayoutsDto } from '../dto/beautician-query-payouts.dto';
 import { AutoPayoutService } from './auto-payout.service';
 import { BeauticianBankAccountService } from './beautician-bank-account.service';
 
@@ -116,5 +118,71 @@ export class PayoutRequestService {
       accountName: payoutRequest.accountName,
       createdAt: payoutRequest.createdAt,
     };
+  }
+
+  async listMyPayouts(userId: string, query: BeauticianQueryPayoutsDto) {
+    await this.assertBeauticianUser(userId);
+
+    const { page = 1, limit = 20, status } = query;
+    const where: Prisma.PayoutRequestWhereInput = {
+      userId,
+      ...(status ? { status } : {}),
+    };
+
+    const [requests, total] = await Promise.all([
+      this.prisma.payoutRequest.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.payoutRequest.count({ where }),
+    ]);
+
+    const bankNames = await this.bankAccountService.resolveBankNamesByCode(
+      requests.map((request) => request.bankCode),
+    );
+
+    return {
+      payouts: requests.map((request) => ({
+        id: request.id,
+        amount: Number(request.amount),
+        status: request.status,
+        bankName: bankNames.get(request.bankCode) ?? null,
+        accountNumber: this.maskAccountNumber(request.accountNumber),
+        accountName: request.accountName,
+        rejectionReason: request.rejectionReason,
+        createdAt: request.createdAt,
+        processedAt: request.processedAt,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  }
+
+  private async assertBeauticianUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        beauticianProfile: { select: { id: true } },
+      },
+    });
+
+    if (!user || user.role !== UserRole.BEAUTICIAN || !user.beauticianProfile) {
+      throw new ForbiddenException('Only beauticians can access payout history');
+    }
+  }
+
+  private maskAccountNumber(accountNumber: string): string {
+    if (accountNumber.length <= 4) {
+      return accountNumber;
+    }
+
+    return `${'*'.repeat(accountNumber.length - 4)}${accountNumber.slice(-4)}`;
   }
 }

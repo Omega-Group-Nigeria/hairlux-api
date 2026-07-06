@@ -23,9 +23,27 @@ export class CreditServiceEarningsService {
     private readonly redis: RedisService,
   ) {}
 
+  async refreshBeauticianRatingAfterReview(bookingId: string): Promise<void> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { assignedBeauticianUserId: true },
+    });
+
+    if (!booking?.assignedBeauticianUserId) {
+      return;
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.statsService.syncRatingAverage(
+        tx,
+        booking.assignedBeauticianUserId!,
+      );
+    });
+  }
+
   async creditForCompletedBooking(
     bookingId: string,
-    customerRating?: number | null,
+    _customerRating?: number | null,
   ) {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
@@ -94,14 +112,21 @@ export class CreditServiceEarningsService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const wallet = await tx.wallet.upsert({
-        where: { userId: booking.assignedBeauticianUserId! },
-        update: {},
-        create: {
-          userId: booking.assignedBeauticianUserId!,
-          balance: 0,
-        },
+      const beauticianUserId = booking.assignedBeauticianUserId!;
+      let wallet = await tx.wallet.findFirst({
+        where: { userId: beauticianUserId },
+        select: { id: true },
       });
+
+      if (!wallet) {
+        wallet = await tx.wallet.create({
+          data: {
+            userId: beauticianUserId,
+            balance: 0,
+          },
+          select: { id: true },
+        });
+      }
 
       await tx.wallet.update({
         where: { id: wallet.id },
@@ -133,7 +158,6 @@ export class CreditServiceEarningsService {
         tx,
         booking.assignedBeauticianUserId!,
         calculation.earningsAmount,
-        customerRating ?? booking.customerRating,
       );
 
       return {

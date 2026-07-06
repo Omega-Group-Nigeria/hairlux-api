@@ -39,4 +39,59 @@ describe('QoreidWebhookService', () => {
       service.verifySignature('{"status":"verified"}', 'bad-signature'),
     ).toThrow(UnauthorizedException);
   });
+
+  describe('isRegistrationProbe', () => {
+    it('returns true when signature and body are both missing', () => {
+      expect(
+        service.isRegistrationProbe({
+          body: {},
+          rawBody: '',
+          signatureHeader: undefined,
+        }),
+      ).toBe(true);
+    });
+
+    it('returns true when rawBody is undefined (empty POST)', () => {
+      expect(
+        service.isRegistrationProbe({
+          body: undefined,
+          rawBody: undefined,
+          signatureHeader: undefined,
+        }),
+      ).toBe(true);
+    });
+
+    it('returns true when only the signature is missing', () => {
+      expect(
+        service.isRegistrationProbe({
+          body: { event: 'ping' },
+          rawBody: '{"event":"ping"}',
+          signatureHeader: undefined,
+        }),
+      ).toBe(true);
+    });
+
+    it('returns true when only the body is empty', () => {
+      expect(
+        service.isRegistrationProbe({
+          body: {},
+          rawBody: '{}',
+          signatureHeader: 'abc123',
+        }),
+      ).toBe(true);
+    });
+
+    it('returns false for a signed webhook with payload', () => {
+      expect(
+        service.isRegistrationProbe({
+          body: { status: 'verified', sessionId: 'sess-1' },
+          rawBody: JSON.stringify({
+            status: 'verified',
+            sessionId: 'sess-1',
+          }),
+          signatureHeader: 'abc123',
+        }),
+      ).toBe(false);
+    });
+  });
 });

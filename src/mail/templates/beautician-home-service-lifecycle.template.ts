@@ -14,33 +14,6 @@ export function arrivalVerificationNeededTemplate(
   });
 }
 
-export function arrivalVerifiedTemplate(
-  firstName: string,
-  bookingId: string,
-): string {
-  return baseTemplate({
-    title: 'Arrival Verified — HairLux',
-    previewText: 'The customer verified your arrival.',
-    content: `<p>Hi ${firstName},</p>
-      <p>The customer verified your arrival. Your service timer has started.</p>
-      <p style="font-size:13px;color:#666;">Booking reference: ${bookingId}</p>`,
-  });
-}
-
-export function serviceAwaitingConfirmationTemplate(
-  firstName: string,
-  bookingId: string,
-): string {
-  return baseTemplate({
-    title: 'Confirm Your Service — HairLux',
-    previewText: 'Your beautician marked the service complete.',
-    content: `<p>Hi ${firstName},</p>
-      <p>Your beautician has marked your home service as complete.</p>
-      <p>Please confirm completion and leave a rating in the HairLux app.</p>
-      <p style="font-size:13px;color:#666;">Booking reference: ${bookingId}</p>`,
-  });
-}
-
 export function serviceCompletedTemplate(
   firstName: string,
   bookingId: string,

@@ -464,6 +464,27 @@ export class BookingController {
     };
   }
 
+  @Post(':id/retry-matching')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Retry beautician matching',
+    description:
+      'Restarts matching when a previous search was exhausted and no beautician was assigned.',
+  })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  async retryMatching(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+  ) {
+    const data = await this.bookingService.retryMatchingForUser(userId, id);
+    return {
+      success: true,
+      message: 'Beautician matching restarted successfully',
+      data,
+    };
+  }
+
   @Get(':id/verification')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')

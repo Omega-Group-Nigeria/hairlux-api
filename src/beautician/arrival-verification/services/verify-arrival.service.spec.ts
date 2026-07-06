@@ -12,7 +12,7 @@ import { HomeServiceSettingsService } from '../../services/home-service-settings
 import { ArrivalPinService } from './arrival-pin.service';
 import { ArrivalQrTokenService } from './arrival-qr-token.service';
 import { VerifyArrivalService } from './verify-arrival.service';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 
 describe('VerifyArrivalService', () => {
   let service: VerifyArrivalService;
@@ -109,8 +109,8 @@ describe('VerifyArrivalService', () => {
         { provide: HomeServiceSettingsService, useValue: mockSettings },
         { provide: BeauticianNotificationService, useValue: mockNotification },
         {
-          provide: RealtimePublisherService,
-          useValue: { emitBookingStatus: jest.fn() },
+          provide: CommsRealtimeService,
+          useValue: { emitBookingStatus: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

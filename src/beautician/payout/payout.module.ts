@@ -12,9 +12,12 @@ import { PayoutRequestService } from './services/payout-request.service';
 import { AdminPayoutService } from './services/admin-payout.service';
 import { AutoPayoutService } from './services/auto-payout.service';
 import { BeauticianBankAccountService } from './services/beautician-bank-account.service';
+import { PayoutTransferSettlementService } from './services/payout-transfer-settlement.service';
+import { PaystackPayoutTransferService } from './services/paystack-payout-transfer.service';
 import { AdminPayoutController } from './admin-payout.controller';
 import { PaystackTransferWebhookController } from './paystack-transfer-webhook.controller';
 import { PaystackTransferWebhookProcessor } from './processors/paystack-transfer-webhook.processor';
+import { PaystackTransferApprovalService } from './services/paystack-transfer-approval.service';
 
 @Module({
   imports: [
@@ -34,6 +37,9 @@ import { PaystackTransferWebhookProcessor } from './processors/paystack-transfer
     AdminPayoutService,
     AutoPayoutService,
     BeauticianBankAccountService,
+    PayoutTransferSettlementService,
+    PaystackPayoutTransferService,
+    PaystackTransferApprovalService,
     PaystackTransferWebhookProcessor,
   ],
   exports: [

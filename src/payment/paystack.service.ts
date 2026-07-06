@@ -37,6 +37,29 @@ export interface PaystackResolveAccountResponse {
   };
 }
 
+export interface PaystackBankRecord {
+  id: number;
+  name: string;
+  slug: string;
+  code: string;
+  longcode: string;
+  active: boolean;
+  is_deleted: boolean;
+  currency: string;
+}
+
+export interface PaystackListBanksResponse {
+  status: boolean;
+  message: string;
+  data: PaystackBankRecord[];
+}
+
+export interface PaystackBankSummary {
+  code: string;
+  name: string;
+  slug: string;
+}
+
 export interface PaystackTransferRecipientResponse {
   status: boolean;
   message: string;
@@ -50,15 +73,17 @@ export interface PaystackTransferRecipientResponse {
   };
 }
 
+export interface PaystackTransferData {
+  reference: string;
+  transfer_code: string;
+  status: string;
+  amount: number;
+}
+
 export interface PaystackTransferResponse {
   status: boolean;
   message: string;
-  data: {
-    reference: string;
-    transfer_code: string;
-    status: string;
-    amount: number;
-  };
+  data: PaystackTransferData;
 }
 
 @Injectable()
@@ -127,10 +152,43 @@ export class PaystackService {
     }
   }
 
-  /**
-   * Verifies the x-paystack-signature header using HMAC-SHA512.
-   * Paystack signs the raw request body with the secret key.
-   */
+  async listBanks(currency = 'NGN'): Promise<PaystackBankSummary[]> {
+    try {
+      const response = await axios.get<PaystackListBanksResponse>(
+        `${this.baseUrl}/bank`,
+        {
+          params: {
+            currency,
+            perPage: 100,
+          },
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+          },
+        },
+      );
+
+      if (!response.data.status) {
+        throw new Error(response.data.message || 'Bank list fetch failed');
+      }
+
+      return response.data.data
+        .filter((bank) => bank.active && !bank.is_deleted)
+        .map((bank) => ({
+          code: bank.code,
+          name: bank.name,
+          slug: bank.slug,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    } catch (error) {
+      const errorMessage = this.extractPaystackError(
+        error,
+        'Failed to fetch bank list from Paystack',
+      );
+      this.logger.error(`Failed to list banks: ${errorMessage}`);
+      throw new Error(errorMessage);
+    }
+  }
+
   async resolveAccountNumber(
     accountNumber: string,
     bankCode: string,
@@ -155,10 +213,12 @@ export class PaystackService {
 
       return response.data.data;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = this.extractPaystackError(
+        error,
+        'Failed to resolve bank account with Paystack',
+      );
       this.logger.error(`Failed to resolve account number: ${errorMessage}`);
-      throw new Error('Failed to resolve bank account with Paystack');
+      throw new Error(errorMessage);
     }
   }
 
@@ -203,7 +263,7 @@ export class PaystackService {
     recipientCode: string;
     reference: string;
     reason?: string;
-  }): Promise<PaystackTransferResponse['data']> {
+  }): Promise<PaystackTransferData> {
     try {
       const response = await axios.post<PaystackTransferResponse>(
         `${this.baseUrl}/transfer`,
@@ -234,6 +294,66 @@ export class PaystackService {
       this.logger.error(`Failed to initiate transfer: ${errorMessage}`);
       throw new Error('Failed to initiate Paystack transfer');
     }
+  }
+
+  async finalizeTransfer(input: {
+    transferCode: string;
+    otp?: string;
+  }): Promise<PaystackTransferData> {
+    try {
+      const response = await axios.post<PaystackTransferResponse>(
+        `${this.baseUrl}/transfer/finalize_transfer`,
+        {
+          transfer_code: input.transferCode,
+          ...(input.otp ? { otp: input.otp } : {}),
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+
+      if (!response.data.status) {
+        throw new Error(response.data.message || 'Transfer finalization failed');
+      }
+
+      this.logger.log(`Transfer finalized: ${input.transferCode}`);
+      return response.data.data;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to finalize transfer: ${errorMessage}`);
+      throw new Error('Failed to finalize Paystack transfer');
+    }
+  }
+
+  isTransferSuccessStatus(status: string): boolean {
+    return status.toLowerCase() === 'success';
+  }
+
+  isTransferFailureStatus(status: string): boolean {
+    const normalized = status.toLowerCase();
+    return normalized === 'failed' || normalized === 'reversed';
+  }
+
+  isTransferAwaitingApproval(status: string): boolean {
+    const normalized = status.toLowerCase();
+    return normalized === 'pending' || normalized === 'otp';
+  }
+
+  private extractPaystackError(error: unknown, fallback: string): string {
+    if (axios.isAxiosError(error)) {
+      const message = error.response?.data?.message;
+      if (typeof message === 'string' && message.trim()) {
+        return message;
+      }
+    }
+    if (error instanceof Error && error.message.trim()) {
+      return error.message;
+    }
+    return fallback;
   }
 
   verifyWebhookSignature(rawBody: string, signature: string): boolean {

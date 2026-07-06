@@ -4,8 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  BookingCommsCloseReason,
   BookingStatus,
   BookingType,
+  DispatchStatus,
   PaymentMethod,
   TransactionStatus,
   TransactionType,
@@ -13,6 +15,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { NoShowPenaltyService } from '../../beautician/services/no-show-penalty.service';
+import { MatchingOrchestratorService } from '../../beautician/matching/services/matching-orchestrator.service';
 import { AdminCreateBookingDto } from '../dto/admin-create-booking.dto';
 import { AdminQueryBookingsDto } from '../dto/admin-query-bookings.dto';
 import { GetCalendarDto } from '../dto/get-calendar.dto';
@@ -31,6 +34,9 @@ import {
   toBookingServicesJson,
 } from '../utils/booking.utils';
 import { WalletDebitService } from '../../wallet/wallet-debit.service';
+import { CommsSessionService } from '../../comms/services/comms-session.service';
+import { CommsAdminService } from '../../comms/services/comms-admin.service';
+import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
 import { ReservationService } from './reservation.service';
 
 @Injectable()
@@ -41,6 +47,10 @@ export class BookingAnalyticsService {
     private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
     private readonly noShowPenaltyService: NoShowPenaltyService,
+    private readonly matchingOrchestrator: MatchingOrchestratorService,
+    private readonly commsSessionService: CommsSessionService,
+    private readonly commsAdminService: CommsAdminService,
+    private readonly commsRealtime: CommsRealtimeService,
   ) {}
 
   private isUniqueConstraintError(err: unknown, field: string): boolean {
@@ -162,9 +172,12 @@ export class BookingAnalyticsService {
       throw new NotFoundException('Booking not found');
     }
 
+    const comms = await this.commsAdminService.getSessionForBooking(id);
+
     return {
       ...formatBookingResponse(booking),
       address: formatBookingAddress(booking.address),
+      comms,
     };
   }
 
@@ -395,7 +408,26 @@ export class BookingAnalyticsService {
       ...(status === BookingStatus.CANCELLED
         ? [this.noShowPenaltyService.recordIfApplicable(id)]
         : []),
+      ...(status === BookingStatus.CANCELLED &&
+      booking.status === BookingStatus.PENDING_ASSIGNMENT
+        ? [this.matchingOrchestrator.cancelDispatchForBooking(id)]
+        : []),
     ]);
+
+    if (
+      status === BookingStatus.CANCELLED &&
+      booking.assignedBeauticianUserId
+    ) {
+      await this.commsSessionService.closeForBookingSafely(
+        id,
+        BookingCommsCloseReason.CANCELLED,
+      );
+
+      await this.commsRealtime.emitBookingStatus(
+        id,
+        BookingStatus.CANCELLED,
+      );
+    }
 
     return {
       ...formatBookingResponse(result),
@@ -557,6 +589,13 @@ export class BookingAnalyticsService {
       .map(([id, stats]) => ({ serviceId: id, ...stats }))
       .sort((a, b) => b.count - a.count);
 
+    const matchExhaustedCount = await this.prisma.booking.count({
+      where: {
+        status: BookingStatus.PENDING_ASSIGNMENT,
+        dispatchStatus: DispatchStatus.MATCH_EXHAUSTED,
+      },
+    });
+
     return {
       period: allTime
         ? { allTime: true }
@@ -568,6 +607,9 @@ export class BookingAnalyticsService {
           paidBookings.length > 0 ? totalRevenue / paidBookings.length : 0,
       },
       byStatus,
+      dispatch: {
+        matchExhaustedCount,
+      },
       topServices: popularServices.slice(0, 5),
     };
   }

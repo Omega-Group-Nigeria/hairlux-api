@@ -39,6 +39,8 @@ import {
 } from './dto/admin-beautician.dto';
 import { PerformanceQueryDto } from './dto/performance-query.dto';
 import { BeauticianPerformanceService } from './admin/services/beautician-performance.service';
+import { DispatchAdminService } from './matching/services/dispatch-admin.service';
+import { UpdateBeauticianDispatchDto } from './matching/dto/update-beautician-dispatch.dto';
 
 @ApiTags('Admin – Beauticians')
 @ApiBearerAuth('JWT-auth')
@@ -52,6 +54,7 @@ export class AdminBeauticianController {
     private readonly assignmentService: BeauticianServiceAssignmentService,
     private readonly kycStatusService: KycStatusService,
     private readonly performanceService: BeauticianPerformanceService,
+    private readonly dispatchAdminService: DispatchAdminService,
   ) {}
 
   @Get()
@@ -104,6 +107,28 @@ export class AdminBeauticianController {
     return {
       success: true,
       message: 'Beautician retrieved successfully',
+      data,
+    };
+  }
+
+  @Patch(':id/dispatch')
+  @Permission(PERMISSIONS.BEAUTICIANS_MANAGE)
+  @ApiOperation({
+    summary: 'Suspend or re-enable beautician from dispatch matching',
+    description:
+      'Suspended beauticians are removed from the geo index and excluded from new offers.',
+  })
+  async updateDispatch(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateBeauticianDispatchDto,
+  ) {
+    const data = await this.dispatchAdminService.updateDispatchSuspension(
+      id,
+      dto.suspended,
+    );
+    return {
+      success: true,
+      message: data.message,
       data,
     };
   }

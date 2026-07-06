@@ -8,7 +8,7 @@ import { HomeServiceSettingsService } from '../../services/home-service-settings
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
 import { JobArrivedService } from './job-arrived.service';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 
 describe('JobArrivedService', () => {
   let service: JobArrivedService;
@@ -78,8 +78,8 @@ describe('JobArrivedService', () => {
           useValue: { notifyArrivalVerificationNeeded: jest.fn() },
         },
         {
-          provide: RealtimePublisherService,
-          useValue: { emitBookingStatus: jest.fn() },
+          provide: CommsRealtimeService,
+          useValue: { emitBookingStatus: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

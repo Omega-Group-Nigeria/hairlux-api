@@ -17,6 +17,9 @@ import { BookingLinePricingService } from './services/booking-line-pricing.servi
 import { BeauticianModule } from '../beautician/beautician.module';
 import { HomeServiceLifecycleModule } from '../beautician/home-service-booking/home-service-lifecycle.module';
 import { TrackingModule } from '../beautician/tracking/tracking.module';
+import { MatchingModule } from '../beautician/matching/matching.module';
+import { BookingMatchingService } from './services/booking-matching.service';
+import { CommsModule } from '../comms/comms.module';
 
 @Module({
   imports: [
@@ -29,6 +32,8 @@ import { TrackingModule } from '../beautician/tracking/tracking.module';
     forwardRef(() => BeauticianModule),
     HomeServiceLifecycleModule,
     TrackingModule,
+    MatchingModule,
+    CommsModule,
   ],
   controllers: [BookingController, AdminBookingController],
   providers: [
@@ -39,6 +44,7 @@ import { TrackingModule } from '../beautician/tracking/tracking.module';
     BookingAnalyticsService,
     BookingPaymentService,
     BookingLinePricingService,
+    BookingMatchingService,
   ],
   exports: [BookingService],
 })

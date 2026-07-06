@@ -12,6 +12,27 @@ export class QoreidWebhookService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  /**
+   * QoreID sends an empty/signature-less POST when registering the webhook URL.
+   * Treat that probe as success so the dashboard can confirm reachability.
+   */
+  isRegistrationProbe(params: {
+    body?: Record<string, unknown>;
+    rawBody?: string;
+    signatureHeader?: string;
+  }): boolean {
+    const hasSignature = Boolean(params.signatureHeader?.trim());
+    const trimmedRaw = (params.rawBody ?? '').trim();
+    const isEmptyBody =
+      trimmedRaw === '' ||
+      trimmedRaw === '{}' ||
+      trimmedRaw === 'null' ||
+      trimmedRaw === 'undefined' ||
+      Object.keys(params.body ?? {}).length === 0;
+
+    return !hasSignature || isEmptyBody;
+  }
+
   verifySignature(rawBody: string, signatureHeader?: string): void {
     const secret = this.configService.get<string>('QOREID_WEBHOOK_SECRET');
     const nodeEnv = this.configService.get<string>('NODE_ENV', 'development');

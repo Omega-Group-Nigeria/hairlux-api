@@ -121,6 +121,75 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
    * Delete all keys matching a glob pattern using non-blocking SCAN.
    * Example: delByPattern('services:*') deletes all service cache entries.
    */
+  async geoAdd(
+    key: string,
+    longitude: number,
+    latitude: number,
+    member: string,
+  ): Promise<void> {
+    try {
+      await this.client.geoadd(key, longitude, latitude, member);
+    } catch (err) {
+      this.logger.warn(
+        `GEOADD failed for key "${key}": ${(err as Error).message}`,
+      );
+    }
+  }
+
+  async geoRemove(key: string, member: string): Promise<void> {
+    try {
+      await this.client.zrem(key, member);
+    } catch (err) {
+      this.logger.warn(
+        `ZREM failed for key "${key}": ${(err as Error).message}`,
+      );
+    }
+  }
+
+  async geoSearchByRadius(
+    key: string,
+    longitude: number,
+    latitude: number,
+    radiusKm: number,
+    count = 20,
+  ): Promise<Array<{ member: string; distanceKm: number }>> {
+    try {
+      const results = (await this.client.georadius(
+        key,
+        longitude,
+        latitude,
+        radiusKm,
+        'km',
+        'WITHDIST',
+        'ASC',
+        'COUNT',
+        count,
+      )) as Array<[string, string]>;
+
+      return results.map(([member, distance]) => ({
+        member,
+        distanceKm: Number(distance),
+      }));
+    } catch (err) {
+      this.logger.warn(
+        `GEORADIUS failed for key "${key}": ${(err as Error).message}`,
+      );
+      return [];
+    }
+  }
+
+  async hset(key: string, fields: Record<string, string>): Promise<void> {
+    try {
+      if (Object.keys(fields).length) {
+        await this.client.hset(key, fields);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `HSET failed for key "${key}": ${(err as Error).message}`,
+      );
+    }
+  }
+
   async delByPattern(pattern: string): Promise<void> {
     try {
       const keys: string[] = [];

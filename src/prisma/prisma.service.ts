@@ -189,6 +189,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.jobOffer;
   }
 
+  get dispatchEvent() {
+    return this.client.dispatchEvent;
+  }
+
+  get dispatchConfig() {
+    return this.client.dispatchConfig;
+  }
+
   get homeServiceSettings() {
     return this.client.homeServiceSettings;
   }
@@ -203,6 +211,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   get beauticianLocationHistory() {
     return this.client.beauticianLocationHistory;
+  }
+
+  get bookingCommsSession() {
+    return this.client.bookingCommsSession;
+  }
+
+  get bookingCommsEvent() {
+    return this.client.bookingCommsEvent;
   }
 
   get $transaction() {

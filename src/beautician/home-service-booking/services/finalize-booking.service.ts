@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BookingStatus } from '@prisma/client';
+import { BookingCommsCloseReason, BookingStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { formatBookingResponse } from '../../../booking/utils/booking.utils';
 import { BookingParticipantService } from './booking-participant.service';
 import { CreditServiceEarningsService } from '../../payout/services/credit-service-earnings.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { CommsSessionService } from '../../../comms/services/comms-session.service';
 
 @Injectable()
 export class FinalizeBookingService {
@@ -13,6 +15,8 @@ export class FinalizeBookingService {
     private readonly prisma: PrismaService,
     private readonly participantService: BookingParticipantService,
     private readonly creditEarningsService: CreditServiceEarningsService,
+    private readonly commsRealtime: CommsRealtimeService,
+    private readonly commsSessionService: CommsSessionService,
   ) {}
 
   async finalizeIfAwaitingConfirmation(bookingId: string) {
@@ -44,7 +48,17 @@ export class FinalizeBookingService {
       await this.participantService.releaseBeauticianIfIdle(
         booking.assignedBeauticianUserId,
       );
+
+      await this.commsRealtime.emitBookingStatus(
+        bookingId,
+        BookingStatus.COMPLETED,
+      );
     }
+
+    void this.commsSessionService.closeForBookingSafely(
+      bookingId,
+      BookingCommsCloseReason.AUTO_FINALIZED,
+    );
 
     this.logger.log(`Auto-finalized booking ${bookingId}`);
     return {

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Headers,
@@ -29,18 +30,30 @@ export class QoreidWebhookController {
   @ApiOperation({ summary: 'QoreID KYC workflow webhook' })
   async handleWebhook(
     @Req() req: Request,
-    @Body() body: Record<string, unknown>,
+    @Body() body?: Record<string, unknown>,
     @Headers('x-qoreid-signature') signature?: string,
     @Headers('x-qoreid-hmac-signature') hmacSignature?: string,
   ) {
     const rawBody =
       (req as Request & { rawBody?: Buffer }).rawBody?.toString('utf8') ??
-      JSON.stringify(body);
+      (body !== undefined && body !== null ? JSON.stringify(body) : '');
+    const signatureHeader = signature ?? hmacSignature;
 
-    this.webhookService.verifySignature(
-      rawBody,
-      signature ?? hmacSignature,
-    );
+    if (
+      this.webhookService.isRegistrationProbe({
+        body,
+        rawBody,
+        signatureHeader,
+      })
+    ) {
+      return { success: true, message: 'Webhook endpoint reachable' };
+    }
+
+    this.webhookService.verifySignature(rawBody, signatureHeader);
+
+    if (!body || Object.keys(body).length === 0) {
+      throw new BadRequestException('Webhook payload is required');
+    }
 
     await this.kycStatusService.applyWebhookUpdate(body);
 

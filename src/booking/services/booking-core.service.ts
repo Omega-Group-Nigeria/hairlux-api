@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  BookingCommsCloseReason,
   BookingStatus,
   PaymentMethod,
   TransactionStatus,
@@ -19,6 +20,10 @@ import {
   formatBookingResponse,
 } from '../utils/booking.utils';
 import { NoShowPenaltyService } from '../../beautician/services/no-show-penalty.service';
+import { MatchingOrchestratorService } from '../../beautician/matching/services/matching-orchestrator.service';
+import { CommsSessionService } from '../../comms/services/comms-session.service';
+import { CommsPresenterService } from '../../comms/services/comms-presenter.service';
+import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
 
 @Injectable()
 export class BookingCoreService {
@@ -26,6 +31,10 @@ export class BookingCoreService {
     private prisma: PrismaService,
     private redis: RedisService,
     private readonly noShowPenaltyService: NoShowPenaltyService,
+    private readonly matchingOrchestrator: MatchingOrchestratorService,
+    private readonly commsSessionService: CommsSessionService,
+    private readonly commsPresenter: CommsPresenterService,
+    private readonly commsRealtime: CommsRealtimeService,
   ) {}
 
   async findUserBookings(userId: string, queryDto: QueryBookingsDto) {
@@ -67,6 +76,7 @@ export class BookingCoreService {
       where: { id },
       include: {
         ...bookingUserReadInclude,
+        commsSession: true,
         user: {
           select: {
             id: true,
@@ -87,7 +97,10 @@ export class BookingCoreService {
       throw new ForbiddenException('You do not have access to this booking');
     }
 
-    return formatBookingResponse(booking);
+    return {
+      ...formatBookingResponse(booking),
+      comms: this.commsPresenter.embedForBooking(booking),
+    };
   }
 
   async reschedule(
@@ -216,7 +229,22 @@ export class BookingCoreService {
         ? [this.redis.del(`wallet:balance:${userId}`)]
         : []),
       this.noShowPenaltyService.recordIfApplicable(id),
+      ...(booking.status === BookingStatus.PENDING_ASSIGNMENT
+        ? [this.matchingOrchestrator.cancelDispatchForBooking(id)]
+        : []),
     ]);
+
+    if (booking.assignedBeauticianUserId) {
+      await this.commsSessionService.closeForBookingSafely(
+        id,
+        BookingCommsCloseReason.CANCELLED,
+      );
+
+      await this.commsRealtime.emitBookingStatus(
+        id,
+        BookingStatus.CANCELLED,
+      );
+    }
 
     return formatBookingResponse(result);
   }

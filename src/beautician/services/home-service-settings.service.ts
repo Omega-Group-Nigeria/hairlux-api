@@ -5,7 +5,6 @@ import { UpdateHomeServiceSettingsDto } from '../dto/update-home-service-setting
 const DEFAULT_SETTINGS = {
   commissionRate: 0.7,
   jobOfferTimeoutMinutes: 4,
-  defaultMatchingRadiusKm: 20,
   kycAutoApprove: true,
   arrivalVerificationExpiryMinutes: 15,
   serviceCompletionBufferMinutes: 60,
@@ -36,9 +35,6 @@ export class HomeServiceSettingsService {
         }),
         ...(dto.jobOfferTimeoutMinutes !== undefined && {
           jobOfferTimeoutMinutes: dto.jobOfferTimeoutMinutes,
-        }),
-        ...(dto.defaultMatchingRadiusKm !== undefined && {
-          defaultMatchingRadiusKm: dto.defaultMatchingRadiusKm,
         }),
         ...(dto.kycAutoApprove !== undefined && {
           kycAutoApprove: dto.kycAutoApprove,
@@ -81,7 +77,6 @@ export class HomeServiceSettingsService {
     return {
       ...settings,
       commissionRate: Number(settings.commissionRate),
-      defaultMatchingRadiusKm: Number(settings.defaultMatchingRadiusKm),
     };
   }
 }

@@ -1,113 +1,76 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
-import {
-  PayoutRequestStatus,
-  TransactionStatus,
-  TransactionType,
-} from '@prisma/client';
-import { randomBytes } from 'crypto';
+import { Injectable } from '@nestjs/common';
+import { PayoutRequestStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { RedisService } from '../../../redis/redis.service';
+import { AdminQueryPayoutsDto } from '../dto/admin-query-payouts.dto';
+import { BeauticianBankAccountService } from './beautician-bank-account.service';
+import { PaystackPayoutTransferService } from './paystack-payout-transfer.service';
+
+type AdminPayoutListItem = {
+  id: string;
+  amount: number;
+  status: PayoutRequestStatus;
+  bankName: string | null;
+  accountNumber: string;
+  accountName: string | null;
+  createdAt: Date;
+  beautician: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+  };
+};
 
 @Injectable()
 export class AdminPayoutService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly redis: RedisService,
+    private readonly bankAccountService: BeauticianBankAccountService,
+    private readonly paystackPayoutTransferService: PaystackPayoutTransferService,
   ) {}
 
   async processPayout(payoutRequestId: string, adminUserId: string) {
-    const payoutRequest = await this.prisma.payoutRequest.findUnique({
-      where: { id: payoutRequestId },
-    });
-
-    if (!payoutRequest) {
-      throw new NotFoundException('Payout request not found');
-    }
-
-    if (payoutRequest.status !== PayoutRequestStatus.PENDING) {
-      throw new BadRequestException(
-        `Payout request is already ${payoutRequest.status}`,
-      );
-    }
-
-    const amount = Number(payoutRequest.amount);
-    const reference = `PAYOUT-${payoutRequest.id}-${randomBytes(4).toString('hex')}`;
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const wallet = await tx.wallet.findUnique({
-        where: { userId: payoutRequest.userId },
-      });
-
-      if (!wallet) {
-        throw new BadRequestException('Beautician wallet not found');
-      }
-
-      if (Number(wallet.balance) < amount) {
-        throw new BadRequestException(
-          'Beautician wallet balance is insufficient for this payout',
-        );
-      }
-
-      await tx.wallet.update({
-        where: { id: wallet.id },
-        data: { balance: { decrement: amount } },
-      });
-
-      const transaction = await tx.transaction.create({
-        data: {
-          walletId: wallet.id,
-          amount,
-          type: TransactionType.PAYOUT_COMPLETED,
-          status: TransactionStatus.COMPLETED,
-          paymentMethod: 'WALLET',
-          reference,
-          description: `Payout processed for request ${payoutRequest.id}`,
-          metadata: {
-            payoutRequestId: payoutRequest.id,
-            bankCode: payoutRequest.bankCode,
-            accountNumber: payoutRequest.accountNumber,
-            accountName: payoutRequest.accountName,
-            processedById: adminUserId,
-          },
-        },
-      });
-
-      const updatedRequest = await tx.payoutRequest.update({
-        where: { id: payoutRequest.id },
-        data: {
-          status: PayoutRequestStatus.COMPLETED,
-          processedById: adminUserId,
-          processedAt: new Date(),
-          transactionId: transaction.id,
-        },
-      });
-
-      return {
-        payoutRequest: updatedRequest,
-        transaction,
-      };
-    });
-
-    void this.redis.del(`wallet:balance:${payoutRequest.userId}`);
-
-    return {
-      payoutRequestId: result.payoutRequest.id,
-      amount,
-      status: result.payoutRequest.status,
-      transactionId: result.transaction.id,
-      reference: result.transaction.reference,
-      processedAt: result.payoutRequest.processedAt,
-    };
+    return this.paystackPayoutTransferService.processPendingRequest(
+      payoutRequestId,
+      adminUserId,
+    );
   }
 
-  async listPending() {
+  async approveTransfer(
+    payoutRequestId: string,
+    adminUserId: string,
+    otp?: string,
+  ) {
+    return this.paystackPayoutTransferService.approveTransfer(
+      payoutRequestId,
+      adminUserId,
+      otp,
+    );
+  }
+
+  async listAwaitingApproval() {
+    const requests =
+      await this.paystackPayoutTransferService.listAwaitingApproval();
+    const bankNames = await this.bankAccountService.resolveBankNamesByCode(
+      requests.map((request) => request.bankCode),
+    );
+
+    return requests.map(({ bankCode, ...request }) => ({
+      ...request,
+      bankName: bankNames.get(bankCode) ?? null,
+    }));
+  }
+
+  async listPayouts(query: AdminQueryPayoutsDto): Promise<AdminPayoutListItem[]> {
+    const { status } = query;
+    const where: Prisma.PayoutRequestWhereInput = status ? { status } : {};
+
     const requests = await this.prisma.payoutRequest.findMany({
-      where: { status: PayoutRequestStatus.PENDING },
-      orderBy: { createdAt: 'asc' },
+      where,
+      orderBy: {
+        createdAt: status === PayoutRequestStatus.PENDING ? 'asc' : 'desc',
+      },
       include: {
         user: {
           select: {
@@ -121,15 +84,38 @@ export class AdminPayoutService {
       },
     });
 
-    return requests.map((request) => ({
+    const bankNames = await this.bankAccountService.resolveBankNamesByCode(
+      requests.map((request) => request.bankCode),
+    );
+
+    return requests.map((request) =>
+      this.formatPayoutRequest(request, bankNames),
+    );
+  }
+
+  private formatPayoutRequest(
+    request: {
+      id: string;
+      amount: Prisma.Decimal;
+      status: PayoutRequestStatus;
+      bankCode: string;
+      accountNumber: string;
+      accountName: string | null;
+      createdAt: Date;
+      user: AdminPayoutListItem['beautician'];
+    },
+    bankNames: Map<string, string>,
+  ): AdminPayoutListItem {
+    return {
       id: request.id,
       amount: Number(request.amount),
       status: request.status,
-      bankCode: request.bankCode,
+      bankName: bankNames.get(request.bankCode) ?? null,
       accountNumber: request.accountNumber,
       accountName: request.accountName,
       createdAt: request.createdAt,
       beautician: request.user,
-    }));
+    };
   }
+
 }

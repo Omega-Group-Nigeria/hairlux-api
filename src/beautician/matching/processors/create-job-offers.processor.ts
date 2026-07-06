@@ -5,6 +5,7 @@ import { MatchingOrchestratorService } from '../services/matching-orchestrator.s
 
 interface CreateOffersJobData {
   bookingId: string;
+  matchingAttempt?: number;
 }
 
 @Processor('home-service-matching')
@@ -18,6 +19,9 @@ export class CreateJobOffersProcessor {
   @Process('create-offers')
   async handle(job: Job<CreateOffersJobData>) {
     this.logger.log(`Processing create-offers for booking ${job.data.bookingId}`);
-    await this.matchingOrchestrator.createOffersForBooking(job.data.bookingId);
+    await this.matchingOrchestrator.createOffersForBooking(
+      job.data.bookingId,
+      job.data.matchingAttempt ?? 1,
+    );
   }
 }

@@ -35,16 +35,23 @@ import {
   BusinessHoursDayDto,
 } from './dto/set-business-hours.dto';
 import { CreateBusinessExceptionDto } from './dto/create-business-exception.dto';
+import { Permission } from '../auth/decorators/permission.decorator';
+import { PERMISSIONS } from '../common/constants/permissions';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { DispatchTraceService } from '../beautician/matching/services/dispatch-trace.service';
+import { ForceAssignBookingDto } from '../beautician/matching/dto/force-assign-booking.dto';
+import { GetUser } from '../auth/decorators/get-user.decorator';
 
 @ApiTags('Admin - Bookings')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/bookings')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminBookingController {
   constructor(
     private readonly bookingService: BookingService,
     private readonly activeHomeServiceBookings: ActiveHomeServiceBookingsService,
+    private readonly dispatchTraceService: DispatchTraceService,
   ) {}
 
   @Get('home-services/active')
@@ -386,6 +393,24 @@ export class AdminBookingController {
     return { success: true, message: 'Reservation marked as used', data };
   }
 
+  @Get(':id/dispatch-trace')
+  @Permission(PERMISSIONS.BOOKINGS_READ)
+  @ApiOperation({
+    summary: 'Get dispatch trace for a booking',
+    description:
+      'Returns dispatch status, audit events, and job offer history for debugging home-service matching.',
+  })
+  @ApiResponse({ status: 200, description: 'Dispatch trace retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Booking not found' })
+  async getDispatchTrace(@Param('id') id: string) {
+    const data = await this.dispatchTraceService.getTrace(id);
+    return {
+      success: true,
+      message: 'Dispatch trace retrieved successfully',
+      data,
+    };
+  }
+
   @Get(':id')
   @ApiOperation({
     summary: 'Get detailed booking information',
@@ -518,6 +543,52 @@ export class AdminBookingController {
   })
   async createManualBooking(@Body() createDto: AdminCreateBookingDto) {
     return this.bookingService.createAdminBooking(createDto);
+  }
+
+  @Post(':id/retry-matching')
+  @Permission(PERMISSIONS.BOOKINGS_UPDATE_STATUS)
+  @ApiOperation({
+    summary: 'Re-trigger beautician matching for a home service booking',
+    description:
+      'Restarts the matching cycle. Defaults to tier 1; pass startAtTier (1–3) to begin at a wider radius.',
+  })
+  @ApiResponse({ status: 200, description: 'Matching restarted successfully' })
+  async retryMatching(
+    @Param('id') id: string,
+    @Query('startAtTier') startAtTier?: string,
+  ) {
+    const tier = startAtTier ? Number(startAtTier) : 1;
+    const data = await this.bookingService.retryMatchingAdmin(id, tier);
+    return {
+      success: true,
+      message: 'Beautician matching restarted successfully',
+      data,
+    };
+  }
+
+  @Post(':id/force-assign')
+  @Permission(PERMISSIONS.BOOKINGS_UPDATE_STATUS)
+  @ApiOperation({
+    summary: 'Force-assign a beautician to a home service booking',
+    description:
+      'Bypasses dispatch matching. Cancels pending offers, creates an accepted offer, and assigns the booking.',
+  })
+  @ApiResponse({ status: 200, description: 'Booking force-assigned successfully' })
+  async forceAssign(
+    @Param('id') id: string,
+    @GetUser('id') adminUserId: string,
+    @Body() dto: ForceAssignBookingDto,
+  ) {
+    const data = await this.bookingService.forceAssignAdmin(
+      id,
+      dto.beauticianUserId,
+      adminUserId,
+    );
+    return {
+      success: true,
+      message: 'Booking force-assigned successfully',
+      data,
+    };
   }
 
   @Put(':id/status')

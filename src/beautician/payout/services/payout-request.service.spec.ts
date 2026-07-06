@@ -38,7 +38,14 @@ describe('PayoutRequestService', () => {
     payoutRequest: {
       aggregate: jest.fn(async () => ({ _sum: { amount: 0 } })),
       create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
     },
+  };
+
+  const mockBankNames = {
+    getPayoutDestination: mockBankAccount.getPayoutDestination,
+    resolveBankNamesByCode: jest.fn(async () => new Map([['058', 'Guaranty Trust Bank']])),
   };
 
   beforeEach(async () => {
@@ -49,7 +56,7 @@ describe('PayoutRequestService', () => {
         PayoutRequestService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: AutoPayoutService, useValue: mockAutoPayout },
-        { provide: BeauticianBankAccountService, useValue: mockBankAccount },
+        { provide: BeauticianBankAccountService, useValue: mockBankNames },
       ],
     }).compile();
 
@@ -95,6 +102,44 @@ describe('PayoutRequestService', () => {
     expect(result.id).toBe('payout-1');
     expect(mockPrisma.payoutRequest.create).toHaveBeenCalled();
     expect(mockBankAccount.getPayoutDestination).toHaveBeenCalled();
+  });
+
+  it('lists beautician payout requests with bank names', async () => {
+    mockPrisma.payoutRequest.findMany.mockResolvedValueOnce([
+      {
+        id: 'payout-1',
+        amount: 1000,
+        status: 'CANCELLED',
+        bankCode: '058',
+        accountNumber: '7063693261',
+        accountName: 'EZANA ZECARIAS',
+        rejectionReason: 'Failed to initiate Paystack transfer',
+        createdAt: new Date('2026-07-03T19:32:54.209Z'),
+        processedAt: null,
+      },
+    ]);
+    mockPrisma.payoutRequest.count.mockResolvedValueOnce(1);
+
+    const result = await service.listMyPayouts('beautician-1', {
+      status: undefined,
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.payouts).toEqual([
+      {
+        id: 'payout-1',
+        amount: 1000,
+        status: 'CANCELLED',
+        bankName: 'Guaranty Trust Bank',
+        accountNumber: '******3261',
+        accountName: 'EZANA ZECARIAS',
+        rejectionReason: 'Failed to initiate Paystack transfer',
+        createdAt: new Date('2026-07-03T19:32:54.209Z'),
+        processedAt: null,
+      },
+    ]);
+    expect(result.pagination.total).toBe(1);
   });
 
   it('delegates to auto payout when payout mode is AUTO', async () => {

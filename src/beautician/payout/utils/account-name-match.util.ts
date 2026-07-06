@@ -13,9 +13,18 @@ function tokenMatches(resolvedTokens: string[], token: string): boolean {
   );
 }
 
+function countMatchedTokens(
+  profileTokens: string[],
+  resolvedTokens: string[],
+): number {
+  return profileTokens.filter((token) => tokenMatches(resolvedTokens, token))
+    .length;
+}
+
 /**
- * Fuzzy match Paystack-resolved account name against the beautician's legal name.
- * Requires first-name match plus at least one additional profile name token.
+ * Fuzzy, order-independent match of bank-resolved account name vs profile name.
+ * Passes when every profile name part appears in the resolved name (any order),
+ * or when the first name matches and enough other profile tokens match.
  */
 export function accountNameMatchesProfile(
   resolvedAccountName: string,
@@ -29,6 +38,12 @@ export function accountNameMatchesProfile(
     return false;
   }
 
+  if (
+    profileTokens.every((token) => tokenMatches(resolvedTokens, token))
+  ) {
+    return true;
+  }
+
   const firstNameTokens = tokenize(firstName);
   const firstNameMatched = firstNameTokens.some((token) =>
     tokenMatches(resolvedTokens, token),
@@ -38,9 +53,6 @@ export function accountNameMatchesProfile(
     return false;
   }
 
-  const matchedCount = profileTokens.filter((token) =>
-    tokenMatches(resolvedTokens, token),
-  ).length;
-
+  const matchedCount = countMatchedTokens(profileTokens, resolvedTokens);
   return matchedCount >= Math.min(2, profileTokens.length);
 }

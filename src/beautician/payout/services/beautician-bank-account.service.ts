@@ -6,14 +6,24 @@ import {
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { PaystackService } from '../../../payment/paystack.service';
+import {
+  PaystackBankSummary,
+  PaystackService,
+} from '../../../payment/paystack.service';
+import { RedisService } from '../../../redis/redis.service';
 import { accountNameMatchesProfile } from '../utils/account-name-match.util';
+
+const PAYSTACK_BANKS_CACHE_KEY = 'payout:banks:NGN';
+const PAYSTACK_BANKS_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
+const PAYSTACK_BANKS_REFRESH_LOCK_KEY = 'payout:banks:NGN:refresh';
+const PAYSTACK_BANKS_REFRESH_LOCK_TTL_SECONDS = 30;
 
 @Injectable()
 export class BeauticianBankAccountService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly paystackService: PaystackService,
+    private readonly redis: RedisService,
   ) {}
 
   async setupBankAccount(
@@ -124,6 +134,101 @@ export class BeauticianBankAccountService {
       accountName: profile.payoutAccountName,
       verifiedAt: profile.payoutBankVerifiedAt,
     };
+  }
+
+  async resolveBankNamesByCode(
+    bankCodes: string[],
+  ): Promise<Map<string, string>> {
+    const uniqueCodes = [...new Set(bankCodes.filter(Boolean))];
+    if (uniqueCodes.length === 0) {
+      return new Map();
+    }
+
+    const banks = await this.listBanks();
+    const bankNames = new Map(
+      banks.map((bank) => [bank.code, bank.name] as const),
+    );
+
+    return new Map(
+      uniqueCodes
+        .filter((code) => bankNames.has(code))
+        .map((code) => [code, bankNames.get(code)!] as const),
+    );
+  }
+
+  async listBanks(): Promise<PaystackBankSummary[]> {
+    const cached = await this.redis.get<PaystackBankSummary[]>(
+      PAYSTACK_BANKS_CACHE_KEY,
+    );
+    if (cached?.length) {
+      return cached;
+    }
+
+    const lockAcquired = await this.redis.setNx(
+      PAYSTACK_BANKS_REFRESH_LOCK_KEY,
+      '1',
+      PAYSTACK_BANKS_REFRESH_LOCK_TTL_SECONDS,
+    );
+
+    if (!lockAcquired) {
+      const waited = await this.waitForCachedBanks();
+      if (waited) {
+        return waited;
+      }
+    }
+
+    try {
+      const banks = await this.paystackService.listBanks();
+      if (banks.length) {
+        await this.redis.set(
+          PAYSTACK_BANKS_CACHE_KEY,
+          banks,
+          PAYSTACK_BANKS_CACHE_TTL_SECONDS,
+        );
+      }
+      return banks;
+    } finally {
+      if (lockAcquired) {
+        await this.redis.del(PAYSTACK_BANKS_REFRESH_LOCK_KEY);
+      }
+    }
+  }
+
+  private async waitForCachedBanks(): Promise<PaystackBankSummary[] | null> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+      const cached = await this.redis.get<PaystackBankSummary[]>(
+        PAYSTACK_BANKS_CACHE_KEY,
+      );
+      if (cached?.length) {
+        return cached;
+      }
+    }
+    return null;
+  }
+
+  async resolveBankAccount(input: { bankCode: string; accountNumber: string }) {
+    const bankCode = input.bankCode.trim();
+    const accountNumber = input.accountNumber.trim();
+
+    try {
+      const resolved = await this.paystackService.resolveAccountNumber(
+        accountNumber,
+        bankCode,
+      );
+
+      return {
+        bankCode,
+        accountNumber,
+        accountName: resolved.account_name,
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to resolve bank account';
+      throw new BadRequestException(message);
+    }
   }
 
   async getPayoutDestination(userId: string) {

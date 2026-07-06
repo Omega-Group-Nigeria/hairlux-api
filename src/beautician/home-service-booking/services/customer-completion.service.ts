@@ -1,5 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { BookingStatus, ReviewStatus } from '@prisma/client';
+import {
+  BookingCommsCloseReason,
+  BookingStatus,
+  Prisma,
+  ReviewStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
   formatBookingResponse,
@@ -9,7 +14,10 @@ import { BeauticianNotificationService } from '../../notification/services/beaut
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
 import { CreditServiceEarningsService } from '../../payout/services/credit-service-earnings.service';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
+import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { CommsSessionService } from '../../../comms/services/comms-session.service';
+
+type ConfirmCompletionInput = { rating: number; review?: string };
 
 @Injectable()
 export class CustomerCompletionService {
@@ -19,13 +27,14 @@ export class CustomerCompletionService {
     private readonly statusService: HomeServiceStatusService,
     private readonly notificationService: BeauticianNotificationService,
     private readonly creditEarningsService: CreditServiceEarningsService,
-    private readonly realtimePublisher: RealtimePublisherService,
+    private readonly commsRealtime: CommsRealtimeService,
+    private readonly commsSessionService: CommsSessionService,
   ) {}
 
   async confirmCompletion(
     bookingId: string,
     customerUserId: string,
-    input: { rating: number; review?: string },
+    input: ConfirmCompletionInput,
   ) {
     if (input.rating < 1 || input.rating > 5) {
       throw new BadRequestException('Rating must be between 1 and 5');
@@ -36,10 +45,14 @@ export class CustomerCompletionService {
     this.participantService.assertCustomerAccess(booking, customerUserId);
 
     if (booking.status === BookingStatus.COMPLETED) {
-      return {
-        booking: formatBookingResponse(booking),
-        message: 'Booking already completed',
-      };
+      if (booking.customerRating != null) {
+        return {
+          booking: formatBookingResponse(booking),
+          message: 'Booking already completed',
+        };
+      }
+
+      return this.applyLateRating(bookingId, booking, customerUserId, input);
     }
 
     this.statusService.assertTransition(
@@ -47,12 +60,7 @@ export class CustomerCompletionService {
       BookingStatus.COMPLETED,
     );
 
-    const services = normalizeBookingServices(booking.services);
-    const primaryServiceId = services[0]?.serviceId;
-    if (!primaryServiceId) {
-      throw new BadRequestException('Booking has no services to review');
-    }
-
+    const primaryServiceId = this.resolvePrimaryServiceId(booking.services);
     const now = new Date();
     const reviewComment = input.review?.trim() || null;
 
@@ -66,21 +74,12 @@ export class CustomerCompletionService {
         },
       });
 
-      await tx.review.upsert({
-        where: { bookingId },
-        create: {
-          userId: customerUserId,
-          serviceId: primaryServiceId,
-          bookingId,
-          rating: input.rating,
-          comment: reviewComment,
-          status: ReviewStatus.APPROVED,
-        },
-        update: {
-          rating: input.rating,
-          comment: reviewComment,
-          status: ReviewStatus.APPROVED,
-        },
+      await this.persistReview(tx, {
+        bookingId,
+        customerUserId,
+        primaryServiceId,
+        rating: input.rating,
+        comment: reviewComment,
       });
 
       return completedBooking;
@@ -112,9 +111,18 @@ export class CustomerCompletionService {
       }
     }
 
-    this.realtimePublisher.emitBookingStatus(bookingId, BookingStatus.COMPLETED, {
-      customerRating: input.rating,
-    });
+    await this.commsRealtime.emitBookingStatus(
+      bookingId,
+      BookingStatus.COMPLETED,
+      {
+        customerRating: input.rating,
+      },
+    );
+
+    void this.commsSessionService.closeForBookingSafely(
+      bookingId,
+      BookingCommsCloseReason.CUSTOMER_CONFIRMED,
+    );
 
     return {
       booking: formatBookingResponse(updated),
@@ -122,5 +130,109 @@ export class CustomerCompletionService {
       earningsCredit,
       message: 'Thank you for confirming service completion',
     };
+  }
+
+  private async applyLateRating(
+    bookingId: string,
+    booking: Awaited<
+      ReturnType<BookingParticipantService['getBookingForParticipant']>
+    >,
+    customerUserId: string,
+    input: ConfirmCompletionInput,
+  ) {
+    const primaryServiceId = this.resolvePrimaryServiceId(booking.services);
+    const reviewComment = input.review?.trim() || null;
+    const now = new Date();
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const ratedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          customerRating: input.rating,
+          customerReview: reviewComment,
+        },
+      });
+
+      await this.persistReview(tx, {
+        bookingId,
+        customerUserId,
+        primaryServiceId,
+        rating: input.rating,
+        comment: reviewComment,
+      });
+
+      return ratedBooking;
+    });
+
+    if (booking.assignedBeauticianUserId) {
+      await this.creditEarningsService.refreshBeauticianRatingAfterReview(
+        bookingId,
+      );
+
+      if (booking.assignedBeautician) {
+        void this.notificationService.notifyServiceCompleted(
+          {
+            email: booking.assignedBeautician.email,
+            firstName: booking.assignedBeautician.firstName,
+          },
+          bookingId,
+          input.rating,
+        );
+      }
+    }
+
+    await this.commsRealtime.emitBookingStatus(
+      bookingId,
+      BookingStatus.COMPLETED,
+      {
+        customerRating: input.rating,
+      },
+    );
+
+    return {
+      booking: formatBookingResponse(updated),
+      completedAt: now,
+      earningsCredit: null,
+      message: 'Thank you for your rating',
+    };
+  }
+
+  private resolvePrimaryServiceId(services: unknown): string {
+    const normalized = normalizeBookingServices(services);
+    const primaryServiceId = normalized[0]?.serviceId;
+
+    if (!primaryServiceId) {
+      throw new BadRequestException('Booking has no services to review');
+    }
+
+    return primaryServiceId;
+  }
+
+  private async persistReview(
+    tx: Prisma.TransactionClient,
+    params: {
+      bookingId: string;
+      customerUserId: string;
+      primaryServiceId: string;
+      rating: number;
+      comment: string | null;
+    },
+  ): Promise<void> {
+    const reviewData = {
+      rating: params.rating,
+      comment: params.comment,
+      status: ReviewStatus.APPROVED,
+    };
+
+    await tx.review.upsert({
+      where: { bookingId: params.bookingId },
+      create: {
+        userId: params.customerUserId,
+        serviceId: params.primaryServiceId,
+        bookingId: params.bookingId,
+        ...reviewData,
+      },
+      update: reviewData,
+    });
   }
 }

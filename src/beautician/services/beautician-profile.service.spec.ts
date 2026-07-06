@@ -6,9 +6,9 @@ import {
 } from '@prisma/client';
 import { BeauticianProfileService } from './beautician-profile.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GeocodingService } from '../../common/services/geocoding.service';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { BeauticianNotificationService } from '../notification/services/beautician-notification.service';
+import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
 describe('BeauticianProfileService', () => {
   let service: BeauticianProfileService;
@@ -23,8 +23,6 @@ describe('BeauticianProfileService', () => {
     specialties: ['Box Braids'],
     yearsOfExperience: 6,
     certifications: [],
-    baseAddress: 'Lekki, Lagos',
-    serviceRadiusKm: 20,
   };
 
   const mockPrisma = {
@@ -34,11 +32,14 @@ describe('BeauticianProfileService', () => {
     },
   };
 
-  const mockGeocoding = { geocodeAddress: jest.fn() };
   const mockCloudinary = { uploadImage: jest.fn() };
   const mockNotification = {
     notifyProfileSubmitted: jest.fn(),
     notifyProfileReviewResult: jest.fn(),
+  };
+
+  const mockMeCache = {
+    invalidate: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -48,9 +49,9 @@ describe('BeauticianProfileService', () => {
       providers: [
         BeauticianProfileService,
         { provide: PrismaService, useValue: mockPrisma },
-        { provide: GeocodingService, useValue: mockGeocoding },
         { provide: CloudinaryService, useValue: mockCloudinary },
         { provide: BeauticianNotificationService, useValue: mockNotification },
+        { provide: BeauticianMeCacheService, useValue: mockMeCache },
       ],
     }).compile();
 

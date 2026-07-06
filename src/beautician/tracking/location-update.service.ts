@@ -1,4 +1,10 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+} from '@nestjs/common';
+import { AvailabilityStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { UpdateLocationDto } from '../dto/update-location.dto';
@@ -6,6 +12,9 @@ import { BEAUTICIAN_LIVE_LOCATION_KEY_PREFIX } from '../home-service-booking/hom
 import { LocationHistoryWriterService } from './location-history-writer.service';
 import { RealtimePublisherService } from '../realtime/realtime-publisher.service';
 import { ACTIVE_HOME_SERVICE_STATUSES } from '../home-service-booking/home-service-status.service';
+import { PendingBookingMatcherService } from '../matching/services/pending-booking-matcher.service';
+import { BeauticianLocationIndexService } from '../matching/services/beautician-location-index.service';
+import { isImplausibleLocationJump } from '../matching/utils/location-sanity.util';
 
 @Injectable()
 export class LocationUpdateService {
@@ -16,6 +25,8 @@ export class LocationUpdateService {
     private readonly redis: RedisService,
     private readonly locationHistoryWriter: LocationHistoryWriterService,
     private readonly realtimePublisher: RealtimePublisherService,
+    private readonly pendingBookingMatcher: PendingBookingMatcherService,
+    private readonly locationIndex: BeauticianLocationIndexService,
   ) {}
 
   async updateLocation(userId: string, dto: UpdateLocationDto) {
@@ -34,6 +45,36 @@ export class LocationUpdateService {
     }
 
     const now = new Date();
+    const existing = await this.prisma.beauticianProfile.findUnique({
+      where: { userId },
+      select: {
+        currentLat: true,
+        currentLng: true,
+        lastLocationUpdate: true,
+        availabilityStatus: true,
+        dispatchSuspended: true,
+        assignedServices: { select: { serviceId: true } },
+      },
+    });
+
+    if (
+      existing?.currentLat != null &&
+      existing.currentLng != null &&
+      existing.lastLocationUpdate &&
+      isImplausibleLocationJump(
+        Number(existing.currentLat),
+        Number(existing.currentLng),
+        existing.lastLocationUpdate,
+        dto.lat,
+        dto.lng,
+        now,
+      )
+    ) {
+      throw new BadRequestException(
+        'Location update rejected — implausible GPS movement detected.',
+      );
+    }
+
     const updated = await this.prisma.beauticianProfile.update({
       where: { userId },
       data: {
@@ -45,8 +86,23 @@ export class LocationUpdateService {
         currentLat: true,
         currentLng: true,
         lastLocationUpdate: true,
+        availabilityStatus: true,
       },
     });
+
+    if (
+      updated.availabilityStatus === AvailabilityStatus.ONLINE &&
+      !existing?.dispatchSuspended
+    ) {
+      await this.locationIndex.upsertOnline({
+        userId,
+        lat: dto.lat,
+        lng: dto.lng,
+        serviceIds:
+          existing?.assignedServices.map((item) => item.serviceId) ?? [],
+        updatedAt: now,
+      });
+    }
 
     await this.redis.set(
       `${BEAUTICIAN_LIVE_LOCATION_KEY_PREFIX}${userId}`,
@@ -75,6 +131,11 @@ export class LocationUpdateService {
         updatedAt: now.toISOString(),
       });
     }
+
+    void this.pendingBookingMatcher.onBeauticianAvailable(
+      userId,
+      'LOCATION_UPDATE',
+    );
 
     return {
       lat: Number(updated.currentLat),
