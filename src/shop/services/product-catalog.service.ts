@@ -4,13 +4,29 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Product, ProductStatus } from '@prisma/client';
+import { Product, ProductImage, ProductStatus } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { AdminQueryProductsDto } from '../dto/admin-query-products.dto';
 import { CreateProductDto } from '../dto/create-product.dto';
 import { QueryProductsDto } from '../dto/query-products.dto';
 import { UpdateProductDto } from '../dto/update-product.dto';
+import {
+  assertTotalProductImageCount,
+  getPrimaryImageUrl,
+  toAdminProductImageResponses,
+  toProductImageResponses,
+  uploadProductImages,
+  validateProductImageFiles,
+} from '../utils/product-image.utils';
+import {
+  invalidateShopCatalogCache,
+  SHOP_CATALOG_CACHE_TTL_SECONDS,
+  shopProductOneCacheKey,
+  shopProductsListCacheKey,
+} from '../utils/shop-cache.utils';
 import { ProductCategoryService } from './product-category.service';
 
 const categorySelect = {
@@ -19,12 +35,17 @@ const categorySelect = {
   description: true,
 } as const;
 
-type ProductWithCategory = Product & {
+const imagesInclude = {
+  orderBy: { sortOrder: 'asc' as const },
+};
+
+type ProductWithRelations = Product & {
   category: {
     id: string;
     name: string;
     description: string | null;
   };
+  images: ProductImage[];
 };
 
 @Injectable()
@@ -32,10 +53,11 @@ export class ProductCatalogService {
   constructor(
     private prisma: PrismaService,
     private cloudinary: CloudinaryService,
+    private redis: RedisService,
     private productCategoryService: ProductCategoryService,
   ) {}
 
-  private toCategorySummary(category: ProductWithCategory['category']) {
+  private toCategorySummary(category: ProductWithRelations['category']) {
     return {
       id: category.id,
       name: category.name,
@@ -43,7 +65,9 @@ export class ProductCatalogService {
     };
   }
 
-  toProductResponse(product: ProductWithCategory) {
+  toProductResponse(product: ProductWithRelations) {
+    const images = toProductImageResponses(product.images);
+
     return {
       id: product.id,
       categoryId: product.categoryId,
@@ -54,14 +78,15 @@ export class ProductCatalogService {
       stock: product.stock,
       inStock: product.stock > 0,
       status: product.status,
-      imageUrl: product.imageUrl,
+      images,
+      imageUrl: getPrimaryImageUrl(product.images),
     };
   }
 
-  toAdminProductResponse(product: ProductWithCategory) {
+  toAdminProductResponse(product: ProductWithRelations) {
     return {
       ...this.toProductResponse(product),
-      imagePublicId: product.imagePublicId,
+      images: toAdminProductImageResponses(product.images),
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
     };
@@ -72,6 +97,12 @@ export class ProductCatalogService {
   }
 
   async findActiveProducts(queryDto: QueryProductsDto) {
+    const cacheKey = shopProductsListCacheKey(queryDto);
+    const cached = await this.redis.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const { search, categoryId, page = 1, limit = 20 } = queryDto;
     const skip = (page - 1) * limit;
 
@@ -89,12 +120,15 @@ export class ProductCatalogService {
         skip,
         take: limit,
         orderBy: { name: 'asc' },
-        include: { category: { select: categorySelect } },
+        include: {
+          category: { select: categorySelect },
+          images: imagesInclude,
+        },
       }),
       this.prisma.product.count({ where }),
     ]);
 
-    return {
+    const result = {
       data: products.map((product) => this.toProductResponse(product)),
       meta: {
         total,
@@ -103,6 +137,9 @@ export class ProductCatalogService {
         totalPages: Math.ceil(total / limit),
       },
     };
+
+    await this.redis.set(cacheKey, result, SHOP_CATALOG_CACHE_TTL_SECONDS);
+    return result;
   }
 
   async findAdminProducts(queryDto: AdminQueryProductsDto) {
@@ -123,7 +160,10 @@ export class ProductCatalogService {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        include: { category: { select: categorySelect } },
+        include: {
+          category: { select: categorySelect },
+          images: imagesInclude,
+        },
       }),
       this.prisma.product.count({ where }),
     ]);
@@ -140,22 +180,36 @@ export class ProductCatalogService {
   }
 
   async findActiveProductById(id: string) {
+    const cacheKey = shopProductOneCacheKey(id);
+    const cached = await this.redis.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const product = await this.prisma.product.findFirst({
       where: { id, status: ProductStatus.ACTIVE },
-      include: { category: { select: categorySelect } },
+      include: {
+        category: { select: categorySelect },
+        images: imagesInclude,
+      },
     });
 
     if (!product) {
       throw new NotFoundException('Product not found');
     }
 
-    return this.toProductResponse(product);
+    const result = this.toProductResponse(product);
+    await this.redis.set(cacheKey, result, SHOP_CATALOG_CACHE_TTL_SECONDS);
+    return result;
   }
 
   async findAdminProductById(id: string) {
     const product = await this.prisma.product.findUnique({
       where: { id },
-      include: { category: { select: categorySelect } },
+      include: {
+        category: { select: categorySelect },
+        images: imagesInclude,
+      },
     });
 
     if (!product) {
@@ -165,10 +219,11 @@ export class ProductCatalogService {
     return this.toAdminProductResponse(product);
   }
 
-  async create(createProductDto: CreateProductDto, imageFile: Express.Multer.File) {
-    if (!imageFile) {
-      throw new BadRequestException('A product image is required.');
-    }
+  async create(
+    createProductDto: CreateProductDto,
+    imageFiles: Express.Multer.File[],
+  ) {
+    const images = validateProductImageFiles(imageFiles, { required: true });
 
     await this.assertCategoryExists(createProductDto.categoryId);
 
@@ -184,34 +239,50 @@ export class ProductCatalogService {
       );
     }
 
-    const { secureUrl, publicId } = await this.cloudinary.uploadImage(
-      imageFile.buffer,
-      'hairlux/shop',
+    const productId = randomUUID();
+    const uploadedImages = await uploadProductImages(
+      this.cloudinary,
+      productId,
+      images,
     );
 
     const product = await this.prisma.product.create({
       data: {
+        id: productId,
         categoryId: createProductDto.categoryId,
         name: createProductDto.name,
         description: createProductDto.description,
         price: createProductDto.price,
         stock: createProductDto.stock ?? 0,
-        imageUrl: secureUrl,
-        imagePublicId: publicId,
         status: ProductStatus.ACTIVE,
+        images: {
+          create: uploadedImages.map((image) => ({
+            url: image.url,
+            publicId: image.publicId,
+            sortOrder: image.sortOrder,
+          })),
+        },
       },
-      include: { category: { select: categorySelect } },
+      include: {
+        category: { select: categorySelect },
+        images: imagesInclude,
+      },
     });
 
-    return this.toAdminProductResponse(product);
+    const response = this.toAdminProductResponse(product);
+    void invalidateShopCatalogCache(this.redis, { productId });
+    return response;
   }
 
   async update(
     id: string,
     updateProductDto: UpdateProductDto,
-    imageFile?: Express.Multer.File,
+    imageFiles?: Express.Multer.File[],
   ) {
-    const existing = await this.prisma.product.findUnique({ where: { id } });
+    const existing = await this.prisma.product.findUnique({
+      where: { id },
+      include: { images: imagesInclude },
+    });
     if (!existing) {
       throw new NotFoundException('Product not found');
     }
@@ -235,31 +306,87 @@ export class ProductCatalogService {
       }
     }
 
-    let imageUrl: string | undefined;
-    let imagePublicId: string | undefined;
-    if (imageFile) {
-      const uploaded = await this.cloudinary.uploadImage(
-        imageFile.buffer,
-        'hairlux/shop',
-      );
-      imageUrl = uploaded.secureUrl;
-      imagePublicId = uploaded.publicId;
+    const newImages = validateProductImageFiles(imageFiles);
+    const removeImageIds = updateProductDto.removeImageIds ?? [];
+    const imagesToRemove = existing.images.filter((image) =>
+      removeImageIds.includes(image.id),
+    );
 
-      if (existing.imagePublicId) {
-        await this.cloudinary.deleteImage(existing.imagePublicId);
-      }
+    if (removeImageIds.length > 0 && imagesToRemove.length !== removeImageIds.length) {
+      throw new BadRequestException(
+        'One or more image IDs to remove were not found on this product.',
+      );
+    }
+
+    const remainingCount =
+      existing.images.length - imagesToRemove.length + newImages.length;
+    assertTotalProductImageCount(remainingCount);
+
+    if (imagesToRemove.length > 0) {
+      await this.cloudinary.deleteImages(
+        imagesToRemove.map((image) => image.publicId),
+      );
+      await this.prisma.productImage.deleteMany({
+        where: {
+          id: { in: imagesToRemove.map((image) => image.id) },
+          productId: id,
+        },
+      });
+    }
+
+    if (newImages.length > 0) {
+      const remainingImages = existing.images.filter(
+        (image) => !removeImageIds.includes(image.id),
+      );
+      const nextSortOrder =
+        remainingImages.length > 0
+          ? Math.max(...remainingImages.map((image) => image.sortOrder)) + 1
+          : 0;
+      const uploadedImages = await uploadProductImages(
+        this.cloudinary,
+        id,
+        newImages,
+        nextSortOrder,
+      );
+
+      await this.prisma.productImage.createMany({
+        data: uploadedImages.map((image) => ({
+          productId: id,
+          url: image.url,
+          publicId: image.publicId,
+          sortOrder: image.sortOrder,
+        })),
+      });
     }
 
     const product = await this.prisma.product.update({
       where: { id },
       data: {
-        ...updateProductDto,
-        ...(imageUrl && { imageUrl, imagePublicId }),
+        ...(updateProductDto.categoryId !== undefined && {
+          categoryId: updateProductDto.categoryId,
+        }),
+        ...(updateProductDto.name !== undefined && {
+          name: updateProductDto.name,
+        }),
+        ...(updateProductDto.description !== undefined && {
+          description: updateProductDto.description,
+        }),
+        ...(updateProductDto.price !== undefined && {
+          price: updateProductDto.price,
+        }),
+        ...(updateProductDto.stock !== undefined && {
+          stock: updateProductDto.stock,
+        }),
       },
-      include: { category: { select: categorySelect } },
+      include: {
+        category: { select: categorySelect },
+        images: imagesInclude,
+      },
     });
 
-    return this.toAdminProductResponse(product);
+    const response = this.toAdminProductResponse(product);
+    void invalidateShopCatalogCache(this.redis, { productId: id });
+    return response;
   }
 
   async updateStatus(id: string, status: ProductStatus) {
@@ -273,23 +400,31 @@ export class ProductCatalogService {
       data: { status },
     });
 
-    return {
+    const response = {
       id: product.id,
       status: product.status,
     };
+    void invalidateShopCatalogCache(this.redis, { productId: id });
+    return response;
   }
 
   async remove(id: string) {
-    const existing = await this.prisma.product.findUnique({ where: { id } });
+    const existing = await this.prisma.product.findUnique({
+      where: { id },
+      include: { images: true },
+    });
     if (!existing) {
       throw new NotFoundException('Product not found');
     }
 
-    if (existing.imagePublicId) {
-      await this.cloudinary.deleteImage(existing.imagePublicId);
+    if (existing.images.length > 0) {
+      await this.cloudinary.deleteImages(
+        existing.images.map((image) => image.publicId),
+      );
     }
 
     await this.prisma.product.delete({ where: { id } });
+    void invalidateShopCatalogCache(this.redis, { productId: id });
   }
 
   async loadActiveProductsForCheckout(productIds: string[]) {

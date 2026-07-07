@@ -20,6 +20,7 @@ import {
   formatShopOrderResponse,
   normalizeShopOrderItems,
 } from '../utils/shop.utils';
+import { invalidateShopCatalogCache } from '../utils/shop-cache.utils';
 
 @Injectable()
 export class ShopOrderQueryService {
@@ -269,6 +270,7 @@ export class ShopOrderQueryService {
 
     if (isCancelling) {
       void this.redis.del(`wallet:balance:${order.userId}`);
+      void invalidateShopCatalogCache(this.redis);
     }
 
     return formatAdminShopOrderResponse(updated, updated.user);

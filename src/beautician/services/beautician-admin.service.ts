@@ -5,10 +5,14 @@ import { QueryBeauticiansDto } from '../dto/query-beauticians.dto';
 import { QueryPendingProfileReviewsDto } from '../dto/query-pending-profile-reviews.dto';
 import { UpdateAdminBeauticianDto } from '../dto/admin-beautician.dto';
 import { serializeBeauticianProfile } from '../utils/beautician-profile.utils';
+import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
 @Injectable()
 export class BeauticianAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly meCache: BeauticianMeCacheService,
+  ) {}
 
   async findAll(query: QueryBeauticiansDto) {
     const page = query.page ?? 1;
@@ -217,6 +221,8 @@ export class BeauticianAdminService {
         },
       },
     });
+
+    void this.meCache.invalidate(updated.userId);
 
     return serializeBeauticianProfile(updated);
   }

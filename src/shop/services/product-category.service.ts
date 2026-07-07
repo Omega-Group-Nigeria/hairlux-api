@@ -5,12 +5,21 @@ import {
 } from '@nestjs/common';
 import { ProductStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RedisService } from '../../redis/redis.service';
 import { CreateProductCategoryDto } from '../dto/create-product-category.dto';
 import { UpdateProductCategoryDto } from '../dto/update-product-category.dto';
+import {
+  invalidateShopCatalogCache,
+  SHOP_CATALOG_CACHE_TTL_SECONDS,
+  SHOP_CATEGORIES_PUBLIC_CACHE_KEY,
+} from '../utils/shop-cache.utils';
 
 @Injectable()
 export class ProductCategoryService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+  ) {}
 
   private toCategoryResponse(category: {
     id: string;
@@ -33,6 +42,11 @@ export class ProductCategoryService {
   }
 
   async findAllPublic() {
+    const cached = await this.redis.get(SHOP_CATEGORIES_PUBLIC_CACHE_KEY);
+    if (cached) {
+      return cached;
+    }
+
     const categories = await this.prisma.productCategory.findMany({
       orderBy: { name: 'asc' },
       select: {
@@ -51,7 +65,13 @@ export class ProductCategoryService {
       },
     });
 
-    return categories.map((category) => this.toCategoryResponse(category));
+    const result = categories.map((category) => this.toCategoryResponse(category));
+    await this.redis.set(
+      SHOP_CATEGORIES_PUBLIC_CACHE_KEY,
+      result,
+      SHOP_CATALOG_CACHE_TTL_SECONDS,
+    );
+    return result;
   }
 
   async findAllAdmin() {
@@ -99,7 +119,9 @@ export class ProductCategoryService {
       },
     });
 
-    return this.toCategoryResponse(category);
+    const response = this.toCategoryResponse(category);
+    void invalidateShopCatalogCache(this.redis);
+    return response;
   }
 
   async update(id: string, dto: UpdateProductCategoryDto) {
@@ -130,7 +152,9 @@ export class ProductCategoryService {
       },
     });
 
-    return this.toCategoryResponse(category);
+    const response = this.toCategoryResponse(category);
+    void invalidateShopCatalogCache(this.redis);
+    return response;
   }
 
   async remove(id: string) {
@@ -149,5 +173,6 @@ export class ProductCategoryService {
     }
 
     await this.prisma.productCategory.delete({ where: { id } });
+    void invalidateShopCatalogCache(this.redis);
   }
 }

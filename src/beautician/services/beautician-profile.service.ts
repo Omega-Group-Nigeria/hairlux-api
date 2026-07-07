@@ -98,6 +98,8 @@ export class BeauticianProfileService {
       },
     });
 
+    await this.meCache.invalidate(userId);
+
     return {
       certifications: updated.certifications,
       uploadedUrl: upload.secureUrl,

@@ -90,6 +90,9 @@ export class UserService {
       },
     });
 
+    void this.redis.del(`user:profile:${userId}`);
+    void this.redis.del(`beautician:me:stable:${userId}`);
+
     return user;
   }
 

@@ -81,16 +81,16 @@ export class ShopService {
     return this.productCatalogService.findAdminProductById(id);
   }
 
-  createProduct(dto: CreateProductDto, image: Express.Multer.File) {
-    return this.productCatalogService.create(dto, image);
+  createProduct(dto: CreateProductDto, images: Express.Multer.File[]) {
+    return this.productCatalogService.create(dto, images);
   }
 
   updateProduct(
     id: string,
     dto: UpdateProductDto,
-    image?: Express.Multer.File,
+    images?: Express.Multer.File[],
   ) {
-    return this.productCatalogService.update(id, dto, image);
+    return this.productCatalogService.update(id, dto, images);
   }
 
   updateProductStatus(id: string, status: ProductStatus) {

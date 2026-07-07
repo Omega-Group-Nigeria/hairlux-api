@@ -107,4 +107,9 @@ export class CloudinaryService {
       this.logger.warn(`Could not delete Cloudinary asset ${publicId}: ${err}`);
     }
   }
+
+  async deleteImages(publicIds: string[]): Promise<void> {
+    const uniqueIds = [...new Set(publicIds.filter(Boolean))];
+    await Promise.all(uniqueIds.map((publicId) => this.deleteImage(publicId)));
+  }
 }

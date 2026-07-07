@@ -22,6 +22,7 @@ import {
   toQuoteLineItems,
   toShopOrderItemsJson,
 } from '../utils/shop.utils';
+import { invalidateShopCatalogCache } from '../utils/shop-cache.utils';
 import { DeliveryPricingService } from './delivery-pricing.service';
 import { ProductCatalogService } from './product-catalog.service';
 import { ShopOrderCodeService } from './shop-order-code.service';
@@ -215,6 +216,7 @@ export class ShopCheckoutService {
       });
 
       void this.redis.del(`wallet:balance:${userId}`);
+      void invalidateShopCatalogCache(this.redis);
 
       void this.mailService.sendShopOrderConfirmationEmail(
         user.email,

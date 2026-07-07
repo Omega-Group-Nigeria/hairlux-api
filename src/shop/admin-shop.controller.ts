@@ -9,7 +9,7 @@ import {
   Post,
   Put,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -22,8 +22,9 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { MAX_PRODUCT_IMAGES } from './constants/product-images.constants';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -43,7 +44,7 @@ import { UpdateProductStatusDto } from './dto/update-product-status.dto';
 import { UpdateShopOrderStatusDto } from './dto/update-shop-order-status.dto';
 import { ShopService } from './shop.service';
 
-const imageInterceptor = FileInterceptor('image', {
+const productImagesInterceptor = FilesInterceptor('images', MAX_PRODUCT_IMAGES, {
   storage: memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
@@ -154,14 +155,19 @@ export class AdminShopController {
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary: 'Create shop product',
-    description: 'Create a product with image upload (stored as WebP on Cloudinary).',
+    description:
+      `Create a product with up to ${MAX_PRODUCT_IMAGES} images. Images are stored as WebP in a per-product Cloudinary folder.`,
   })
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['image', 'categoryId', 'name', 'price'],
+      required: ['images', 'categoryId', 'name', 'price'],
       properties: {
-        image: { type: 'string', format: 'binary' },
+        images: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          maxItems: MAX_PRODUCT_IMAGES,
+        },
         categoryId: { type: 'string', example: '123e4567-e89b-12d3-a456-426614174000' },
         name: { type: 'string', example: 'Hair Growth Oil' },
         description: { type: 'string' },
@@ -171,12 +177,12 @@ export class AdminShopController {
     },
   })
   @ApiResponse({ status: 201, description: 'Product created successfully' })
-  @UseInterceptors(imageInterceptor)
+  @UseInterceptors(productImagesInterceptor)
   async createProduct(
     @Body() dto: CreateProductDto,
-    @UploadedFile() image: Express.Multer.File,
+    @UploadedFiles() images: Express.Multer.File[],
   ) {
-    const data = await this.shopService.createProduct(dto, image);
+    const data = await this.shopService.createProduct(dto, images);
     return {
       success: true,
       message: 'Product created successfully',
@@ -193,7 +199,17 @@ export class AdminShopController {
     schema: {
       type: 'object',
       properties: {
-        image: { type: 'string', format: 'binary' },
+        images: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          maxItems: MAX_PRODUCT_IMAGES,
+        },
+        removeImageIds: {
+          type: 'string',
+          example: '["123e4567-e89b-12d3-a456-426614174000"]',
+          description:
+            'JSON array string of product image IDs to remove before adding new images.',
+        },
         categoryId: { type: 'string' },
         name: { type: 'string' },
         description: { type: 'string' },
@@ -203,13 +219,13 @@ export class AdminShopController {
     },
   })
   @ApiResponse({ status: 200, description: 'Product updated successfully' })
-  @UseInterceptors(imageInterceptor)
+  @UseInterceptors(productImagesInterceptor)
   async updateProduct(
     @Param('id') id: string,
     @Body() dto: UpdateProductDto,
-    @UploadedFile() image: Express.Multer.File,
+    @UploadedFiles() images: Express.Multer.File[],
   ) {
-    const data = await this.shopService.updateProduct(id, dto, image);
+    const data = await this.shopService.updateProduct(id, dto, images);
     return {
       success: true,
       message: 'Product updated successfully',
