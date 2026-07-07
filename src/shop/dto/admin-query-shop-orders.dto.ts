@@ -38,7 +38,7 @@ export class AdminQueryShopOrdersDto {
   userId?: string;
 
   @ApiPropertyOptional({
-    description: 'Search by order ID prefix or customer name/email',
+    description: 'Search by order code, order ID prefix, or customer name/email',
     example: 'amara',
   })
   @IsOptional()

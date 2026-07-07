@@ -8,6 +8,7 @@ import { DeliveryPricingService } from './services/delivery-pricing.service';
 import { ProductCatalogService } from './services/product-catalog.service';
 import { ProductCategoryService } from './services/product-category.service';
 import { ShopCheckoutService } from './services/shop-checkout.service';
+import { ShopOrderCodeService } from './services/shop-order-code.service';
 import { ShopOrderQueryService } from './services/shop-order-query.service';
 import { ShopController } from './shop.controller';
 import { ShopService } from './shop.service';
@@ -21,6 +22,7 @@ import { ShopService } from './shop.service';
     ProductCategoryService,
     DeliveryPricingService,
     ShopCheckoutService,
+    ShopOrderCodeService,
     ShopOrderQueryService,
   ],
   exports: [ShopService],

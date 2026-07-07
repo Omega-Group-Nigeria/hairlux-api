@@ -362,6 +362,7 @@ model DeliveryRegion {
 
 model ShopOrder {
   id                      String          @id @default(uuid())
+  orderCode               String          @unique @map("order_code")
   userId                  String          @map("user_id")
   addressId               String          @map("address_id")
   items                   Json

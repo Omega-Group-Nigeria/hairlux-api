@@ -24,6 +24,7 @@ import {
 } from '../utils/shop.utils';
 import { DeliveryPricingService } from './delivery-pricing.service';
 import { ProductCatalogService } from './product-catalog.service';
+import { ShopOrderCodeService } from './shop-order-code.service';
 
 @Injectable()
 export class ShopCheckoutService {
@@ -34,6 +35,7 @@ export class ShopCheckoutService {
     private walletDebitService: WalletDebitService,
     private mailService: MailService,
     private redis: RedisService,
+    private shopOrderCodeService: ShopOrderCodeService,
   ) {}
 
   private normalizeIdempotencyKey(value: unknown): string | null {
@@ -145,6 +147,7 @@ export class ShopCheckoutService {
 
     const context = await this.buildCheckoutContext(userId, dto);
     const orderId = randomUUID();
+    const orderCode = await this.shopOrderCodeService.generateOrderCode();
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -179,7 +182,7 @@ export class ShopCheckoutService {
           userId,
           amount: context.totalAmount,
           reference: `SHOP-${orderId}`,
-          description: `Shop order #${orderId.slice(0, 8)} — ${context.orderItems.length} item(s)`,
+          description: `Shop order ${orderCode} — ${context.orderItems.length} item(s)`,
           type: TransactionType.SHOP_PURCHASE,
           metadata: {
             purpose: 'SHOP_PURCHASE',
@@ -195,6 +198,7 @@ export class ShopCheckoutService {
         return tx.shopOrder.create({
           data: {
             id: orderId,
+            orderCode,
             userId,
             addressId: dto.addressId,
             items: toShopOrderItemsJson(context.orderItems),
@@ -217,6 +221,7 @@ export class ShopCheckoutService {
         user.firstName,
         {
           orderId: order.id,
+          orderCode: order.orderCode,
           items: toQuoteLineItems(context.orderItems),
           deliveryAddress: context.addressSnapshot.fullAddress,
           subtotal: context.subtotal,
@@ -230,7 +235,10 @@ export class ShopCheckoutService {
         message: 'Shop order placed successfully',
       };
     } catch (err) {
-      if (this.isUniqueConstraintError(err, 'idempotencyKey')) {
+      if (
+        this.isUniqueConstraintError(err, 'idempotencyKey') ||
+        this.isUniqueConstraintError(err, 'orderCode')
+      ) {
         const duplicate = await this.prisma.shopOrder.findFirst({
           where: { userId, idempotencyKey },
         });

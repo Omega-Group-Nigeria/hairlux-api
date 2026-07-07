@@ -149,6 +149,7 @@ export class MailService {
       paymentMethod: 'WALLET' | 'CASH' | 'MONNIFY';
       bookingIds: string[];
       reservationCode: string;
+      isHomeService?: boolean;
     },
   ) {
     try {
@@ -279,7 +280,7 @@ export class MailService {
         'send',
         {
           to: email,
-          subject: `Shop Order Confirmed [${order.orderId.slice(0, 8)}] — HairLux`,
+          subject: `Shop Order Confirmed [${order.orderCode}] — HairLux`,
           html: shopOrderConfirmationTemplate(firstName, order),
         },
         {

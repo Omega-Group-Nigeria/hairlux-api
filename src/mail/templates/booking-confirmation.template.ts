@@ -9,6 +9,7 @@ export interface BookingConfirmationData {
   paymentMethod: 'WALLET' | 'CASH' | 'MONNIFY';
   bookingIds: string[];
   reservationCode: string;
+  isHomeService?: boolean;
 }
 
 export function bookingConfirmationTemplate(
@@ -39,29 +40,45 @@ export function bookingConfirmationTemplate(
       : booking.paymentMethod === 'MONNIFY'
         ? 'Paid Online (Monnify)'
         : 'Cash on Delivery';
+  const isHomeService = booking.isHomeService === true;
   const statusLabel = isPrepaid ? 'CONFIRMED' : 'PENDING';
   const statusColor = isPrepaid ? '#1a7f4b' : '#b45309';
   const statusBg = isPrepaid ? '#d1fae5' : '#fef3c7';
+  const locationLabel = isHomeService ? 'Service Address' : 'Location';
+  const headline = isHomeService ? "You're all set!" : "You're all booked!";
+  const introText = isHomeService
+    ? `Hi <strong>${firstName}</strong>, your home service booking is confirmed. We'll take care of the rest.`
+    : `Hi <strong>${firstName}</strong>, your appointment has been confirmed. We can't wait to see you!`;
+  const reservationCodeLabel = isHomeService ? 'Booking Reference' : 'Reservation Code';
+  const reservationCodeHint = isHomeService
+    ? 'Keep this code handy for support or tracking your booking'
+    : 'Present this code at the salon or to your stylist';
+  const beauticianAssignmentNote = isHomeService
+    ? `<p style="margin:0 0 24px;font-size:12px;color:#888888;line-height:1.5;text-align:center;">
+        A beautician will be assigned shortly — we'll notify you once they're confirmed.
+      </p>`
+    : '';
 
   const content = `
     <p style="margin:0 0 4px;font-size:36px;text-align:center;">✨</p>
-    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#1A1A1A;text-align:center;">You're all booked!</h1>
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#1A1A1A;text-align:center;">${headline}</h1>
     <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:1.6;text-align:center;">
-      Hi <strong>${firstName}</strong>, your appointment has been confirmed. We can't wait to see you!
+      ${introText}
     </p>
 
     <!-- Status badge -->
     <p style="margin:0 0 24px;text-align:center;">
       <span style="display:inline-block;padding:5px 14px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;background-color:${statusBg};color:${statusColor};">${statusLabel}</span>
     </p>
+    ${beauticianAssignmentNote}
 
     <!-- Reservation Code Block -->
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
       <tr>
         <td style="background-color:#1A1A1A;border-radius:12px;padding:20px 24px;text-align:center;">
-          <p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:#C9A872;">Reservation Code</p>
+          <p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:#C9A872;">${reservationCodeLabel}</p>
           <p style="margin:0 0 8px;font-size:32px;font-weight:700;letter-spacing:6px;color:#FFFFFF;font-family:monospace,monospace;">${booking.reservationCode}</p>
-          <p style="margin:0;font-size:12px;color:#888888;">Present this code at the salon or to your stylist</p>
+          <p style="margin:0;font-size:12px;color:#888888;">${reservationCodeHint}</p>
         </td>
       </tr>
     </table>
@@ -91,7 +108,7 @@ export function bookingConfirmationTemplate(
       </tr>
       <tr>
         <td style="padding:14px 20px;">
-          <p style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#AAAAAA;">Location</p>
+          <p style="margin:0;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#AAAAAA;">${locationLabel}</p>
         </td>
         <td style="padding:14px 20px;">
           <p style="margin:0;font-size:14px;font-weight:600;color:#1A1A1A;">${booking.address}</p>
@@ -128,10 +145,13 @@ export function bookingConfirmationTemplate(
   `;
 
   const firstServiceName = booking.services[0]?.name ?? 'your service';
+  const previewText = isHomeService
+    ? `Your home service on ${booking.date} at ${booking.time} is confirmed. A beautician will be assigned shortly.`
+    : `Your ${firstServiceName} appointment on ${booking.date} at ${booking.time} is confirmed`;
 
   return baseTemplate({
     title: 'Booking Confirmed — HairLux',
-    previewText: `Your ${firstServiceName} appointment on ${booking.date} at ${booking.time} is confirmed`,
+    previewText,
     content,
   });
 }

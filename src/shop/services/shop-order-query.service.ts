@@ -109,6 +109,7 @@ export class ShopOrderQueryService {
       const term = search.trim();
       where.OR = [
         { id: { contains: term, mode: 'insensitive' } },
+        { orderCode: { contains: term, mode: 'insensitive' } },
         {
           user: {
             OR: [
@@ -251,7 +252,7 @@ export class ShopOrderQueryService {
               amount: refundAmount,
               type: TransactionType.CREDIT,
               paymentMethod: 'WALLET',
-              description: `Refund for cancelled shop order #${order.id.slice(0, 8)}`,
+              description: `Refund for cancelled shop order ${order.orderCode}`,
               reference: `REFUND-SHOP-${order.id}`,
               status: TransactionStatus.COMPLETED,
               metadata: {

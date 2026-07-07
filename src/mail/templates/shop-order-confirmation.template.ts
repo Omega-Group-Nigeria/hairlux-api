@@ -3,6 +3,7 @@ import { ShopQuoteLineItem } from '../../shop/types/shop-order-item.interface';
 
 export interface ShopOrderConfirmationData {
   orderId: string;
+  orderCode: string;
   items: ShopQuoteLineItem[];
   deliveryAddress: string;
   subtotal: number;
@@ -36,8 +37,8 @@ export function shopOrderConfirmationTemplate(
     </p>
 
     <div style="background:#F9F9F9;border-radius:12px;padding:16px 20px;margin-bottom:24px;">
-      <p style="margin:0 0 4px;font-size:12px;color:#888888;text-transform:uppercase;letter-spacing:0.5px;">Order ID</p>
-      <p style="margin:0;font-size:16px;font-weight:700;color:#1A1A1A;">${order.orderId}</p>
+      <p style="margin:0 0 4px;font-size:12px;color:#888888;text-transform:uppercase;letter-spacing:0.5px;">Order Code</p>
+      <p style="margin:0;font-size:16px;font-weight:700;color:#1A1A1A;letter-spacing:1px;">${order.orderCode}</p>
     </div>
 
     <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
@@ -71,6 +72,6 @@ export function shopOrderConfirmationTemplate(
   return baseTemplate({
     title: 'Order Confirmed — HairLux Shop',
     content,
-    previewText: `Your HairLux shop order ${order.orderId.slice(0, 8)} is confirmed.`,
+    previewText: `Your HairLux shop order ${order.orderCode} is confirmed.`,
   });
 }

@@ -126,6 +126,7 @@ export function toDeliveryAddressSnapshotJson(
 export function formatShopOrderResponse(order: ShopOrder) {
   return {
     id: order.id,
+    orderCode: order.orderCode,
     userId: order.userId,
     addressId: order.addressId,
     items: normalizeShopOrderItems(order.items),

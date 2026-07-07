@@ -41,6 +41,7 @@ import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
 import { BookingLinePricingService } from './booking-line-pricing.service';
 import { HomeServiceBookingService } from '../../beautician/home-service-booking/home-service-booking.service';
+import { bookingNeedsBeauticianAssignment } from '../../beautician/matching/utils/booking-assignment.utils';
 
 @Injectable()
 export class BookingPaymentService {
@@ -490,6 +491,10 @@ export class BookingPaymentService {
 
         const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
         const emailServices = toEmailServiceLines(serviceRecords);
+        const isHomeService = bookingNeedsBeauticianAssignment(
+          effectiveBookingType,
+          serviceRecords,
+        );
 
         if (user) {
           void this.mailService.sendBookingConfirmationEmail(
@@ -504,6 +509,7 @@ export class BookingPaymentService {
               paymentMethod: 'WALLET',
               bookingIds: [booking.id],
               reservationCode: booking.reservationCode,
+              isHomeService,
             },
           );
         }
@@ -603,6 +609,10 @@ export class BookingPaymentService {
 
       const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
       const emailServices = toEmailServiceLines(serviceRecords);
+      const isHomeService = bookingNeedsBeauticianAssignment(
+        effectiveBookingType,
+        serviceRecords,
+      );
 
       if (user) {
         void this.mailService.sendBookingConfirmationEmail(
@@ -617,6 +627,7 @@ export class BookingPaymentService {
             paymentMethod: 'CASH',
             bookingIds: [booking.id],
             reservationCode: booking.reservationCode,
+            isHomeService,
           },
         );
       }
@@ -1431,6 +1442,10 @@ export class BookingPaymentService {
     }
 
     const emailServices = toEmailServiceLines(context.serviceRecords);
+    const isHomeService = bookingNeedsBeauticianAssignment(
+      context.bookingType,
+      context.serviceRecords,
+    );
 
     void this.mailService.sendBookingConfirmationEmail(
       context.user.email,
@@ -1444,6 +1459,7 @@ export class BookingPaymentService {
         paymentMethod: 'MONNIFY',
         bookingIds: [result.booking.id],
         reservationCode: result.reservationCode,
+        isHomeService,
       },
     );
 
