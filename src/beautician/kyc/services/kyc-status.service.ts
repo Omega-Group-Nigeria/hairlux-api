@@ -82,18 +82,11 @@ export class KycStatusService {
   }
 
   async applyWebhookUpdate(payload: Record<string, unknown>) {
-    let userId = this.resolveUserId(payload);
-
-    if (!userId) {
-      const sessionId = this.extractSessionId(payload);
-      if (sessionId) {
-        const bySession = await this.prisma.beauticianProfile.findFirst({
-          where: { qoreIdSessionId: sessionId },
-          select: { userId: true },
-        });
-        userId = bySession?.userId ?? null;
-      }
+    if (!this.shouldApplyWebhookUpdate(payload)) {
+      return null;
     }
+
+    let userId = await this.resolveUserId(payload);
 
     if (!userId) {
       throw new BadRequestException('Unable to resolve beautician from webhook');
@@ -115,6 +108,8 @@ export class KycStatusService {
     const mappedStatus = await this.mapWebhookStatus(payload);
     const qoreIdCustomerId = this.extractCustomerId(payload);
 
+    const customerReference = this.extractCustomerReference(payload);
+
     const updated = await this.prisma.beauticianProfile.update({
       where: { userId },
       data: {
@@ -123,6 +118,7 @@ export class KycStatusService {
           kycVerifiedAt: new Date(),
         }),
         ...(qoreIdCustomerId && { qoreIdCustomerId }),
+        ...(customerReference && { qoreIdCustomerReference: customerReference }),
       },
       include: {
         user: {
@@ -156,16 +152,25 @@ export class KycStatusService {
     const normalized = String(rawStatus ?? '').toLowerCase();
 
     if (
-      ['verified', 'success', 'successful', 'completed', 'approved'].includes(
-        normalized,
-      )
+      [
+        'verified',
+        'success',
+        'successful',
+        'completed',
+        'complete',
+        'approved',
+      ].includes(normalized)
     ) {
       const settings = await this.prisma.homeServiceSettings.findFirst();
       const autoApprove = settings?.kycAutoApprove ?? true;
       return autoApprove ? KycStatus.VERIFIED : KycStatus.NEEDS_REVIEW;
     }
 
-    if (['rejected', 'failed', 'failure', 'declined'].includes(normalized)) {
+    if (
+      ['rejected', 'failed', 'failure', 'declined', 'unverified'].includes(
+        normalized,
+      )
+    ) {
       return KycStatus.REJECTED;
     }
 
@@ -184,17 +189,38 @@ export class KycStatusService {
     return KycStatus.NEEDS_REVIEW;
   }
 
+  private shouldApplyWebhookUpdate(payload: Record<string, unknown>): boolean {
+    const event = payload.event;
+    if (typeof event === 'string' && event !== 'workflow') {
+      return false;
+    }
+
+    const eventType = payload.event_type;
+    if (typeof eventType !== 'string') {
+      return true;
+    }
+
+    return eventType === 'verification_completed';
+  }
+
   private extractStatus(payload: Record<string, unknown>): string | undefined {
     const data =
       payload.data && typeof payload.data === 'object'
         ? (payload.data as Record<string, unknown>)
         : payload;
 
+    if (typeof data.status === 'string' && data.status.trim()) {
+      return data.status;
+    }
+
+    const nestedStatus = this.readNestedStatusValue(data.status);
+    if (nestedStatus) {
+      return nestedStatus;
+    }
+
     const candidates = [
-      data.status,
       data.verificationStatus,
       data.kycStatus,
-      payload.event,
       payload.status,
     ];
 
@@ -202,12 +228,40 @@ export class KycStatusService {
       if (typeof value === 'string' && value.trim()) {
         return value;
       }
+
+      const nested = this.readNestedStatusValue(value);
+      if (nested) {
+        return nested;
+      }
     }
 
     return undefined;
   }
 
-  private resolveUserId(payload: Record<string, unknown>): string | null {
+  private readNestedStatusValue(
+    value: unknown,
+  ): string | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return undefined;
+    }
+
+    const statusObj = value as Record<string, unknown>;
+    const status = statusObj.status ?? statusObj.subStatus;
+    if (typeof status === 'string' && status.trim()) {
+      return status;
+    }
+
+    const state = statusObj.state;
+    if (typeof state === 'string' && state.trim()) {
+      return state;
+    }
+
+    return undefined;
+  }
+
+  private async resolveUserId(
+    payload: Record<string, unknown>,
+  ): Promise<string | null> {
     const data =
       payload.data && typeof payload.data === 'object'
         ? (payload.data as Record<string, unknown>)
@@ -218,15 +272,66 @@ export class KycStatusService {
       return subjectRef;
     }
 
-    const reference = data.reference ?? payload.reference;
-    if (typeof reference === 'string') {
-      const match = reference.match(
-        /^beautician-kyc-([0-9a-f-]{36})-\d+$/i,
-      );
-      if (match) return match[1];
+    const referenceCandidates = [
+      data.customerReference,
+      data.customer_reference,
+      data.reference,
+      payload.reference,
+    ];
+
+    for (const reference of referenceCandidates) {
+      const userId = this.parseBeauticianKycReference(reference);
+      if (userId) {
+        return userId;
+      }
+    }
+
+    for (const reference of referenceCandidates) {
+      if (typeof reference !== 'string' || !reference.trim()) {
+        continue;
+      }
+
+      const byStoredReference = await this.prisma.beauticianProfile.findFirst({
+        where: { qoreIdCustomerReference: reference },
+        select: { userId: true },
+      });
+      if (byStoredReference?.userId) {
+        return byStoredReference.userId;
+      }
+    }
+
+    const qoreIdRequestId = this.extractCustomerId(payload);
+    if (qoreIdRequestId) {
+      const byQoreId = await this.prisma.beauticianProfile.findFirst({
+        where: { qoreIdCustomerId: qoreIdRequestId },
+        select: { userId: true },
+      });
+      if (byQoreId?.userId) {
+        return byQoreId.userId;
+      }
+    }
+
+    const sessionId = this.extractSessionId(payload);
+    if (sessionId) {
+      const bySession = await this.prisma.beauticianProfile.findFirst({
+        where: { qoreIdSessionId: sessionId },
+        select: { userId: true },
+      });
+      if (bySession?.userId) {
+        return bySession.userId;
+      }
     }
 
     return null;
+  }
+
+  private parseBeauticianKycReference(reference: unknown): string | null {
+    if (typeof reference !== 'string') {
+      return null;
+    }
+
+    const match = reference.match(/^beautician-kyc-([0-9a-f-]{36})-\d+$/i);
+    return match ? match[1] : null;
   }
 
   private extractSessionId(payload: Record<string, unknown>): string | null {
@@ -239,6 +344,25 @@ export class KycStatusService {
     return typeof sessionId === 'string' ? sessionId : null;
   }
 
+  private extractCustomerReference(
+    payload: Record<string, unknown>,
+  ): string | null {
+    const data =
+      payload.data && typeof payload.data === 'object'
+        ? (payload.data as Record<string, unknown>)
+        : payload;
+
+    const reference =
+      data.customerReference ??
+      data.customer_reference ??
+      data.reference ??
+      payload.reference;
+
+    return typeof reference === 'string' && reference.trim()
+      ? reference.trim()
+      : null;
+  }
+
   private extractCustomerId(payload: Record<string, unknown>): string | null {
     const data =
       payload.data && typeof payload.data === 'object'
@@ -246,6 +370,7 @@ export class KycStatusService {
         : payload;
 
     const id =
+      data.id ??
       data.customerId ??
       data.customer_id ??
       data.qoreIdCustomerId ??

@@ -25,9 +25,9 @@ describe('QoreidWebhookService', () => {
     service = module.get<QoreidWebhookService>(QoreidWebhookService);
   });
 
-  it('accepts a valid HMAC signature', () => {
+  it('accepts a valid HMAC-SHA512 signature', () => {
     const rawBody = JSON.stringify({ status: 'verified' });
-    const signature = createHmac('sha256', secret)
+    const signature = createHmac('sha512', secret)
       .update(rawBody)
       .digest('hex');
 

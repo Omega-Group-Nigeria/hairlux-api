@@ -55,11 +55,11 @@ export class QoreidWebhookService {
       throw new UnauthorizedException('Missing QoreID webhook signature');
     }
 
-    const expected = createHmac('sha256', secret)
+    const expected = createHmac('sha512', secret)
       .update(rawBody)
       .digest('hex');
 
-    const provided = signatureHeader.replace(/^sha256=/i, '').trim();
+    const provided = signatureHeader.replace(/^sha512=/i, '').trim();
 
     try {
       const valid = timingSafeEqual(

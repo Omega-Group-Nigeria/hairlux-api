@@ -31,13 +31,15 @@ export class QoreidWebhookController {
   async handleWebhook(
     @Req() req: Request,
     @Body() body?: Record<string, unknown>,
+    @Headers('x-verifyme-signature') verifymeSignature?: string,
     @Headers('x-qoreid-signature') signature?: string,
     @Headers('x-qoreid-hmac-signature') hmacSignature?: string,
   ) {
     const rawBody =
       (req as Request & { rawBody?: Buffer }).rawBody?.toString('utf8') ??
       (body !== undefined && body !== null ? JSON.stringify(body) : '');
-    const signatureHeader = signature ?? hmacSignature;
+    const signatureHeader =
+      verifymeSignature ?? signature ?? hmacSignature;
 
     if (
       this.webhookService.isRegistrationProbe({
@@ -55,8 +57,13 @@ export class QoreidWebhookController {
       throw new BadRequestException('Webhook payload is required');
     }
 
-    await this.kycStatusService.applyWebhookUpdate(body);
+    const updated = await this.kycStatusService.applyWebhookUpdate(body);
 
-    return { success: true, message: 'Webhook processed' };
+    return {
+      success: true,
+      message: updated
+        ? 'Webhook processed'
+        : 'Webhook acknowledged (no action required)',
+    };
   }
 }
