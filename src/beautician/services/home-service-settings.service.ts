@@ -4,7 +4,6 @@ import { UpdateHomeServiceSettingsDto } from '../dto/update-home-service-setting
 
 const DEFAULT_SETTINGS = {
   commissionRate: 0.7,
-  jobOfferTimeoutMinutes: 4,
   kycAutoApprove: true,
   arrivalVerificationExpiryMinutes: 15,
   serviceCompletionBufferMinutes: 60,
@@ -32,9 +31,6 @@ export class HomeServiceSettingsService {
       data: {
         ...(dto.commissionRate !== undefined && {
           commissionRate: dto.commissionRate,
-        }),
-        ...(dto.jobOfferTimeoutMinutes !== undefined && {
-          jobOfferTimeoutMinutes: dto.jobOfferTimeoutMinutes,
         }),
         ...(dto.kycAutoApprove !== undefined && {
           kycAutoApprove: dto.kycAutoApprove,

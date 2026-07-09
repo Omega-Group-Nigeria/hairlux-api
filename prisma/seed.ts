@@ -51,7 +51,6 @@ async function seedHomeServiceSettings() {
   const settings = await prisma.homeServiceSettings.create({
     data: {
       commissionRate: 0.7,
-      jobOfferTimeoutMinutes: 4,
       kycAutoApprove: true,
       arrivalVerificationExpiryMinutes: 15,
       serviceCompletionBufferMinutes: 60,
@@ -75,7 +74,6 @@ async function seedDispatchConfig() {
     { key: 'offer_ttl_seconds_tier_2', value: '60', valueType: 'int' },
     { key: 'offer_ttl_seconds_tier_3', value: '75', valueType: 'int' },
     { key: 'inter_tier_delay_seconds', value: '15', valueType: 'int' },
-    { key: 'rejection_cooldown_seconds', value: '120', valueType: 'int' },
     { key: 'location_staleness_minutes', value: '5', valueType: 'int' },
     { key: 'location_rematch_min_distance_m', value: '500', valueType: 'int' },
     { key: 'score_weight_distance', value: '1', valueType: 'float' },

@@ -51,13 +51,6 @@ export class UpdateDispatchSettingsDto {
   @Max(600)
   interTierDelaySeconds?: number;
 
-  @ApiPropertyOptional({ example: 120 })
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(3600)
-  rejectionCooldownSeconds?: number;
-
   @ApiPropertyOptional({ example: 5 })
   @IsOptional()
   @IsInt()

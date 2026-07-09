@@ -170,11 +170,21 @@ export class MatchingOrchestratorService {
     const excludeIds = await this.offerExclusion.getExcludedBeauticianIds(
       bookingId,
     );
+    const rotateAfterBeauticianUserId =
+      await this.offerExclusion.getLastOfferedBeauticianUserId(bookingId);
     const radiusKm = this.matchingConfig.resolveRadiusKm(attempt);
 
     this.logger.log(
       `Matching booking ${bookingId} attempt ${attempt}/${maxAttempts} within ${radiusKm}km`,
     );
+
+    const searchContext = {
+      customerLat: coordinates.lat,
+      customerLng: coordinates.lng,
+      requiredServiceIds,
+      excludeIds,
+      tierRadiusKm: radiusKm,
+    };
 
     const candidate = await this.candidateFinder.getNextCandidate({
       bookingId,
@@ -184,6 +194,7 @@ export class MatchingOrchestratorService {
       radiusKm,
       requiredServiceIds,
       excludeBeauticianUserIds: excludeIds,
+      rotateAfterBeauticianUserId,
     });
 
     await this.dispatchState.recordEvent(
@@ -194,19 +205,14 @@ export class MatchingOrchestratorService {
         radiusKm,
         candidateCount: candidate ? 1 : 0,
         excludedCount: excludeIds.length,
+        rotateAfterBeauticianUserId,
       },
     );
 
     const homeServiceAmount = sumHomeServiceAmount(services);
 
     if (!candidate) {
-      await this.scheduleNextMatchingAttempt(bookingId, attempt, {
-        customerLat: coordinates.lat,
-        customerLng: coordinates.lng,
-        requiredServiceIds,
-        excludeIds,
-        tierRadiusKm: radiusKm,
-      });
+      await this.handleNoCandidate(bookingId, attempt, searchContext);
       return;
     }
 
@@ -603,6 +609,106 @@ export class MatchingOrchestratorService {
       eventType: DISPATCH_EVENT_TYPES.DISPATCH_CANCELLED,
       idempotencyKey: `dispatch-cancelled:${bookingId}`,
     });
+  }
+
+  private async handleNoCandidate(
+    bookingId: string,
+    attempt: number,
+    searchContext: {
+      customerLat: number;
+      customerLng: number;
+      requiredServiceIds: string[];
+      excludeIds: string[];
+      tierRadiusKm: number;
+    },
+  ) {
+    const declinedIds = await this.offerExclusion.getDeclinedBeauticianIds(
+      bookingId,
+    );
+    const maxRadiusKm = this.matchingConfig.getMaxRadiusKm();
+
+    const statsAll = await this.poolAnalyzer.analyze({
+      customerLat: searchContext.customerLat,
+      customerLng: searchContext.customerLng,
+      tierRadiusKm: searchContext.tierRadiusKm,
+      maxRadiusKm,
+      requiredServiceIds: searchContext.requiredServiceIds,
+      excludeBeauticianUserIds: [],
+    });
+
+    const statsEligible = await this.poolAnalyzer.analyze({
+      customerLat: searchContext.customerLat,
+      customerLng: searchContext.customerLng,
+      tierRadiusKm: searchContext.tierRadiusKm,
+      maxRadiusKm,
+      requiredServiceIds: searchContext.requiredServiceIds,
+      excludeBeauticianUserIds: declinedIds,
+    });
+
+    if (
+      statsEligible.inTierRadiusCount === 0 &&
+      declinedIds.length > 0 &&
+      statsAll.inTierRadiusCount > 0
+    ) {
+      await this.markMatchingExhausted(
+        bookingId,
+        MatchingExhaustedReason.OFFERS_NOT_ACCEPTED,
+      );
+      return;
+    }
+
+    if (statsAll.onlineEligibleCount === 0) {
+      await this.scheduleSameTierRetry(bookingId, attempt);
+      return;
+    }
+
+    const maxAttempts = this.matchingConfig.getMaxAttempts();
+    if (statsEligible.inTierRadiusCount === 0 && attempt < maxAttempts) {
+      await this.scheduleNextMatchingAttempt(bookingId, attempt, searchContext);
+      return;
+    }
+
+    if (statsEligible.inTierRadiusCount === 0) {
+      await this.markMatchingExhaustedFromContext(bookingId, {
+        ...searchContext,
+        excludeIds: declinedIds,
+      });
+      return;
+    }
+
+    await this.scheduleSameTierRetry(bookingId, attempt);
+  }
+
+  private async scheduleSameTierRetry(bookingId: string, attempt: number) {
+    const delaySeconds = this.matchingConfig.getInterTierDelaySeconds();
+    const delayMs = delaySeconds * 1000;
+
+    await this.dispatchState.recordEvent(
+      bookingId,
+      DISPATCH_EVENT_TYPES.CANDIDATES_SEARCHED,
+      {
+        tier: attempt,
+        phase: 'wait_for_online_candidates',
+        delaySeconds,
+      },
+      `wait-online:${bookingId}:${Date.now()}`,
+    );
+
+    await this.matchingQueue.add(
+      'create-offers',
+      { bookingId, matchingAttempt: attempt },
+      {
+        delay: delayMs,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        jobId: `matching-wait-online:${bookingId}:${Date.now()}`,
+      },
+    );
+
+    this.logger.log(
+      `Scheduled same-tier retry for booking ${bookingId} (tier ${attempt}) in ${delaySeconds}s — waiting for online beauticians`,
+    );
   }
 
   private async scheduleNextMatchingAttempt(

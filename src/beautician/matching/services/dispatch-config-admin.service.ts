@@ -41,10 +41,6 @@ export class DispatchConfigAdminService {
         DISPATCH_CONFIG_KEYS.INTER_TIER_DELAY_SECONDS,
         15,
       ),
-      rejectionCooldownSeconds: this.resolver.getInt(
-        DISPATCH_CONFIG_KEYS.REJECTION_COOLDOWN_SECONDS,
-        120,
-      ),
       locationStalenessMinutes: this.resolver.getInt(
         DISPATCH_CONFIG_KEYS.LOCATION_STALENESS_MINUTES,
         5,
@@ -141,13 +137,6 @@ export class DispatchConfigAdminService {
       updates.push({
         key: DISPATCH_CONFIG_KEYS.INTER_TIER_DELAY_SECONDS,
         value: String(dto.interTierDelaySeconds),
-        valueType: 'int',
-      });
-    }
-    if (dto.rejectionCooldownSeconds !== undefined) {
-      updates.push({
-        key: DISPATCH_CONFIG_KEYS.REJECTION_COOLDOWN_SECONDS,
-        value: String(dto.rejectionCooldownSeconds),
         valueType: 'int',
       });
     }

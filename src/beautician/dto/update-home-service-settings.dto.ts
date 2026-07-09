@@ -18,13 +18,6 @@ export class UpdateHomeServiceSettingsDto {
   @Max(1)
   commissionRate?: number;
 
-  @ApiPropertyOptional({ example: 4 })
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(60)
-  jobOfferTimeoutMinutes?: number;
-
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   @IsBoolean()

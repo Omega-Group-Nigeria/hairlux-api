@@ -16,7 +16,6 @@ export const DISPATCH_CONFIG_KEYS = {
   OFFER_TTL_SECONDS_TIER_2: 'offer_ttl_seconds_tier_2',
   OFFER_TTL_SECONDS_TIER_3: 'offer_ttl_seconds_tier_3',
   INTER_TIER_DELAY_SECONDS: 'inter_tier_delay_seconds',
-  REJECTION_COOLDOWN_SECONDS: 'rejection_cooldown_seconds',
   LOCATION_STALENESS_MINUTES: 'location_staleness_minutes',
   LOCATION_REMATCH_MIN_DISTANCE_M: 'location_rematch_min_distance_m',
   SCORE_WEIGHT_DISTANCE: 'score_weight_distance',
@@ -48,11 +47,6 @@ export const DISPATCH_CONFIG_DEFAULTS: DispatchConfigDefault[] = [
   {
     key: DISPATCH_CONFIG_KEYS.INTER_TIER_DELAY_SECONDS,
     value: '15',
-    valueType: 'int',
-  },
-  {
-    key: DISPATCH_CONFIG_KEYS.REJECTION_COOLDOWN_SECONDS,
-    value: '120',
     valueType: 'int',
   },
   {

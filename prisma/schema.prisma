@@ -1073,7 +1073,6 @@ model DispatchConfig {
 model HomeServiceSettings {
   id                              String     @id @default(uuid())
   commissionRate                    Decimal    @default(0.70) @db.Decimal(5, 4) @map("commission_rate")
-  jobOfferTimeoutMinutes          Int        @default(4) @map("job_offer_timeout_minutes")
   kycAutoApprove                  Boolean    @default(true) @map("kyc_auto_approve")
   arrivalVerificationExpiryMinutes Int       @default(15) @map("arrival_verification_expiry_minutes")
   serviceCompletionBufferMinutes  Int        @default(60) @map("service_completion_buffer_minutes")

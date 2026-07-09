@@ -42,13 +42,6 @@ export class MatchingConfigService {
     );
   }
 
-  getRejectionCooldownSeconds(): number {
-    return this.resolver.getInt(
-      DISPATCH_CONFIG_KEYS.REJECTION_COOLDOWN_SECONDS,
-      120,
-    );
-  }
-
   getLocationStalenessMinutes(): number {
     return this.resolver.getInt(
       DISPATCH_CONFIG_KEYS.LOCATION_STALENESS_MINUTES,

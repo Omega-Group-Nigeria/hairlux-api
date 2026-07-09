@@ -10,6 +10,7 @@ import { CandidateEligibilityService } from './candidate-eligibility.service';
 import { CandidateMetricsService } from './candidate-metrics.service';
 import { CandidateScorerService } from './candidate-scorer.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
+import { pickNextCandidateInRotation } from '../utils/offer-rotation.util';
 
 export interface MatchingCandidate {
   userId: string;
@@ -151,10 +152,13 @@ export class CandidateFinderService {
   }
 
   async getNextCandidate(
-    params: Parameters<CandidateFinderService['findRankedCandidates']>[0],
+    params: Parameters<CandidateFinderService['findRankedCandidates']>[0] & {
+      rotateAfterBeauticianUserId?: string | null;
+    },
   ): Promise<MatchingCandidate | null> {
-    const ranked = await this.findRankedCandidates(params);
-    return ranked[0] ?? null;
+    const { rotateAfterBeauticianUserId, ...rankedParams } = params;
+    const ranked = await this.findRankedCandidates(rankedParams);
+    return pickNextCandidateInRotation(ranked, rotateAfterBeauticianUserId);
   }
 
   private async loadProfilesByUserIds(userIds: string[]) {
