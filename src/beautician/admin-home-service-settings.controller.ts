@@ -40,7 +40,11 @@ export class AdminHomeServiceSettingsController {
 
   @Put()
   @Permission(PERMISSIONS.SETTINGS_MANAGE)
-  @ApiOperation({ summary: 'Update home service settings' })
+  @ApiOperation({
+    summary: 'Update home service settings',
+    description:
+      'Partial update. Set dailyPayoutLimit (Naira) for the platform-wide daily payout pool, or null to remove the limit.',
+  })
   @ApiResponse({ status: 200, description: 'Settings updated successfully' })
   async updateSettings(@Body() dto: UpdateHomeServiceSettingsDto) {
     const data = await this.homeServiceSettingsService.updateSettings(dto);

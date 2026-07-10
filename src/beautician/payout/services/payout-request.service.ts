@@ -13,6 +13,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { BeauticianQueryPayoutsDto } from '../dto/beautician-query-payouts.dto';
 import { AutoPayoutService } from './auto-payout.service';
 import { BeauticianBankAccountService } from './beautician-bank-account.service';
+import { DailyPayoutLimitService } from './daily-payout-limit.service';
 
 @Injectable()
 export class PayoutRequestService {
@@ -20,6 +21,7 @@ export class PayoutRequestService {
     private readonly prisma: PrismaService,
     private readonly autoPayoutService: AutoPayoutService,
     private readonly bankAccountService: BeauticianBankAccountService,
+    private readonly dailyPayoutLimitService: DailyPayoutLimitService,
   ) {}
 
   async createRequest(
@@ -66,6 +68,9 @@ export class PayoutRequestService {
     if (!wallet) {
       throw new BadRequestException('Wallet not found');
     }
+
+    // Platform-wide daily pool (manual + auto)
+    await this.dailyPayoutLimitService.assertWithinDailyLimit(input.amount);
 
     if (settings?.payoutMode === PayoutMode.AUTO) {
       return this.autoPayoutService.initiateWithdrawal(userId, {

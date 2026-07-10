@@ -1077,6 +1077,8 @@ model HomeServiceSettings {
   arrivalVerificationExpiryMinutes Int       @default(15) @map("arrival_verification_expiry_minutes")
   serviceCompletionBufferMinutes  Int        @default(60) @map("service_completion_buffer_minutes")
   payoutMode                      PayoutMode @default(MANUAL) @map("payout_mode")
+  /// Platform-wide max total payout amount per calendar day (Africa/Lagos). Null = unlimited.
+  dailyPayoutLimit                Decimal?   @db.Decimal(14, 2) @map("daily_payout_limit")
   arrivalGeoFenceMeters           Int        @default(250) @map("arrival_geo_fence_meters")
   noShowPenaltyEnabled            Boolean    @default(true) @map("no_show_penalty_enabled")
   noShowSuspendThreshold          Int        @default(3) @map("no_show_suspend_threshold")

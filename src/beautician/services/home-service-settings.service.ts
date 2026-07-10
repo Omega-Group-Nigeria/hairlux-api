@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   arrivalVerificationExpiryMinutes: 15,
   serviceCompletionBufferMinutes: 60,
   payoutMode: 'MANUAL' as const,
+  dailyPayoutLimit: null as number | null,
   arrivalGeoFenceMeters: 250,
   noShowPenaltyEnabled: true,
   noShowSuspendThreshold: 3,
@@ -42,6 +43,9 @@ export class HomeServiceSettingsService {
           serviceCompletionBufferMinutes: dto.serviceCompletionBufferMinutes,
         }),
         ...(dto.payoutMode !== undefined && { payoutMode: dto.payoutMode }),
+        ...(dto.dailyPayoutLimit !== undefined && {
+          dailyPayoutLimit: dto.dailyPayoutLimit,
+        }),
         ...(dto.arrivalGeoFenceMeters !== undefined && {
           arrivalGeoFenceMeters: dto.arrivalGeoFenceMeters,
         }),
@@ -73,6 +77,10 @@ export class HomeServiceSettingsService {
     return {
       ...settings,
       commissionRate: Number(settings.commissionRate),
+      dailyPayoutLimit:
+        settings.dailyPayoutLimit == null
+          ? null
+          : Number(settings.dailyPayoutLimit),
     };
   }
 }

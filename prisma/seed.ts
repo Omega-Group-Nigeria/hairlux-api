@@ -55,6 +55,7 @@ async function seedHomeServiceSettings() {
       arrivalVerificationExpiryMinutes: 15,
       serviceCompletionBufferMinutes: 60,
       payoutMode: 'MANUAL',
+      dailyPayoutLimit: null,
       arrivalGeoFenceMeters: 250,
       noShowPenaltyEnabled: true,
       noShowSuspendThreshold: 3,

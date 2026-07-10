@@ -41,6 +41,22 @@ export class AdminPayoutController {
     };
   }
 
+  @Get('daily-pool')
+  @Permission(PERMISSIONS.BEAUTICIANS_PROCESS_PAYOUTS)
+  @ApiOperation({
+    summary: 'Get platform-wide daily payout pool usage',
+    description:
+      'Returns the configured daily payout limit, amount used today (PENDING + PROCESSING + COMPLETED), and remaining capacity. Day boundary is Africa/Lagos.',
+  })
+  async getDailyPayoutPool() {
+    const data = await this.adminPayoutService.getDailyPayoutPoolStatus();
+    return {
+      success: true,
+      message: 'Daily payout pool status retrieved successfully',
+      data,
+    };
+  }
+
   @Get('awaiting-approval')
   @Permission(PERMISSIONS.BEAUTICIANS_PROCESS_PAYOUTS)
   @ApiOperation({

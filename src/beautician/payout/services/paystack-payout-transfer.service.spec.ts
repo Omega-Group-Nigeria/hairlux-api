@@ -66,6 +66,10 @@ describe('PaystackPayoutTransferService', () => {
     },
   };
 
+  const mockDailyPayoutLimit = {
+    assertWithinDailyLimit: jest.fn(async () => undefined),
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
     service = new PaystackPayoutTransferService(
@@ -73,6 +77,7 @@ describe('PaystackPayoutTransferService', () => {
       mockPaystack as never,
       mockBankAccount as never,
       mockSettlement as never,
+      mockDailyPayoutLimit as never,
     );
   });
 

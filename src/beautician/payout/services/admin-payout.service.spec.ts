@@ -18,6 +18,10 @@ describe('AdminPayoutService', () => {
     listAwaitingApproval: jest.fn(),
   };
 
+  const mockDailyPayoutLimitService = {
+    getPoolStatus: jest.fn(),
+  };
+
   let service: AdminPayoutService;
 
   beforeEach(() => {
@@ -26,6 +30,7 @@ describe('AdminPayoutService', () => {
       mockPrisma as never,
       mockBankAccountService as never,
       mockPaystackPayoutTransferService as never,
+      mockDailyPayoutLimitService as never,
     );
   });
 
@@ -101,5 +106,19 @@ describe('AdminPayoutService', () => {
         orderBy: { createdAt: 'desc' },
       }),
     );
+  });
+
+  it('returns daily payout pool status', async () => {
+    const pool = {
+      limit: 500000,
+      used: 120000,
+      remaining: 380000,
+      dayStartsAt: new Date('2026-07-09T23:00:00.000Z'),
+      timezone: 'Africa/Lagos',
+      unlimited: false,
+    };
+    mockDailyPayoutLimitService.getPoolStatus.mockResolvedValue(pool);
+
+    await expect(service.getDailyPayoutPoolStatus()).resolves.toEqual(pool);
   });
 });

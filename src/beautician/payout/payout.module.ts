@@ -18,6 +18,7 @@ import { AdminPayoutController } from './admin-payout.controller';
 import { PaystackTransferWebhookController } from './paystack-transfer-webhook.controller';
 import { PaystackTransferWebhookProcessor } from './processors/paystack-transfer-webhook.processor';
 import { PaystackTransferApprovalService } from './services/paystack-transfer-approval.service';
+import { DailyPayoutLimitService } from './services/daily-payout-limit.service';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PaystackTransferApprovalService } from './services/paystack-transfer-ap
     BeauticianStatsService,
     CreditServiceEarningsService,
     EarningsSummaryService,
+    DailyPayoutLimitService,
     PayoutRequestService,
     AdminPayoutService,
     AutoPayoutService,
@@ -46,6 +48,7 @@ import { PaystackTransferApprovalService } from './services/paystack-transfer-ap
     EarningsCalculatorService,
     CreditServiceEarningsService,
     EarningsSummaryService,
+    DailyPayoutLimitService,
     PayoutRequestService,
     AdminPayoutService,
     AutoPayoutService,

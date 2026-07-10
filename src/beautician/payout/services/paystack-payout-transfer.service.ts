@@ -9,6 +9,7 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PaystackService } from '../../../payment/paystack.service';
 import { BeauticianBankAccountService } from './beautician-bank-account.service';
+import { DailyPayoutLimitService } from './daily-payout-limit.service';
 import { PayoutTransferSettlementService } from './payout-transfer-settlement.service';
 
 @Injectable()
@@ -20,6 +21,7 @@ export class PaystackPayoutTransferService {
     private readonly paystackService: PaystackService,
     private readonly bankAccountService: BeauticianBankAccountService,
     private readonly settlementService: PayoutTransferSettlementService,
+    private readonly dailyPayoutLimitService: DailyPayoutLimitService,
   ) {}
 
   async initiateForUser(
@@ -36,6 +38,11 @@ export class PaystackPayoutTransferService {
   ) {
     const amount = input.amount;
     await this.assertSufficientAvailableBalance(userId, amount, input.existingPayoutRequestId);
+    // Re-check pool on transfer initiation (covers admin process of pending + auto)
+    await this.dailyPayoutLimitService.assertWithinDailyLimit(
+      amount,
+      input.existingPayoutRequestId,
+    );
 
     const transferReference = `PSTK-TRF-${randomBytes(8).toString('hex')}`;
 

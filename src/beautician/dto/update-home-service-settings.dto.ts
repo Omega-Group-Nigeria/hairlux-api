@@ -42,6 +42,17 @@ export class UpdateHomeServiceSettingsDto {
   @IsEnum(PayoutMode)
   payoutMode?: PayoutMode;
 
+  @ApiPropertyOptional({
+    example: 500000,
+    description:
+      'Platform-wide total payout limit per calendar day (Africa/Lagos), in Naira. Null clears the limit (unlimited).',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  dailyPayoutLimit?: number | null;
+
   @ApiPropertyOptional({ example: 250 })
   @IsOptional()
   @IsInt()

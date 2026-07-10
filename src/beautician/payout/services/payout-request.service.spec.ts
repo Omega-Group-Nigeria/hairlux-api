@@ -5,6 +5,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { PayoutRequestService } from './payout-request.service';
 import { AutoPayoutService } from './auto-payout.service';
 import { BeauticianBankAccountService } from './beautician-bank-account.service';
+import { DailyPayoutLimitService } from './daily-payout-limit.service';
 
 describe('PayoutRequestService', () => {
   let service: PayoutRequestService;
@@ -20,6 +21,10 @@ describe('PayoutRequestService', () => {
       accountName: 'ADA OKAFOR',
       recipientCode: 'RCP_test',
     })),
+  };
+
+  const mockDailyPayoutLimit = {
+    assertWithinDailyLimit: jest.fn(async () => undefined),
   };
 
   const mockPrisma = {
@@ -57,6 +62,7 @@ describe('PayoutRequestService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: AutoPayoutService, useValue: mockAutoPayout },
         { provide: BeauticianBankAccountService, useValue: mockBankNames },
+        { provide: DailyPayoutLimitService, useValue: mockDailyPayoutLimit },
       ],
     }).compile();
 
@@ -102,6 +108,20 @@ describe('PayoutRequestService', () => {
     expect(result.id).toBe('payout-1');
     expect(mockPrisma.payoutRequest.create).toHaveBeenCalled();
     expect(mockBankAccount.getPayoutDestination).toHaveBeenCalled();
+    expect(mockDailyPayoutLimit.assertWithinDailyLimit).toHaveBeenCalledWith(5000);
+  });
+
+  it('rejects when platform daily payout limit is exceeded', async () => {
+    mockDailyPayoutLimit.assertWithinDailyLimit.mockRejectedValueOnce(
+      new BadRequestException('Platform daily payout limit reached'),
+    );
+
+    await expect(
+      service.createRequest('beautician-1', { amount: 5000 }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(mockPrisma.payoutRequest.create).not.toHaveBeenCalled();
+    expect(mockAutoPayout.initiateWithdrawal).not.toHaveBeenCalled();
   });
 
   it('lists beautician payout requests with bank names', async () => {
@@ -158,6 +178,7 @@ describe('PayoutRequestService', () => {
       amount: 5000,
     });
 
+    expect(mockDailyPayoutLimit.assertWithinDailyLimit).toHaveBeenCalledWith(5000);
     expect(mockAutoPayout.initiateWithdrawal).toHaveBeenCalledWith(
       'beautician-1',
       { amount: 5000 },

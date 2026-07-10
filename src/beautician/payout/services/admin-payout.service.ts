@@ -3,6 +3,7 @@ import { PayoutRequestStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AdminQueryPayoutsDto } from '../dto/admin-query-payouts.dto';
 import { BeauticianBankAccountService } from './beautician-bank-account.service';
+import { DailyPayoutLimitService } from './daily-payout-limit.service';
 import { PaystackPayoutTransferService } from './paystack-payout-transfer.service';
 
 type AdminPayoutListItem = {
@@ -28,7 +29,12 @@ export class AdminPayoutService {
     private readonly prisma: PrismaService,
     private readonly bankAccountService: BeauticianBankAccountService,
     private readonly paystackPayoutTransferService: PaystackPayoutTransferService,
+    private readonly dailyPayoutLimitService: DailyPayoutLimitService,
   ) {}
+
+  async getDailyPayoutPoolStatus() {
+    return this.dailyPayoutLimitService.getPoolStatus();
+  }
 
   async processPayout(payoutRequestId: string, adminUserId: string) {
     return this.paystackPayoutTransferService.processPendingRequest(
