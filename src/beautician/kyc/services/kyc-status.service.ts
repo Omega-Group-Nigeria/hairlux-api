@@ -108,8 +108,6 @@ export class KycStatusService {
     const mappedStatus = await this.mapWebhookStatus(payload);
     const qoreIdCustomerId = this.extractCustomerId(payload);
 
-    const customerReference = this.extractCustomerReference(payload);
-
     const updated = await this.prisma.beauticianProfile.update({
       where: { userId },
       data: {
@@ -118,7 +116,6 @@ export class KycStatusService {
           kycVerifiedAt: new Date(),
         }),
         ...(qoreIdCustomerId && { qoreIdCustomerId }),
-        ...(customerReference && { qoreIdCustomerReference: customerReference }),
       },
       include: {
         user: {
@@ -272,31 +269,12 @@ export class KycStatusService {
       return subjectRef;
     }
 
-    const referenceCandidates = [
-      data.customerReference,
-      data.customer_reference,
-      data.reference,
-      payload.reference,
-    ];
+    const referenceCandidates = this.collectReferenceCandidates(payload);
 
     for (const reference of referenceCandidates) {
-      const userId = this.parseBeauticianKycReference(reference);
+      const userId = this.parseUserIdFromCustomerReference(reference);
       if (userId) {
         return userId;
-      }
-    }
-
-    for (const reference of referenceCandidates) {
-      if (typeof reference !== 'string' || !reference.trim()) {
-        continue;
-      }
-
-      const byStoredReference = await this.prisma.beauticianProfile.findFirst({
-        where: { qoreIdCustomerReference: reference },
-        select: { userId: true },
-      });
-      if (byStoredReference?.userId) {
-        return byStoredReference.userId;
       }
     }
 
@@ -325,13 +303,47 @@ export class KycStatusService {
     return null;
   }
 
-  private parseBeauticianKycReference(reference: unknown): string | null {
-    if (typeof reference !== 'string') {
-      return null;
+  private collectReferenceCandidates(
+    payload: Record<string, unknown>,
+  ): string[] {
+    const data =
+      payload.data && typeof payload.data === 'object'
+        ? (payload.data as Record<string, unknown>)
+        : payload;
+    const applicant =
+      data.applicant && typeof data.applicant === 'object'
+        ? (data.applicant as Record<string, unknown>)
+        : null;
+
+    const candidates = [
+      data.customerReference,
+      data.customer_reference,
+      data.reference,
+      payload.reference,
+      applicant?.customerReference,
+      applicant?.customer_reference,
+    ];
+
+    return [
+      ...new Set(
+        candidates
+          .filter((value): value is string => typeof value === 'string')
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+
+  private parseUserIdFromCustomerReference(reference: string): string | null {
+    if (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        reference,
+      )
+    ) {
+      return reference;
     }
 
-    const match = reference.match(/^beautician-kyc-([0-9a-f-]{36})-\d+$/i);
-    return match ? match[1] : null;
+    return null;
   }
 
   private extractSessionId(payload: Record<string, unknown>): string | null {
@@ -342,25 +354,6 @@ export class KycStatusService {
 
     const sessionId = data.sessionId ?? data.session_id;
     return typeof sessionId === 'string' ? sessionId : null;
-  }
-
-  private extractCustomerReference(
-    payload: Record<string, unknown>,
-  ): string | null {
-    const data =
-      payload.data && typeof payload.data === 'object'
-        ? (payload.data as Record<string, unknown>)
-        : payload;
-
-    const reference =
-      data.customerReference ??
-      data.customer_reference ??
-      data.reference ??
-      payload.reference;
-
-    return typeof reference === 'string' && reference.trim()
-      ? reference.trim()
-      : null;
   }
 
   private extractCustomerId(payload: Record<string, unknown>): string | null {

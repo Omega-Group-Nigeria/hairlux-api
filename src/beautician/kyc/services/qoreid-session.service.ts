@@ -57,7 +57,6 @@ export class QoreidSessionService {
       );
     }
 
-    const reference = `beautician-kyc-${userId}-${Date.now()}`;
     const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
     try {
@@ -67,8 +66,8 @@ export class QoreidSessionService {
           {
             type: 'workflow',
             workflowId: Number(workflowId),
-            reference,
-            customerReference: reference,
+            reference: userId,
+            customerReference: userId,
             subjectRef: userId,
             ttlSeconds: 900,
           },
@@ -86,7 +85,6 @@ export class QoreidSessionService {
         data: {
           kycStatus: KycStatus.IN_PROGRESS,
           qoreIdSessionId: data.sessionId,
-          qoreIdCustomerReference: reference,
         },
       });
 

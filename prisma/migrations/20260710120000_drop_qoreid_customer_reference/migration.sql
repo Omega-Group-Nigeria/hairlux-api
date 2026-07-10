@@ -1,0 +1,1 @@
+ALTER TABLE "beautician_profiles" DROP COLUMN IF EXISTS "qore_id_customer_reference";
