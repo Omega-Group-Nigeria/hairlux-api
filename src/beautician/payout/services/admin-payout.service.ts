@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PayoutRequestStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { ADMIN_USER_IDENTITY_SELECT } from '../../../common/constants/admin-user-select';
 import { AdminQueryPayoutsDto } from '../dto/admin-query-payouts.dto';
 import { BeauticianBankAccountService } from './beautician-bank-account.service';
 import { DailyPayoutLimitService } from './daily-payout-limit.service';
@@ -20,6 +21,7 @@ type AdminPayoutListItem = {
     lastName: string;
     email: string;
     phone: string | null;
+    dateOfBirth: Date | null;
   };
 };
 
@@ -78,15 +80,7 @@ export class AdminPayoutService {
         createdAt: status === PayoutRequestStatus.PENDING ? 'asc' : 'desc',
       },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
+        user: { select: ADMIN_USER_IDENTITY_SELECT },
       },
     });
 

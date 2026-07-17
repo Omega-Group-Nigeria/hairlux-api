@@ -123,7 +123,7 @@ export class BookingController {
     description:
       'Book one or more services in a single appointment. All services are stored under ONE booking record with a single reservation code. ' +
       'Each service item should provide `serviceMode` (`HOME_SERVICE` or `WALK_IN`) so mixed-mode bookings are supported in one request. ' +
-      '`addressId` is required whenever at least one service uses `HOME_SERVICE`. ' +
+      'For HOME_SERVICE, provide either a saved `addressId` or a temporary current-location triple (`tempLatitude`, `tempLongitude`, `tempFullAddress`). ' +
       'Payment: WALLET deducts the full total from your wallet immediately — booking is only created if balance is sufficient. ' +
       'CASH: slot is reserved and payment is collected on the day. ' +
       'If `guestEmail` is provided, a notification email with the reservation code is sent to the guest after successful booking.',

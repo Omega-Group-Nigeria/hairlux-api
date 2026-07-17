@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../../prisma/prisma.service';
 import { RedisService } from '../../../redis/redis.service';
 import { normalizeBookingServices } from '../../../booking/utils/booking.utils';
+import { resolveBookingCoordinatesSync } from '../../../booking/utils/booking-location.utils';
 import {
   extractHomeServiceIds,
 } from '../utils/booking-assignment.utils';
@@ -92,7 +93,15 @@ export class PendingBookingMatcherService {
     const pendingBookings = await this.prisma.booking.findMany({
       where: {
         status: BookingStatus.PENDING_ASSIGNMENT,
-        addressId: { not: null },
+        OR: [
+          { addressId: { not: null } },
+          {
+            AND: [
+              { tempLatitude: { not: null } },
+              { tempLongitude: { not: null } },
+            ],
+          },
+        ],
         ...(includeExhausted
           ? {}
           : { matchingExhaustedAt: null }),
@@ -118,15 +127,16 @@ export class PendingBookingMatcherService {
         continue;
       }
 
-      if (!booking.address?.latitude || !booking.address?.longitude) {
+      const customerCoords = resolveBookingCoordinatesSync(booking);
+      if (!customerCoords) {
         continue;
       }
 
       const distanceKm = haversineKm(
         lat,
         lng,
-        Number(booking.address.latitude),
-        Number(booking.address.longitude),
+        customerCoords.lat,
+        customerCoords.lng,
       );
 
       if (distanceKm > maxRadiusKm) {

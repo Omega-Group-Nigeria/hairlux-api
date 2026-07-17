@@ -122,7 +122,7 @@ export async function assertUserOwnsAddress(
   addressId: string,
 ) {
   const address = await prisma.address.findFirst({
-    where: { id: addressId, userId },
+    where: { id: addressId, userId, deletedAt: null },
   });
 
   if (!address) {

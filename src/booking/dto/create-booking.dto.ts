@@ -11,12 +11,14 @@ import {
   IsIn,
   ValidateIf,
   IsInt,
+  IsNumber,
   Min,
   Max,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingType, PaymentMethod } from '@prisma/client';
+import { hasTemporaryServiceLocation } from '../utils/booking-location.utils';
 
 const SERVICE_MODE_VALUES = [BookingType.HOME_SERVICE, BookingType.WALK_IN];
 
@@ -33,6 +35,8 @@ export function requiresHomeServiceAddress(
 
   return fallbackBookingType === BookingType.HOME_SERVICE;
 }
+
+export { hasTemporaryServiceLocation };
 
 export class ServiceBookingItemDto {
   @ApiProperty({
@@ -133,18 +137,77 @@ export class CreateBookingDto {
 
   @ApiPropertyOptional({
     description:
-      'Address ID from user saved addresses (required if any service has serviceMode HOME_SERVICE)',
+      'Address ID from user saved addresses. Required for HOME_SERVICE when temporary location fields are not provided.',
     example: '123e4567-e89b-12d3-a456-426614174002',
   })
-  @ValidateIf((o: CreateBookingDto) =>
-    requiresHomeServiceAddress(o.services, o.bookingType),
+  @ValidateIf(
+    (o: CreateBookingDto) =>
+      requiresHomeServiceAddress(o.services, o.bookingType) &&
+      !hasTemporaryServiceLocation(o),
   )
   @IsNotEmpty({
     message:
-      'addressId is required when any serviceMode is HOME_SERVICE (or legacy bookingType is HOME_SERVICE)',
+      'addressId or temporary location (tempLatitude, tempLongitude, tempFullAddress) is required when any serviceMode is HOME_SERVICE',
   })
   @IsUUID()
   addressId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Temporary service latitude (current location). Use with tempLongitude + tempFullAddress instead of addressId for HOME_SERVICE.',
+    example: 6.524379,
+  })
+  @ValidateIf(
+    (o: CreateBookingDto) =>
+      requiresHomeServiceAddress(o.services, o.bookingType) && !o.addressId,
+  )
+  @IsNotEmpty({
+    message:
+      'tempLatitude is required when addressId is omitted for HOME_SERVICE bookings',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 7 })
+  @Min(-90)
+  @Max(90)
+  tempLatitude?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Temporary service longitude (current location). Use with tempLatitude + tempFullAddress instead of addressId for HOME_SERVICE.',
+    example: 3.379206,
+  })
+  @ValidateIf(
+    (o: CreateBookingDto) =>
+      requiresHomeServiceAddress(o.services, o.bookingType) && !o.addressId,
+  )
+  @IsNotEmpty({
+    message:
+      'tempLongitude is required when addressId is omitted for HOME_SERVICE bookings',
+  })
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 7 })
+  @Min(-180)
+  @Max(180)
+  tempLongitude?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Human-readable temporary service address (current location). Use with tempLatitude + tempLongitude instead of addressId for HOME_SERVICE.',
+    example: '12 Admiralty Way, Lekki Phase 1, Lagos',
+  })
+  @ValidateIf(
+    (o: CreateBookingDto) =>
+      requiresHomeServiceAddress(o.services, o.bookingType) && !o.addressId,
+  )
+  @IsNotEmpty({
+    message:
+      'tempFullAddress is required when addressId is omitted for HOME_SERVICE bookings',
+  })
+  @IsString()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  tempFullAddress?: string;
 
   @ApiPropertyOptional({
     description:

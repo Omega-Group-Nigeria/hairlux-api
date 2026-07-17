@@ -5,6 +5,10 @@ import {
   resolveAssignmentStatusMessage,
 } from '../../beautician/matching/utils/matching-radius.util';
 import { ServiceBookingItemDto } from '../dto/create-booking.dto';
+import {
+  formatBookingServiceAddress,
+  type BookingLocationSource,
+} from './booking-location.utils';
 
 export interface BookingServiceRecord {
   serviceId: string;
@@ -225,17 +229,49 @@ export function formatBookingResponse(
     totalAmount?: unknown;
     branch?: BookingBranchLike;
     assignedBeautician?: AssignedBeauticianLike;
+    address?: unknown;
+    tempLatitude?: unknown;
+    tempLongitude?: unknown;
+    tempFullAddress?: string | null;
     [key: string]: unknown;
   },
 ) {
   const hasBranchRelation = 'branch' in booking;
   const hasAssignedBeautician = 'assignedBeautician' in booking;
-  const { branch, services, totalAmount, assignedBeautician, ...rest } = booking;
+  const {
+    branch,
+    services,
+    totalAmount,
+    assignedBeautician,
+    address: _rawAddress,
+    tempLatitude,
+    tempLongitude,
+    tempFullAddress,
+    ...rest
+  } = booking;
+
+  const locationSource: BookingLocationSource = {
+    address: booking.address as BookingLocationSource['address'],
+    tempLatitude,
+    tempLongitude,
+    tempFullAddress,
+  };
+  const resolvedAddress = formatBookingServiceAddress(locationSource);
 
   const formatted = {
     ...rest,
     services: normalizeBookingServices(services),
     totalAmount: Number(totalAmount ?? 0),
+    address: resolvedAddress,
+    tempLatitude:
+      tempLatitude != null && tempLatitude !== undefined
+        ? Number(tempLatitude)
+        : null,
+    tempLongitude:
+      tempLongitude != null && tempLongitude !== undefined
+        ? Number(tempLongitude)
+        : null,
+    tempFullAddress: tempFullAddress ?? null,
   };
 
   const withBranch = hasBranchRelation

@@ -119,6 +119,21 @@ export class DispatchAdminService {
       );
     }
 
+    // Force-assign requires the beautician to be ONLINE first. Auto-promote OFFLINE
+    // only after pre-flight checks so we never leave a partial ONLINE update.
+    let broughtOnlineFromOffline = false;
+    if (beautician.availabilityStatus === AvailabilityStatus.OFFLINE) {
+      await this.prisma.beauticianProfile.update({
+        where: { userId: beauticianUserId },
+        data: { availabilityStatus: AvailabilityStatus.ONLINE },
+      });
+      beautician.availabilityStatus = AvailabilityStatus.ONLINE;
+      broughtOnlineFromOffline = true;
+      this.logger.log(
+        `Beautician ${beauticianUserId} set ONLINE before force-assign of booking ${bookingId}`,
+      );
+    }
+
     await this.matchingOrchestrator.clearActiveOffersAndJobs(bookingId);
 
     const settings = await this.settingsService.getSettings();
@@ -184,6 +199,7 @@ export class DispatchAdminService {
         adminUserId,
         offerId: offer.id,
         previousDispatchStatus: booking.dispatchStatus,
+        broughtOnlineFromOffline,
       },
       `force-assign:${bookingId}:${beauticianUserId}`,
     );
@@ -208,7 +224,10 @@ export class DispatchAdminService {
       bookingId,
       beauticianUserId,
       offerId: offer.id,
-      message: 'Booking has been force-assigned to the beautician.',
+      broughtOnlineFromOffline,
+      message: broughtOnlineFromOffline
+        ? 'Beautician was OFFLINE, set to ONLINE, then force-assigned to the booking.'
+        : 'Booking has been force-assigned to the beautician.',
     };
   }
 

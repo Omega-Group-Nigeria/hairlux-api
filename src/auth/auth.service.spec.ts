@@ -9,6 +9,7 @@ import { MailService } from '../mail/mail.service';
 import { ReferralService } from '../referral/referral.service';
 import { RedisService } from '../redis/redis.service';
 import { PinService } from './pin.service';
+import { ErrorMessages } from '../common/constants/error-messages';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -74,11 +75,20 @@ describe('AuthService', () => {
       firstName: 'Ada',
       lastName: 'Okafor',
       phone: '+2348012345678',
+      dateOfBirth: '1996-06-15',
+    };
+
+    const parsedDateOfBirth = new Date(Date.UTC(1996, 5, 15));
+
+    const mockAvailabilityChecks = () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.user.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
     };
 
     it('creates user with BEAUTICIAN role, wallet, and beautician profile', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue(null);
-      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockAvailabilityChecks();
 
       const createdUser = {
         id: 'user-uuid',
@@ -86,6 +96,7 @@ describe('AuthService', () => {
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
         phone: registerDto.phone,
+        dateOfBirth: parsedDateOfBirth,
         role: UserRole.BEAUTICIAN,
         status: UserStatus.ACTIVE,
         emailVerified: false,
@@ -118,6 +129,19 @@ describe('AuthService', () => {
       const result = await service.registerBeautician(registerDto);
 
       expect(result.user.role).toBe(UserRole.BEAUTICIAN);
+      expect(result.user.dateOfBirth).toEqual(parsedDateOfBirth);
+      expect(mockPrisma.user.findFirst).toHaveBeenNthCalledWith(1, {
+        where: { phone: registerDto.phone },
+        select: { id: true },
+      });
+      expect(mockPrisma.user.findFirst).toHaveBeenNthCalledWith(2, {
+        where: {
+          firstName: { equals: registerDto.firstName, mode: 'insensitive' },
+          lastName: { equals: registerDto.lastName, mode: 'insensitive' },
+          dateOfBirth: parsedDateOfBirth,
+        },
+        select: { id: true },
+      });
       expect(mockPrisma.$transaction).toHaveBeenCalled();
       expect(mockMailService.sendOtpEmail).toHaveBeenCalledWith(
         createdUser.email,
@@ -130,7 +154,27 @@ describe('AuthService', () => {
       mockPrisma.user.findUnique.mockResolvedValue({ id: 'existing' });
 
       await expect(service.registerBeautician(registerDto)).rejects.toThrow(
-        ConflictException,
+        new ConflictException(ErrorMessages.USER_ALREADY_EXISTS),
+      );
+    });
+
+    it('throws ConflictException when phone already exists', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.user.findFirst.mockResolvedValueOnce({ id: 'existing' });
+
+      await expect(service.registerBeautician(registerDto)).rejects.toThrow(
+        new ConflictException(ErrorMessages.PHONE_ALREADY_EXISTS),
+      );
+    });
+
+    it('throws ConflictException when name and date of birth already exist', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.user.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'existing' });
+
+      await expect(service.registerBeautician(registerDto)).rejects.toThrow(
+        new ConflictException(ErrorMessages.BEAUTICIAN_IDENTITY_ALREADY_EXISTS),
       );
     });
   });

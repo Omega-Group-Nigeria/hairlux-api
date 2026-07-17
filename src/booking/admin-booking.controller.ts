@@ -571,7 +571,7 @@ export class AdminBookingController {
   @ApiOperation({
     summary: 'Force-assign a beautician to a home service booking',
     description:
-      'Bypasses dispatch matching. Cancels pending offers, creates an accepted offer, and assigns the booking.',
+      'Bypasses dispatch matching. If the beautician is OFFLINE, sets them ONLINE first, then cancels pending offers, creates an accepted offer, and assigns the booking (beautician becomes ON_JOB).',
   })
   @ApiResponse({ status: 200, description: 'Booking force-assigned successfully' })
   async forceAssign(
@@ -586,7 +586,7 @@ export class AdminBookingController {
     );
     return {
       success: true,
-      message: 'Booking force-assigned successfully',
+      message: data.message ?? 'Booking force-assigned successfully',
       data,
     };
   }

@@ -11,6 +11,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
+import { ADMIN_USER_IDENTITY_SELECT } from '../common/constants/admin-user-select';
 import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
 import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import {
@@ -132,10 +133,12 @@ export class UserService {
     return { message: 'Password changed successfully' };
   }
 
-  // Address Management
+  // Address Management (soft delete via deletedAt)
+  private readonly activeAddressWhere = { deletedAt: null } as const;
+
   async getAddresses(userId: string) {
     const addresses = (await this.prisma.address.findMany({
-      where: { userId },
+      where: { userId, ...this.activeAddressWhere },
       orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
     })) as AddressRecord[];
 
@@ -144,7 +147,7 @@ export class UserService {
 
   async getAddressById(userId: string, addressId: string) {
     const address = (await this.prisma.address.findFirst({
-      where: { id: addressId, userId },
+      where: { id: addressId, userId, ...this.activeAddressWhere },
     })) as AddressRecord | null;
 
     if (!address) {
@@ -158,7 +161,9 @@ export class UserService {
     const resolvedAddress = this.resolveAddressValues(createAddressDto);
 
     const address = await this.prisma.$transaction(async (tx) => {
-      const addressCount = await tx.address.count({ where: { userId } });
+      const addressCount = await tx.address.count({
+        where: { userId, ...this.activeAddressWhere },
+      });
       const shouldBeDefault =
         createAddressDto.isDefault !== undefined
           ? createAddressDto.isDefault
@@ -166,7 +171,7 @@ export class UserService {
 
       if (shouldBeDefault) {
         await tx.address.updateMany({
-          where: { userId, isDefault: true },
+          where: { userId, isDefault: true, ...this.activeAddressWhere },
           data: { isDefault: false },
         });
       }
@@ -195,9 +200,9 @@ export class UserService {
     addressId: string,
     updateAddressDto: UpdateAddressDto,
   ) {
-    // Check if address exists and belongs to user
+    // Check if address exists, belongs to user, and is not soft-deleted
     const existingAddress = (await this.prisma.address.findFirst({
-      where: { id: addressId, userId },
+      where: { id: addressId, userId, ...this.activeAddressWhere },
     })) as AddressRecord | null;
 
     if (!existingAddress) {
@@ -212,7 +217,12 @@ export class UserService {
     const address = await this.prisma.$transaction(async (tx) => {
       if (updateAddressDto.isDefault === true) {
         await tx.address.updateMany({
-          where: { userId, isDefault: true, id: { not: addressId } },
+          where: {
+            userId,
+            isDefault: true,
+            id: { not: addressId },
+            ...this.activeAddressWhere,
+          },
           data: { isDefault: false },
         });
       }
@@ -256,7 +266,7 @@ export class UserService {
 
   async setDefaultAddress(userId: string, addressId: string) {
     const existingAddress = (await this.prisma.address.findFirst({
-      where: { id: addressId, userId },
+      where: { id: addressId, userId, ...this.activeAddressWhere },
     })) as AddressRecord | null;
 
     if (!existingAddress) {
@@ -265,7 +275,7 @@ export class UserService {
 
     const address = await this.prisma.$transaction(async (tx) => {
       await tx.address.updateMany({
-        where: { userId, isDefault: true },
+        where: { userId, isDefault: true, ...this.activeAddressWhere },
         data: { isDefault: false },
       });
 
@@ -279,34 +289,28 @@ export class UserService {
   }
 
   async deleteAddress(userId: string, addressId: string) {
-    // Check if address exists and belongs to user
     const existingAddress = (await this.prisma.address.findFirst({
-      where: { id: addressId, userId },
+      where: { id: addressId, userId, ...this.activeAddressWhere },
     })) as AddressRecord | null;
 
     if (!existingAddress) {
       throw new NotFoundException(ErrorMessages.ADDRESS_NOT_FOUND);
     }
 
-    // Check if address is used in any bookings
-    const bookingsCount = await this.prisma.booking.count({
-      where: { addressId },
-    });
-
-    if (bookingsCount > 0) {
-      throw new BadRequestException(
-        'Cannot delete address that is used in bookings',
-      );
-    }
+    const deletedAt = new Date();
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.address.delete({
+      await tx.address.update({
         where: { id: addressId },
+        data: {
+          deletedAt,
+          isDefault: false,
+        },
       });
 
       if (existingAddress.isDefault) {
         const replacementAddress = await tx.address.findFirst({
-          where: { userId },
+          where: { userId, ...this.activeAddressWhere },
           orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
         });
 
@@ -605,11 +609,7 @@ export class UserService {
         skip,
         take: limit,
         select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          phone: true,
+          ...ADMIN_USER_IDENTITY_SELECT,
           role: true,
           status: true,
           createdAt: true,
@@ -659,11 +659,7 @@ export class UserService {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
+        ...ADMIN_USER_IDENTITY_SELECT,
         role: true,
         status: true,
         emailVerified: true,
@@ -733,9 +729,9 @@ export class UserService {
       take: 10, // Last 10 bookings
     });
 
-    // Get addresses
+    // Get active (non-deleted) addresses — same shape as user list
     const addresses = (await this.prisma.address.findMany({
-      where: { userId },
+      where: { userId, ...this.activeAddressWhere },
       select: {
         id: true,
         userId: true,
@@ -882,11 +878,7 @@ export class UserService {
     const users = await this.prisma.user.findMany({
       where: { email: { contains: email.trim(), mode: 'insensitive' } },
       select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
+        ...ADMIN_USER_IDENTITY_SELECT,
         role: true,
         status: true,
         createdAt: true,

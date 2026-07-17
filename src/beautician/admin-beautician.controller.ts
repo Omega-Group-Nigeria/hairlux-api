@@ -27,6 +27,7 @@ import { PERMISSIONS } from '../common/constants/permissions';
 import { BeauticianAdminService } from './services/beautician-admin.service';
 import { BeauticianProfileService } from './services/beautician-profile.service';
 import { BeauticianServiceAssignmentService } from './services/beautician-service-assignment.service';
+import { BeauticianAvailabilityService } from './services/beautician-availability.service';
 import { KycStatusService } from './kyc/services/kyc-status.service';
 import { QueryBeauticiansDto } from './dto/query-beauticians.dto';
 import { QueryPendingProfileReviewsDto } from './dto/query-pending-profile-reviews.dto';
@@ -37,6 +38,7 @@ import {
   RejectProfileDto,
   UpdateAdminBeauticianDto,
 } from './dto/admin-beautician.dto';
+import { UpdateAvailabilityDto } from './dto/update-availability.dto';
 import { PerformanceQueryDto } from './dto/performance-query.dto';
 import { BeauticianPerformanceService } from './admin/services/beautician-performance.service';
 import { DispatchAdminService } from './matching/services/dispatch-admin.service';
@@ -55,6 +57,7 @@ export class AdminBeauticianController {
     private readonly kycStatusService: KycStatusService,
     private readonly performanceService: BeauticianPerformanceService,
     private readonly dispatchAdminService: DispatchAdminService,
+    private readonly availabilityService: BeauticianAvailabilityService,
   ) {}
 
   @Get()
@@ -125,6 +128,29 @@ export class AdminBeauticianController {
     const data = await this.dispatchAdminService.updateDispatchSuspension(
       id,
       dto.suspended,
+    );
+    return {
+      success: true,
+      message: data.message,
+      data,
+    };
+  }
+
+  @Patch(':id/availability')
+  @Permission(PERMISSIONS.BEAUTICIANS_MANAGE)
+  @ApiOperation({
+    summary: 'Set beautician availability ONLINE or OFFLINE',
+    description:
+      'Admin force-set of availability. Going OFFLINE cancels pending offers and removes the beautician from the online geo index. Going ONLINE re-indexes location when available and may re-trigger pending booking matching.',
+  })
+  @ApiParam({ name: 'id', description: 'Beautician profile ID' })
+  async updateAvailability(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateAvailabilityDto,
+  ) {
+    const data = await this.availabilityService.adminUpdateAvailability(
+      id,
+      dto.status,
     );
     return {
       success: true,

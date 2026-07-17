@@ -228,6 +228,7 @@ model User {
   firstName        String    @map("first_name")
   lastName         String    @map("last_name")
   phone            String?
+  dateOfBirth      DateTime? @map("date_of_birth") @db.Date
   role             UserRole  @default(USER)
   status           UserStatus @default(ACTIVE)
   emailVerified    Boolean   @default(false) @map("email_verified")
@@ -273,6 +274,7 @@ model User {
 
   @@index([role])
   @@index([status])
+  @@index([firstName, lastName, dateOfBirth])
   @@map("users")
 }
 
@@ -304,6 +306,7 @@ model Address {
   latitude     Decimal? @db.Decimal(10, 7)
   longitude    Decimal? @db.Decimal(10, 7)
   isDefault    Boolean  @default(false) @map("is_default")
+  deletedAt    DateTime? @map("deleted_at")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -313,6 +316,7 @@ model Address {
   shopOrders ShopOrder[]
 
   @@index([userId])
+  @@index([userId, deletedAt])
   @@map("addresses")
 }
 
@@ -444,6 +448,10 @@ model Booking {
   // services is a JSON array: [{serviceId, name, price, quantity, duration, notes?, serviceMode?}]
   services         Json          @map("services")
   addressId        String?       @map("address_id")  // null for WALK_IN-only bookings
+  // Temporary / current-location alternative to a saved addressId (HOME_SERVICE)
+  tempLatitude     Decimal?      @db.Decimal(10, 7) @map("temp_latitude")
+  tempLongitude    Decimal?      @db.Decimal(10, 7) @map("temp_longitude")
+  tempFullAddress  String?       @map("temp_full_address") // human-readable string
   branchId         String?       @map("branch_id")
   bookingDate      DateTime      @map("booking_date")
   bookingTime      String        @map("booking_time") // Format: "HH:mm"

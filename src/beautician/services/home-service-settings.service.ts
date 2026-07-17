@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { HomeServiceSettings, PayoutMode } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateHomeServiceSettingsDto } from '../dto/update-home-service-settings.dto';
 
@@ -15,16 +16,44 @@ const DEFAULT_SETTINGS = {
   noShowWindowDays: 30,
 };
 
+/** Short TTL so multi-instance deploys eventually pick up admin updates. */
+const SETTINGS_CACHE_TTL_MS = 30_000;
+
+export type SerializedHomeServiceSettings = Omit<
+  HomeServiceSettings,
+  'commissionRate' | 'dailyPayoutLimit'
+> & {
+  commissionRate: number;
+  dailyPayoutLimit: number | null;
+};
+
 @Injectable()
 export class HomeServiceSettingsService {
+  private cache: {
+    value: SerializedHomeServiceSettings;
+    expiresAt: number;
+  } | null = null;
+
   constructor(private readonly prisma: PrismaService) {}
 
-  async getSettings() {
+  async getSettings(): Promise<SerializedHomeServiceSettings> {
+    const now = Date.now();
+    if (this.cache && this.cache.expiresAt > now) {
+      return this.cache.value;
+    }
+
     const settings = await this.ensureSettingsExist();
-    return this.serialize(settings);
+    const serialized = this.serialize(settings);
+    this.cache = {
+      value: serialized,
+      expiresAt: now + SETTINGS_CACHE_TTL_MS,
+    };
+    return serialized;
   }
 
-  async updateSettings(dto: UpdateHomeServiceSettingsDto) {
+  async updateSettings(
+    dto: UpdateHomeServiceSettingsDto,
+  ): Promise<SerializedHomeServiceSettings> {
     const existing = await this.ensureSettingsExist();
 
     const updated = await this.prisma.homeServiceSettings.update({
@@ -61,7 +90,17 @@ export class HomeServiceSettingsService {
       },
     });
 
-    return this.serialize(updated);
+    const serialized = this.serialize(updated);
+    this.cache = {
+      value: serialized,
+      expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS,
+    };
+    return serialized;
+  }
+
+  /** Drop cache (e.g. tests or forced refresh). */
+  clearCache() {
+    this.cache = null;
   }
 
   private async ensureSettingsExist() {
@@ -73,7 +112,9 @@ export class HomeServiceSettingsService {
     });
   }
 
-  private serialize<T extends Record<string, unknown>>(settings: T) {
+  private serialize(
+    settings: HomeServiceSettings,
+  ): SerializedHomeServiceSettings {
     return {
       ...settings,
       commissionRate: Number(settings.commissionRate),
@@ -81,6 +122,7 @@ export class HomeServiceSettingsService {
         settings.dailyPayoutLimit == null
           ? null
           : Number(settings.dailyPayoutLimit),
+      payoutMode: settings.payoutMode as PayoutMode,
     };
   }
 }

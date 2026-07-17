@@ -4,6 +4,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { QueryBeauticiansDto } from '../dto/query-beauticians.dto';
 import { QueryPendingProfileReviewsDto } from '../dto/query-pending-profile-reviews.dto';
 import { UpdateAdminBeauticianDto } from '../dto/admin-beautician.dto';
+import {
+  ADMIN_BEAUTICIAN_USER_DETAIL_SELECT,
+  ADMIN_BEAUTICIAN_USER_SELECT,
+  ADMIN_USER_IDENTITY_SELECT,
+} from '../../common/constants/admin-user-select';
 import { serializeBeauticianProfile } from '../utils/beautician-profile.utils';
 import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
@@ -48,16 +53,7 @@ export class BeauticianAdminService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              status: true,
-            },
-          },
+          user: { select: ADMIN_BEAUTICIAN_USER_SELECT },
           _count: { select: { assignedServices: true } },
         },
       }),
@@ -98,15 +94,7 @@ export class BeauticianAdminService {
         take: limit,
         orderBy: { profileSubmittedAt: 'asc' },
         include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
+          user: { select: ADMIN_USER_IDENTITY_SELECT },
         },
       }),
     ]);
@@ -126,17 +114,7 @@ export class BeauticianAdminService {
     const profile = await this.prisma.beauticianProfile.findUnique({
       where: { id: profileId },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-            status: true,
-            createdAt: true,
-          },
-        },
+        user: { select: ADMIN_BEAUTICIAN_USER_DETAIL_SELECT },
         assignedServices: {
           include: {
             service: {

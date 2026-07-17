@@ -316,7 +316,11 @@ export class UserController {
   }
 
   @Delete('addresses/:id')
-  @ApiOperation({ summary: 'Delete an address' })
+  @ApiOperation({
+    summary: 'Delete an address',
+    description:
+      'Soft-deletes the address (hidden from saved lists). Historical bookings and shop orders keep the address via FK.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Address deleted successfully',
@@ -330,10 +334,6 @@ export class UserController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Address not found' })
-  @ApiResponse({
-    status: 400,
-    description: 'Cannot delete address that is used in bookings',
-  })
   async deleteAddress(
     @GetUser('id') userId: string,
     @Param('id') addressId: string,

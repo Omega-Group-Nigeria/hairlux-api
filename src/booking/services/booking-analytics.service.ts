@@ -26,7 +26,6 @@ import {
   bookingUserReadInclude,
   buildBookingServiceRecord,
   calculateBookingServicesTotal,
-  formatBookingAddress,
   formatBookingBranch,
   formatBookingResponse,
   normalizeBookingServices,
@@ -149,10 +148,7 @@ export class BookingAnalyticsService {
     ]);
 
     return {
-      data: bookings.map((booking) => ({
-        ...formatBookingResponse(booking),
-        address: formatBookingAddress(booking.address),
-      })),
+      data: bookings.map((booking) => formatBookingResponse(booking)),
       meta: {
         total,
         page,
@@ -176,7 +172,6 @@ export class BookingAnalyticsService {
 
     return {
       ...formatBookingResponse(booking),
-      address: formatBookingAddress(booking.address),
       comms,
     };
   }
@@ -207,7 +202,6 @@ export class BookingAnalyticsService {
         return {
           ...formatBookingResponse(existing),
           reservationCode: existing.reservationCode,
-          address: formatBookingAddress(existing.address),
         };
       }
     }
@@ -249,11 +243,11 @@ export class BookingAnalyticsService {
     const totalAmount = calculateBookingServicesTotal(serviceRecords);
 
     let address: Awaited<
-      ReturnType<typeof this.prisma.address.findUnique>
+      ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
     if (bookingType === BookingType.HOME_SERVICE) {
-      address = await this.prisma.address.findUnique({
-        where: { id: addressId },
+      address = await this.prisma.address.findFirst({
+        where: { id: addressId, deletedAt: null },
       });
 
       if (!address) {
@@ -321,7 +315,6 @@ export class BookingAnalyticsService {
           return {
             ...formatBookingResponse(existing),
             reservationCode: existing.reservationCode,
-            address: formatBookingAddress(existing.address),
           };
         }
       }
@@ -332,7 +325,6 @@ export class BookingAnalyticsService {
       ...formatBookingResponse(booking),
       services: serviceRecords,
       reservationCode: booking.reservationCode,
-      address: formatBookingAddress(booking.address),
     };
   }
 
@@ -429,10 +421,7 @@ export class BookingAnalyticsService {
       );
     }
 
-    return {
-      ...formatBookingResponse(result),
-      address: formatBookingAddress(result.address),
-    };
+    return formatBookingResponse(result);
   }
 
   async getCalendar(calendarDto: GetCalendarDto) {

@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
+import { RegisterBeauticianDto } from './dto/register-beautician.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -166,28 +167,20 @@ export class AuthService {
     };
   }
 
-  async registerBeautician(registerDto: RegisterDto) {
-    const { email, password, firstName, lastName, phone } = registerDto;
+  async registerBeautician(registerDto: RegisterBeauticianDto) {
+    const { email, password, firstName, lastName, phone, dateOfBirth } =
+      registerDto;
 
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const normalizedEmail = email.toLowerCase();
+    const parsedDateOfBirth = this.parseDateOfBirth(dateOfBirth);
+
+    await this.assertBeauticianRegistrationAvailable({
+      email: normalizedEmail,
+      firstName,
+      lastName,
+      phone,
+      dateOfBirth: parsedDateOfBirth,
     });
-
-    if (existingUser) {
-      throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
-    }
-
-    if (phone) {
-      const existingPhone = await this.prisma.user.findFirst({
-        where: { phone },
-        select: { id: true },
-      });
-      if (existingPhone) {
-        throw new ConflictException(
-          'Phone number is already associated with an account',
-        );
-      }
-    }
 
     const hashedPassword = await argon2.hash(password, {
       type: argon2.argon2id,
@@ -202,11 +195,12 @@ export class AuthService {
     const user = await this.prisma.$transaction(async (tx) => {
       const newUser = await tx.user.create({
         data: {
-          email: email.toLowerCase(),
+          email: normalizedEmail,
           password: hashedPassword,
           firstName,
           lastName,
           phone,
+          dateOfBirth: parsedDateOfBirth,
           role: UserRole.BEAUTICIAN,
           status: UserStatus.ACTIVE,
           otpCode,
@@ -218,6 +212,7 @@ export class AuthService {
           firstName: true,
           lastName: true,
           phone: true,
+          dateOfBirth: true,
           role: true,
           status: true,
           emailVerified: true,
@@ -831,6 +826,52 @@ export class AuthService {
       },
       ...tokens,
     };
+  }
+
+  private parseDateOfBirth(dateOfBirth: string): Date {
+    const [year, month, day] = dateOfBirth.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
+  }
+
+  private async assertBeauticianRegistrationAvailable(input: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    dateOfBirth: Date;
+  }): Promise<void> {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: input.email },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
+    }
+
+    const existingPhone = await this.prisma.user.findFirst({
+      where: { phone: input.phone },
+      select: { id: true },
+    });
+
+    if (existingPhone) {
+      throw new ConflictException(ErrorMessages.PHONE_ALREADY_EXISTS);
+    }
+
+    const existingIdentity = await this.prisma.user.findFirst({
+      where: {
+        firstName: { equals: input.firstName, mode: 'insensitive' },
+        lastName: { equals: input.lastName, mode: 'insensitive' },
+        dateOfBirth: input.dateOfBirth,
+      },
+      select: { id: true },
+    });
+
+    if (existingIdentity) {
+      throw new ConflictException(
+        ErrorMessages.BEAUTICIAN_IDENTITY_ALREADY_EXISTS,
+      );
+    }
   }
 
   private generateOtpCode(): string {

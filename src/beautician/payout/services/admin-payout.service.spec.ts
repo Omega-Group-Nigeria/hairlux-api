@@ -50,6 +50,7 @@ describe('AdminPayoutService', () => {
           lastName: 'Okafor',
           email: 'ada@example.com',
           phone: '+2348012345678',
+          dateOfBirth: new Date('1996-06-15'),
         },
       },
     ]);
@@ -70,6 +71,7 @@ describe('AdminPayoutService', () => {
             lastName: true,
             email: true,
             phone: true,
+            dateOfBirth: true,
           },
         },
       },
@@ -89,6 +91,7 @@ describe('AdminPayoutService', () => {
           lastName: 'Okafor',
           email: 'ada@example.com',
           phone: '+2348012345678',
+          dateOfBirth: new Date('1996-06-15'),
         },
       },
     ]);

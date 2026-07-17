@@ -2,6 +2,10 @@ export const ErrorMessages = {
   // Auth errors
   INVALID_CREDENTIALS: 'Invalid email or password',
   USER_ALREADY_EXISTS: 'User with this email already exists',
+  PHONE_ALREADY_EXISTS:
+    'Phone number is already associated with an account',
+  BEAUTICIAN_IDENTITY_ALREADY_EXISTS:
+    'An account with this name and date of birth already exists',
   USER_NOT_FOUND: 'User not found',
   INVALID_TOKEN: 'Invalid or expired token',
   SESSION_REVOKED:

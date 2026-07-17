@@ -158,7 +158,7 @@ export class MatchingOrchestratorService {
       return;
     }
 
-    const coordinates = await this.resolveCoordinates(booking.address);
+    const coordinates = await this.resolveBookingCoordinates(booking);
     if (!coordinates) {
       this.logger.error(
         `Booking ${bookingId} has no geocoded address — cannot match beauticians`,
@@ -859,6 +859,31 @@ export class MatchingOrchestratorService {
         )
         .map((job) => job.remove()),
     );
+  }
+
+  /**
+   * Resolve customer coords from temporary booking location first, then saved
+   * address (with optional geocoding fallback).
+   */
+  private async resolveBookingCoordinates(booking: {
+    tempLatitude?: unknown;
+    tempLongitude?: unknown;
+    tempFullAddress?: string | null;
+    address: {
+      latitude: unknown;
+      longitude: unknown;
+      fullAddress: string;
+      placeId: string | null;
+    } | null;
+  }): Promise<{ lat: number; lng: number } | null> {
+    if (booking.tempLatitude != null && booking.tempLongitude != null) {
+      return {
+        lat: Number(booking.tempLatitude),
+        lng: Number(booking.tempLongitude),
+      };
+    }
+
+    return this.resolveCoordinates(booking.address);
   }
 
   private async resolveCoordinates(

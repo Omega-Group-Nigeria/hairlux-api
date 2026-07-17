@@ -16,6 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
+import { RegisterBeauticianDto } from './dto/register-beautician.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -70,7 +71,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Register a new beautician account',
     description:
-      'Creates a user with role BEAUTICIAN, an empty beautician profile, and a wallet.',
+      'Creates a user with role BEAUTICIAN, an empty beautician profile, and a wallet. Email, phone, and name + date of birth must each be unique.',
   })
   @ApiResponse({
     status: 201,
@@ -85,6 +86,7 @@ export class AuthController {
           firstName: 'Ada',
           lastName: 'Okafor',
           phone: '+2348012345678',
+          dateOfBirth: '1996-06-15T00:00:00.000Z',
           role: 'BEAUTICIAN',
           status: 'ACTIVE',
           createdAt: '2026-06-20T12:00:00.000Z',
@@ -94,8 +96,12 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 409, description: 'User already exists' })
-  async registerBeautician(@Body() registerDto: RegisterDto) {
+  @ApiResponse({
+    status: 409,
+    description:
+      'Email, phone, or name + date of birth already associated with an account',
+  })
+  async registerBeautician(@Body() registerDto: RegisterBeauticianDto) {
     const result = await this.authService.registerBeautician(registerDto);
     return ResponseUtil.success(result, 'Beautician registered successfully');
   }

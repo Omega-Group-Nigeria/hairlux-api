@@ -10,7 +10,6 @@ import { RedisService } from '../../redis/redis.service';
 import {
   bookingAdminReadInclude,
   bookingUserReadInclude,
-  formatBookingAddress,
   formatBookingResponse,
 } from '../utils/booking.utils';
 
@@ -73,7 +72,6 @@ export class ReservationService {
 
     return {
       ...formatBookingResponse(booking),
-      address: formatBookingAddress(booking.address),
       isValid:
         !booking.reservationUsed && booking.status !== BookingStatus.CANCELLED,
     };
@@ -114,9 +112,6 @@ export class ReservationService {
 
     void this.redis.delByPattern('analytics:*');
 
-    return {
-      ...formatBookingResponse(updated),
-      address: formatBookingAddress(updated.address),
-    };
+    return formatBookingResponse(updated);
   }
 }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { BookingStatus, BookingType } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { resolveBookingServiceLocation } from '../../../booking/utils/booking-location.utils';
 import { maskAddress } from '../../matching/utils/booking-assignment.utils';
 
 const ACTIVE_STATUSES: BookingStatus[] = [
@@ -81,19 +82,20 @@ export class ActiveHomeServiceBookingsService {
               : null,
           }
         : null,
-      location: booking.address
-        ? {
-            city: booking.address.city,
-            state: booking.address.state,
-            lat: booking.address.latitude
-              ? Number(booking.address.latitude)
-              : null,
-            lng: booking.address.longitude
-              ? Number(booking.address.longitude)
-              : null,
-            maskedAddress: maskAddress(booking.address.fullAddress),
-          }
-        : null,
+      location: (() => {
+        const location = resolveBookingServiceLocation(booking);
+        if (!location) {
+          return null;
+        }
+        return {
+          city: location.city,
+          state: location.state,
+          lat: location.lat,
+          lng: location.lng,
+          maskedAddress: maskAddress(location.fullAddress),
+          isTemporary: location.source === 'temporary',
+        };
+      })(),
     }));
   }
 }

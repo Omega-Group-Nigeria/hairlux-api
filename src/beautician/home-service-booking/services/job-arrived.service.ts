@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { BookingStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { formatBookingResponse } from '../../../booking/utils/booking.utils';
-import { GeocodingService } from '../../../common/services/geocoding.service';
+import { resolveBookingCoordinatesSync } from '../../../booking/utils/booking-location.utils';
 import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
 import { haversineKm } from '../../matching/utils/geo.util';
 import { ArrivalPinService } from '../../arrival-verification/services/arrival-pin.service';
@@ -19,7 +19,6 @@ export class JobArrivedService {
     private readonly statusService: HomeServiceStatusService,
     private readonly pinService: ArrivalPinService,
     private readonly settingsService: HomeServiceSettingsService,
-    private readonly geocodingService: GeocodingService,
     private readonly notificationService: BeauticianNotificationService,
     private readonly commsRealtime: CommsRealtimeService,
   ) {}
@@ -48,7 +47,12 @@ export class JobArrivedService {
 
     this.statusService.assertTransition(booking.status, BookingStatus.ARRIVED);
 
-    const destination = await this.resolveDestinationCoords(booking);
+    // Destination resolve is sync (stored lat/lng only); settings may hit cache.
+    const [destination, settings] = await Promise.all([
+      Promise.resolve(this.resolveDestinationCoords(booking)),
+      this.settingsService.getSettings(),
+    ]);
+
     const distanceMeters = destination
       ? Math.round(
           haversineKm(
@@ -60,7 +64,6 @@ export class JobArrivedService {
         )
       : null;
 
-    const settings = await this.settingsService.getSettings();
     const geoAuditFlag =
       distanceMeters != null &&
       distanceMeters > settings.arrivalGeoFenceMeters;
@@ -71,6 +74,7 @@ export class JobArrivedService {
     );
     const pin = this.pinService.generatePin();
 
+    // Integrity order: PIN available before status is ARRIVED for customers.
     await this.pinService.storePin(
       bookingId,
       {
@@ -93,6 +97,7 @@ export class JobArrivedService {
       },
     });
 
+    // Side effects: do not block the HTTP response.
     void this.notificationService.notifyArrivalVerificationNeeded(
       {
         email: booking.user.email,
@@ -100,8 +105,7 @@ export class JobArrivedService {
       },
       bookingId,
     );
-
-    await this.commsRealtime.emitBookingStatus(
+    void this.commsRealtime.emitBookingStatus(
       bookingId,
       BookingStatus.ARRIVED,
     );
@@ -118,32 +122,21 @@ export class JobArrivedService {
     };
   }
 
-  private async resolveDestinationCoords(booking: {
+  /**
+   * Hot path: only use coordinates already on the booking (saved address or
+   * temporary location). No external geocoding — missing coords yield null
+   * distance (no geo audit).
+   */
+  private resolveDestinationCoords(booking: {
     address: {
       fullAddress: string;
       latitude: unknown;
       longitude: unknown;
     } | null;
-  }): Promise<{ lat: number; lng: number } | null> {
-    if (!booking.address) {
-      return null;
-    }
-
-    if (
-      booking.address.latitude != null &&
-      booking.address.longitude != null
-    ) {
-      return {
-        lat: Number(booking.address.latitude),
-        lng: Number(booking.address.longitude),
-      };
-    }
-
-    const geocoded = await this.geocodingService.geocodeAddress(
-      booking.address.fullAddress,
-    );
-    return geocoded
-      ? { lat: geocoded.latitude, lng: geocoded.longitude }
-      : null;
+    tempLatitude?: unknown;
+    tempLongitude?: unknown;
+    tempFullAddress?: string | null;
+  }): { lat: number; lng: number } | null {
+    return resolveBookingCoordinatesSync(booking);
   }
 }

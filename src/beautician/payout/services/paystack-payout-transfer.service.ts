@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PayoutRequest, PayoutRequestStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { ADMIN_USER_IDENTITY_SELECT } from '../../../common/constants/admin-user-select';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PaystackService } from '../../../payment/paystack.service';
 import { BeauticianBankAccountService } from './beautician-bank-account.service';
@@ -195,15 +196,7 @@ export class PaystackPayoutTransferService {
       },
       orderBy: { createdAt: 'asc' },
       include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
+        user: { select: ADMIN_USER_IDENTITY_SELECT },
       },
     });
 
@@ -303,6 +296,7 @@ export class PaystackPayoutTransferService {
         lastName: string;
         email: string;
         phone: string | null;
+        dateOfBirth: Date | null;
       };
     },
   ) {

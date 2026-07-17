@@ -9,6 +9,7 @@ import {
   formatBookingResponse,
   normalizeBookingServices,
 } from '../../../booking/utils/booking.utils';
+import { resolveBookingServiceLocation } from '../../../booking/utils/booking-location.utils';
 import { maskAddress } from '../../matching/utils/booking-assignment.utils';
 import { CommsPresenterService } from '../../../comms/services/comms-presenter.service';
 
@@ -48,6 +49,9 @@ export class JobPresentationService {
       bookingDate: Date;
       bookingTime: string;
       status: BookingStatus;
+      tempLatitude?: unknown;
+      tempLongitude?: unknown;
+      tempFullAddress?: string | null;
       commsSession?: {
         streamChannelId: string;
         streamCallCid: string | null;
@@ -78,26 +82,24 @@ export class JobPresentationService {
   ) {
     const services = normalizeBookingServices(booking.services);
     const formatted = formatBookingResponse(booking);
+    const location = resolveBookingServiceLocation(booking);
 
-    const customerAddress = booking.address
+    const customerAddress = location
       ? {
-          fullAddress: booking.address.fullAddress,
-          lat:
-            booking.address.latitude != null
-              ? Number(booking.address.latitude)
-              : null,
-          lng:
-            booking.address.longitude != null
-              ? Number(booking.address.longitude)
-              : null,
-          city: booking.address.city,
-          state: booking.address.state,
+          fullAddress: location.fullAddress,
+          lat: location.lat,
+          lng: location.lng,
+          city: location.city,
+          state: location.state,
+          isTemporary: location.source === 'temporary',
         }
       : null;
 
-    const navigationQuery = booking.address?.fullAddress
-      ? encodeURIComponent(booking.address.fullAddress)
-      : '';
+    const navigationQuery = location?.fullAddress
+      ? encodeURIComponent(location.fullAddress)
+      : location?.lat != null && location?.lng != null
+        ? `${location.lat},${location.lng}`
+        : '';
 
     return {
       booking: formatted,
@@ -138,6 +140,9 @@ export class JobPresentationService {
       customerReview: string | null;
       serviceCompletedAt: Date | null;
       updatedAt: Date;
+      tempLatitude?: unknown;
+      tempLongitude?: unknown;
+      tempFullAddress?: string | null;
       address: {
         fullAddress: string;
         city: string | null;
@@ -152,6 +157,7 @@ export class JobPresentationService {
   ) {
     const services = normalizeBookingServices(booking.services);
     const formatted = formatBookingResponse(booking);
+    const location = resolveBookingServiceLocation(booking);
 
     return {
       booking: formatted,
@@ -160,11 +166,12 @@ export class JobPresentationService {
         firstName: booking.user.firstName,
         lastName: booking.user.lastName,
       },
-      customerAddress: booking.address
+      customerAddress: location
         ? {
-            fullAddress: booking.address.fullAddress,
-            city: booking.address.city,
-            state: booking.address.state,
+            fullAddress: location.fullAddress,
+            city: location.city,
+            state: location.state,
+            isTemporary: location.source === 'temporary',
           }
         : null,
       customerRating: booking.customerRating,
@@ -193,10 +200,14 @@ export class JobPresentationService {
       bookingTime: string;
       totalAmount: unknown;
       services: unknown;
+      tempLatitude?: unknown;
+      tempLongitude?: unknown;
+      tempFullAddress?: string | null;
       address: { fullAddress: string; city: string | null; state: string | null } | null;
     };
   }) {
     const services = normalizeBookingServices(offer.booking.services);
+    const location = resolveBookingServiceLocation(offer.booking);
 
     return {
       offerId: offer.id,
@@ -212,11 +223,11 @@ export class JobPresentationService {
         bookingTime: offer.booking.bookingTime,
         totalAmount: Number(offer.booking.totalAmount ?? 0),
         services,
-        maskedAddress: offer.booking.address
-          ? maskAddress(offer.booking.address.fullAddress)
+        maskedAddress: location
+          ? maskAddress(location.fullAddress)
           : null,
-        city: offer.booking.address?.city ?? null,
-        state: offer.booking.address?.state ?? null,
+        city: location?.city ?? null,
+        state: location?.state ?? null,
       },
     };
   }

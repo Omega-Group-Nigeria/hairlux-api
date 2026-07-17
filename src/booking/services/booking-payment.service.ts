@@ -31,12 +31,16 @@ import { VerifyBookingPaymentDto } from '../dto/verify-booking-payment.dto';
 import {
   bookingUserReadInclude,
   calculateBookingServicesTotal,
-  formatBookingAddress,
   formatBookingResponse,
   normalizeBookingServices,
   toBookingServicesJson,
   toEmailServiceLines,
 } from '../utils/booking.utils';
+import {
+  buildBookingLocationCreateData,
+  hasTemporaryServiceLocation,
+  resolveBookingAddressLabel,
+} from '../utils/booking-location.utils';
 import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
 import { BookingLinePricingService } from './booking-line-pricing.service';
@@ -183,10 +187,7 @@ export class BookingPaymentService {
     reservationCode: string,
   ) {
     return {
-      booking: {
-        ...formatBookingResponse(booking),
-        address: formatBookingAddress(booking.address),
-      },
+      booking: formatBookingResponse(booking),
       reservationCode,
       message: 'Booking payment already verified',
     };
@@ -337,6 +338,9 @@ export class BookingPaymentService {
       date,
       time,
       addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
       bookingType,
       guestName,
       guestPhone,
@@ -362,16 +366,33 @@ export class BookingPaymentService {
         this.resolveServiceMode(item, bookingType) === BookingType.HOME_SERVICE,
     );
 
+    const locationData = buildBookingLocationCreateData({
+      addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
+    });
+
     let address: Awaited<
       ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
     if (hasHomeService) {
-      address = await this.prisma.address.findFirst({
-        where: { id: addressId, userId },
-      });
+      if (locationData.addressId) {
+        address = await this.prisma.address.findFirst({
+          where: {
+            id: locationData.addressId,
+            userId,
+            deletedAt: null,
+          },
+        });
 
-      if (!address) {
-        throw new NotFoundException('Address not found');
+        if (!address) {
+          throw new NotFoundException('Address not found');
+        }
+      } else if (!hasTemporaryServiceLocation(locationData)) {
+        throw new BadRequestException(
+          'addressId or temporary location (tempLatitude, tempLongitude, tempFullAddress) is required for HOME_SERVICE bookings',
+        );
       }
     }
 
@@ -433,7 +454,10 @@ export class BookingPaymentService {
               data: {
                 userId,
                 services: toBookingServicesJson(serviceRecords),
-                addressId: addressId ?? null,
+                addressId: locationData.addressId,
+                tempLatitude: locationData.tempLatitude,
+                tempLongitude: locationData.tempLongitude,
+                tempFullAddress: locationData.tempFullAddress,
                 branchId: branchId ?? null,
                 bookingDate,
                 bookingTime: time,
@@ -489,7 +513,12 @@ export class BookingPaymentService {
 
         const { booking, influencerRewardUserId } = walletResult;
 
-        const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
+        const addressStr = resolveBookingAddressLabel({
+          address,
+          tempLatitude: locationData.tempLatitude,
+          tempLongitude: locationData.tempLongitude,
+          tempFullAddress: locationData.tempFullAddress,
+        });
         const emailServices = toEmailServiceLines(serviceRecords);
         const isHomeService = bookingNeedsBeauticianAssignment(
           effectiveBookingType,
@@ -571,7 +600,10 @@ export class BookingPaymentService {
             data: {
               userId,
               services: toBookingServicesJson(serviceRecords),
-              addressId: addressId ?? null,
+              addressId: locationData.addressId,
+              tempLatitude: locationData.tempLatitude,
+              tempLongitude: locationData.tempLongitude,
+              tempFullAddress: locationData.tempFullAddress,
               branchId: branchId ?? null,
               bookingDate,
               bookingTime: time,
@@ -607,7 +639,12 @@ export class BookingPaymentService {
         });
       });
 
-      const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
+      const addressStr = resolveBookingAddressLabel({
+        address,
+        tempLatitude: locationData.tempLatitude,
+        tempLongitude: locationData.tempLongitude,
+        tempFullAddress: locationData.tempFullAddress,
+      });
       const emailServices = toEmailServiceLines(serviceRecords);
       const isHomeService = bookingNeedsBeauticianAssignment(
         effectiveBookingType,
@@ -838,24 +875,51 @@ export class BookingPaymentService {
     userId: string,
     payload: BookingPaymentPayloadDto,
   ) {
-    const { services, date, time, addressId, bookingType, discountCode, branchId } =
-      payload;
+    const {
+      services,
+      date,
+      time,
+      addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
+      bookingType,
+      discountCode,
+      branchId,
+    } = payload;
 
     const hasHomeService = services.some(
       (item) =>
         this.resolveServiceMode(item, bookingType) === BookingType.HOME_SERVICE,
     );
 
+    const locationData = buildBookingLocationCreateData({
+      addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
+    });
+
     let address: Awaited<
       ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
     if (hasHomeService) {
-      address = await this.prisma.address.findFirst({
-        where: { id: addressId, userId },
-      });
+      if (locationData.addressId) {
+        address = await this.prisma.address.findFirst({
+          where: {
+            id: locationData.addressId,
+            userId,
+            deletedAt: null,
+          },
+        });
 
-      if (!address) {
-        throw new NotFoundException('Address not found');
+        if (!address) {
+          throw new NotFoundException('Address not found');
+        }
+      } else if (!hasTemporaryServiceLocation(locationData)) {
+        throw new BadRequestException(
+          'addressId or temporary location (tempLatitude, tempLongitude, tempFullAddress) is required for HOME_SERVICE bookings',
+        );
       }
     }
 
@@ -907,6 +971,7 @@ export class BookingPaymentService {
     return {
       user,
       address,
+      locationData,
       bookingType: effectiveBookingType,
       bookingDate,
       branchId: branchId ?? null,
@@ -1100,10 +1165,7 @@ export class BookingPaymentService {
 
       if (existingBooking) {
         return {
-          booking: {
-            ...formatBookingResponse(existingBooking),
-            address: formatBookingAddress(existingBooking.address),
-          },
+          booking: formatBookingResponse(existingBooking),
           reservationCode: String(
             metadata.reservationCode ?? existingBooking.reservationCode,
           ),
@@ -1227,9 +1289,12 @@ export class BookingPaymentService {
 
     const walletDebitReference = `BOOK-WAL-${dto.bookingPaymentReference}`;
 
-    const addressLabel = context.address
-      ? context.address.fullAddress
-      : 'In-store (Walk-in)';
+    const addressLabel = resolveBookingAddressLabel({
+      address: context.address,
+      tempLatitude: context.locationData.tempLatitude,
+      tempLongitude: context.locationData.tempLongitude,
+      tempFullAddress: context.locationData.tempFullAddress,
+    });
     const initialStatus = this.homeServiceBookingService.resolveInitialStatus(
       context.bookingType,
       context.serviceRecords,
@@ -1301,7 +1366,10 @@ export class BookingPaymentService {
             data: {
               userId,
               services: toBookingServicesJson(context.serviceRecords),
-              addressId: payload.addressId ?? null,
+              addressId: context.locationData.addressId,
+              tempLatitude: context.locationData.tempLatitude,
+              tempLongitude: context.locationData.tempLongitude,
+              tempFullAddress: context.locationData.tempFullAddress,
               branchId: context.branchId,
               bookingDate: context.bookingDate,
               bookingTime: payload.time,
@@ -1496,10 +1564,7 @@ export class BookingPaymentService {
     }
 
     return {
-      booking: {
-        ...formatBookingResponse(result.booking),
-        address: formatBookingAddress(result.booking.address),
-      },
+      booking: formatBookingResponse(result.booking),
       reservationCode: result.reservationCode,
       message: this.homeServiceBookingService.getPaymentConfirmationMessage(
         initialStatus,
