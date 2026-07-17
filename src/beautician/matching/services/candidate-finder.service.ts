@@ -16,7 +16,6 @@ export interface MatchingCandidate {
   userId: string;
   profileId: string;
   distanceKm: number;
-  commissionRateOverride: number | null;
   score: number;
   scoreSnapshot: Record<string, unknown>;
 }
@@ -129,9 +128,6 @@ export class CandidateFinderService {
           userId: profile.userId,
           profileId: profile.id,
           distanceKm,
-          commissionRateOverride: profile.commissionRateOverride
-            ? Number(profile.commissionRateOverride)
-            : null,
           score: scored.score,
           scoreSnapshot: scored.snapshot,
         };

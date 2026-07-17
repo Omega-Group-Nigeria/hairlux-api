@@ -1,30 +1,32 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getQueueToken } from '@nestjs/bull';
 import {
   BookingStatus,
   DispatchStatus,
   MatchingExhaustedReason,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { GeocodingService } from '../../../common/services/geocoding.service';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { MatchingOrchestratorService } from './matching-orchestrator.service';
 import { MatchingConfigService } from './matching-config.service';
 import { CandidateFinderService } from './candidate-finder.service';
-import { CandidatePoolAnalyzerService } from './candidate-pool-analyzer.service';
-import { MatchingExhaustionResolverService } from './matching-exhaustion-resolver.service';
 import { OfferExclusionService } from './offer-exclusion.service';
 import { OfferManagerService } from './offer-manager.service';
 import { DispatchStateService } from './dispatch-state.service';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
 import { RedisService } from '../../../redis/redis.service';
+import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
+import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import { MatchingLockService } from './matching-lock.service';
+import { MatchingQueueService } from './matching-queue.service';
+import { BookingCoordinatesService } from './booking-coordinates.service';
+import { OfferLifecycleService } from './offer-lifecycle.service';
+import { MatchingAttemptService } from './matching-attempt.service';
+import { CandidatePoolAnalyzerService } from './candidate-pool-analyzer.service';
+import { MatchingExhaustionResolverService } from './matching-exhaustion-resolver.service';
 
 describe('MatchingOrchestratorService cycling', () => {
   let service: MatchingOrchestratorService;
 
   const bookingId = 'booking-1';
-  const queueAdd = jest.fn();
 
   const booking = {
     id: bookingId,
@@ -32,18 +34,23 @@ describe('MatchingOrchestratorService cycling', () => {
     matchingAttempt: 1,
     matchingExhaustedAt: null,
     dispatchStatus: DispatchStatus.PENDING_MATCH,
+    bookingType: 'HOME_SERVICE',
+    totalAmount: 100,
     services: [
       {
         serviceId: 'service-1',
-        serviceName: 'Braids',
+        name: 'Braids',
         price: 100,
-        bookingType: 'HOME_SERVICE',
+        quantity: 1,
+        duration: 60,
+        serviceMode: 'HOME_SERVICE',
       },
     ],
     address: {
       latitude: 6.5,
       longitude: 3.3,
       fullAddress: 'Lagos',
+      placeId: null,
     },
   };
 
@@ -51,7 +58,6 @@ describe('MatchingOrchestratorService cycling', () => {
     userId: 'beautician-b',
     profileId: 'profile-b',
     distanceKm: 2,
-    commissionRateOverride: null,
     score: 0.9,
     scoreSnapshot: {},
   };
@@ -60,7 +66,6 @@ describe('MatchingOrchestratorService cycling', () => {
     userId: 'beautician-c',
     profileId: 'profile-c',
     distanceKm: 3,
-    commissionRateOverride: null,
     score: 0.8,
     scoreSnapshot: {},
   };
@@ -140,20 +145,66 @@ describe('MatchingOrchestratorService cycling', () => {
     analyze: jest.fn(defaultPoolAnalyze),
   };
 
+  const mockMatchingQueue = {
+    scheduleCreateOffers: jest.fn(async () => undefined),
+    cancelBookingJobs: jest.fn(async () => undefined),
+    removeExpireOfferJob: jest.fn(async () => undefined),
+    scheduleExpireOffer: jest.fn(async () => undefined),
+  };
+
+  const mockRedis = {
+    setNx: jest.fn(async () => true),
+    incr: jest.fn(async () => 1),
+    expire: jest.fn(async () => undefined),
+    get: jest.fn(async () => null),
+    set: jest.fn(async () => undefined),
+    del: jest.fn(async () => undefined),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
     lastOffered = null;
     nextCandidate = candidateB;
     mockPoolAnalyzer.analyze.mockImplementation(defaultPoolAnalyze);
+    mockRedis.incr.mockResolvedValue(1);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MatchingOrchestratorService,
+        MatchingAttemptService,
+        {
+          provide: OfferLifecycleService,
+          useValue: {
+            hasActiveOffers: jest.fn(async () => false),
+            expireOffer: jest.fn(),
+            expireStaleOffersForBooking: jest.fn(async () => 0),
+            cancelBeauticianPendingOffers: jest.fn(async () => []),
+            clearActiveOffersAndJobs: jest.fn(),
+          },
+        },
+        {
+          provide: MatchingLockService,
+          useValue: {
+            runExclusive: jest.fn(
+              async (_id: string, fn: () => Promise<void>) => fn(),
+            ),
+            acquire: jest.fn(async () => true),
+            release: jest.fn(async () => undefined),
+          },
+        },
+        { provide: MatchingQueueService, useValue: mockMatchingQueue },
+        {
+          provide: BookingCoordinatesService,
+          useValue: {
+            resolve: jest.fn(async () => ({ lat: 6.5, lng: 3.3 })),
+          },
+        },
         { provide: PrismaService, useValue: mockPrisma },
-        { provide: GeocodingService, useValue: { geocodeAddress: jest.fn() } },
         {
           provide: HomeServiceSettingsService,
-          useValue: { getSettings: jest.fn(async () => ({ commissionRate: 0.7 })) },
+          useValue: {
+            getSettings: jest.fn(async () => ({ commissionRate: 0.7 })),
+          },
         },
         {
           provide: MatchingConfigService,
@@ -163,6 +214,7 @@ describe('MatchingOrchestratorService cycling', () => {
             getOfferTtlSeconds: () => 60,
             getInterTierDelaySeconds: () => 15,
             getMaxRadiusKm: () => 20,
+            isWakeExhaustedOnOnlineEnabled: () => false,
           },
         },
         { provide: CandidateFinderService, useValue: mockCandidateFinder },
@@ -171,21 +223,21 @@ describe('MatchingOrchestratorService cycling', () => {
         { provide: OfferExclusionService, useValue: mockOfferExclusion },
         { provide: OfferManagerService, useValue: mockOfferManager },
         { provide: DispatchStateService, useValue: mockDispatchState },
+        { provide: RedisService, useValue: mockRedis },
         {
-          provide: RealtimePublisherService,
-          useValue: { emitOfferExpired: jest.fn() },
+          provide: EarningsCalculatorService,
+          useClass: EarningsCalculatorService,
         },
-        { provide: RedisService, useValue: { setNx: jest.fn() } },
         {
-          provide: getQueueToken(HOME_SERVICE_MATCHING_QUEUE),
-          useValue: { add: queueAdd, getJobs: jest.fn(async () => []) },
+          provide: ServiceCommissionRateService,
+          useValue: {
+            getRateMapForServiceIds: jest.fn(async () => new Map()),
+          },
         },
       ],
     }).compile();
 
-    service = module.get<MatchingOrchestratorService>(
-      MatchingOrchestratorService,
-    );
+    service = module.get(MatchingOrchestratorService);
   });
 
   it('cycles B -> C -> B when offers expire without exclusion', async () => {
@@ -216,10 +268,12 @@ describe('MatchingOrchestratorService cycling', () => {
 
     await service.continueMatching(bookingId, 1);
 
-    expect(queueAdd).toHaveBeenCalledWith(
-      'create-offers',
+    expect(mockMatchingQueue.scheduleCreateOffers).toHaveBeenCalledWith(
       { bookingId, matchingAttempt: 1 },
-      expect.objectContaining({ delay: 15_000 }),
+      expect.objectContaining({
+        delayMs: 15_000,
+        jobId: `matching-wait-online:${bookingId}:1`,
+      }),
     );
     expect(mockDispatchState.transition).not.toHaveBeenCalledWith(
       bookingId,

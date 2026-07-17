@@ -1,6 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
-import type { Queue } from 'bull';
 import {
   AvailabilityStatus,
   DispatchStatus,
@@ -11,10 +9,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { DispatchStateService } from './dispatch-state.service';
 import { DISPATCH_EVENT_TYPES } from '../constants/dispatch-event.constants';
 import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
 import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
 import { MatchingCandidate } from './candidate-finder.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
+import { MatchingQueueService } from './matching-queue.service';
 
 @Injectable()
 export class OfferManagerService {
@@ -23,8 +21,7 @@ export class OfferManagerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly dispatchState: DispatchStateService,
-    @InjectQueue(HOME_SERVICE_MATCHING_QUEUE)
-    private readonly matchingQueue: Queue,
+    private readonly matchingQueueService: MatchingQueueService,
     private readonly notificationService: BeauticianNotificationService,
     private readonly realtimePublisher: RealtimePublisherService,
     private readonly locationIndex: BeauticianLocationIndexService,
@@ -34,16 +31,14 @@ export class OfferManagerService {
     bookingId: string;
     matchingAttempt: number;
     candidate: MatchingCandidate;
-    homeServiceAmount: number;
-    globalCommissionRate: number;
+    /** Pre-calculated beautician take-home for this booking. */
+    estEarnings: number;
     offerTtlSeconds: number;
   }) {
     const expiresAt = new Date(
       Date.now() + params.offerTtlSeconds * 1000,
     );
-    const rate =
-      params.candidate.commissionRateOverride ?? params.globalCommissionRate;
-    const estEarnings = params.homeServiceAmount * rate;
+    const estEarnings = params.estEarnings;
 
     type CreatedOffer = {
       id: string;
@@ -123,19 +118,12 @@ export class OfferManagerService {
       idempotencyKey: `offer:${offer.id}`,
     });
 
-    await this.matchingQueue.add(
-      'expire-offer',
-      {
-        offerId: offer.id,
-        bookingId: params.bookingId,
-        matchingAttempt: params.matchingAttempt,
-      },
-      {
-        delay: params.offerTtlSeconds * 1000,
-        jobId: `expire-offer:${offer.id}`,
-        removeOnComplete: true,
-      },
-    );
+    await this.matchingQueueService.scheduleExpireOffer({
+      offerId: offer.id,
+      bookingId: params.bookingId,
+      matchingAttempt: params.matchingAttempt,
+      delayMs: params.offerTtlSeconds * 1000,
+    });
 
     await this.notificationService.notifyNewJobOffer(
       {

@@ -34,9 +34,6 @@ export class BeauticianProfileService {
       ...(dto.certifications !== undefined && {
         certifications: dto.certifications,
       }),
-      ...(dto.profilePhotoUrl !== undefined && {
-        profilePhotoUrl: dto.profilePhotoUrl,
-      }),
     };
 
     const updated = await this.prisma.beauticianProfile.update({
@@ -58,28 +55,6 @@ export class BeauticianProfileService {
     await this.meCache.invalidate(userId);
 
     return serializeBeauticianProfile(updated);
-  }
-
-  async uploadProfilePhoto(userId: string, file: Express.Multer.File) {
-    const profile = await this.requireProfile(userId);
-    this.assertProfileEditable(profile);
-
-    const upload = await this.cloudinaryService.uploadImage(
-      file.buffer,
-      'beauticians/profile-photos',
-    );
-
-    const updated = await this.prisma.beauticianProfile.update({
-      where: { userId },
-      data: { profilePhotoUrl: upload.secureUrl },
-    });
-
-    await this.meCache.invalidate(userId);
-
-    return {
-      profilePhotoUrl: updated.profilePhotoUrl,
-      publicId: upload.publicId,
-    };
   }
 
   async uploadCertification(userId: string, file: Express.Multer.File) {

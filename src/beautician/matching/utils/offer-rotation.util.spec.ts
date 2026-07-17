@@ -4,7 +4,6 @@ const candidate = (userId: string) => ({
   userId,
   profileId: `profile-${userId}`,
   distanceKm: 1,
-  commissionRateOverride: null,
   score: 1,
   scoreSnapshot: {},
 });

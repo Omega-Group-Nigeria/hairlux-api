@@ -3,6 +3,7 @@ import { BookingType, JobOfferStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
+import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
 
 export interface ResolvedJobEarnings {
   payoutAmount: number;
@@ -22,6 +23,7 @@ export class JobEarningsResolverService {
     private readonly prisma: PrismaService,
     private readonly settingsService: HomeServiceSettingsService,
     private readonly earningsCalculator: EarningsCalculatorService,
+    private readonly serviceCommissionRates: ServiceCommissionRateService,
   ) {}
 
   async resolveForActiveBookings(
@@ -33,12 +35,12 @@ export class JobEarningsResolverService {
     }
 
     const bookingIds = bookings.map((booking) => booking.id);
-    const [settings, profile, acceptedOffers] = await Promise.all([
+    const allServiceIds = bookings.flatMap((booking) =>
+      this.extractServiceIds(booking.services),
+    );
+
+    const [settings, acceptedOffers, rateMap] = await Promise.all([
       this.settingsService.getSettings(),
-      this.prisma.beauticianProfile.findUnique({
-        where: { userId: beauticianUserId },
-        select: { commissionRateOverride: true },
-      }),
       this.prisma.jobOffer.findMany({
         where: {
           bookingId: { in: bookingIds },
@@ -47,6 +49,7 @@ export class JobEarningsResolverService {
         },
         select: { bookingId: true, estEarningsAtOffer: true },
       }),
+      this.serviceCommissionRates.getRateMapForServiceIds(allServiceIds),
     ]);
 
     const offerByBookingId = new Map(
@@ -57,10 +60,8 @@ export class JobEarningsResolverService {
       bookings.map((booking) => [
         booking.id,
         this.resolveFromContext(booking, {
-          settingsCommissionRate: settings.commissionRate,
-          commissionRateOverride: profile?.commissionRateOverride
-            ? Number(profile.commissionRateOverride)
-            : null,
+          defaultCommissionRate: settings.commissionRate,
+          serviceCommissionRates: rateMap,
           estEarningsAtOffer:
             offerByBookingId.get(booking.id)?.estEarningsAtOffer ?? null,
         }),
@@ -72,13 +73,14 @@ export class JobEarningsResolverService {
     booking: ActiveBookingForEarnings,
     params: {
       estEarningsAtOffer?: unknown;
-      commissionRate: number;
-      commissionRateOverride?: number | null;
+      defaultCommissionRate: number;
+      serviceCommissionRates?: Map<string, number>;
     },
   ): ResolvedJobEarnings {
     return this.resolveFromContext(booking, {
-      settingsCommissionRate: params.commissionRate,
-      commissionRateOverride: params.commissionRateOverride ?? null,
+      defaultCommissionRate: params.defaultCommissionRate,
+      serviceCommissionRates:
+        params.serviceCommissionRates ?? new Map<string, number>(),
       estEarningsAtOffer: params.estEarningsAtOffer ?? null,
     });
   }
@@ -86,8 +88,8 @@ export class JobEarningsResolverService {
   private resolveFromContext(
     booking: ActiveBookingForEarnings,
     context: {
-      settingsCommissionRate: number;
-      commissionRateOverride: number | null;
+      defaultCommissionRate: number;
+      serviceCommissionRates: Map<string, number>;
       estEarningsAtOffer: unknown;
     },
   ): ResolvedJobEarnings {
@@ -95,8 +97,8 @@ export class JobEarningsResolverService {
       bookingType: booking.bookingType,
       services: booking.services,
       totalAmount: Number(booking.totalAmount ?? 0),
-      commissionRate: context.settingsCommissionRate,
-      commissionRateOverride: context.commissionRateOverride,
+      defaultCommissionRate: context.defaultCommissionRate,
+      serviceCommissionRates: context.serviceCommissionRates,
     });
 
     const payoutAmount =
@@ -108,5 +110,18 @@ export class JobEarningsResolverService {
       payoutAmount,
       commissionRate: calculation.commissionRate,
     };
+  }
+
+  private extractServiceIds(services: unknown): string[] {
+    if (!Array.isArray(services)) {
+      return [];
+    }
+    return services
+      .map((item) =>
+        item && typeof item === 'object' && 'serviceId' in item
+          ? String((item as { serviceId: unknown }).serviceId)
+          : '',
+      )
+      .filter(Boolean);
   }
 }

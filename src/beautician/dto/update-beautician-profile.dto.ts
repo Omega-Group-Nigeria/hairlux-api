@@ -4,7 +4,6 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUrl,
   Max,
   Min,
   MinLength,
@@ -35,9 +34,4 @@ export class UpdateBeauticianProfileDto {
   @IsArray()
   @IsString({ each: true })
   certifications?: string[];
-
-  @ApiPropertyOptional({ example: 'https://res.cloudinary.com/.../photo.webp' })
-  @IsOptional()
-  @IsUrl()
-  profilePhotoUrl?: string;
 }

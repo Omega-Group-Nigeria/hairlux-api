@@ -13,6 +13,7 @@ import { JobAcceptService } from './job-accept.service';
 import { JobPresentationService } from './job-presentation.service';
 import { JobEarningsResolverService } from './job-earnings-resolver.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
+import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { DispatchStateService } from '../../matching/services/dispatch-state.service';
 import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
@@ -247,6 +248,14 @@ describe('JobAcceptService', () => {
           provide: HomeServiceSettingsService,
           useValue: {
             getSettings: jest.fn().mockResolvedValue({ commissionRate: 0.7 }),
+          },
+        },
+        {
+          provide: ServiceCommissionRateService,
+          useValue: {
+            getRateMapForBookingServices: jest
+              .fn()
+              .mockResolvedValue(new Map()),
           },
         },
         {

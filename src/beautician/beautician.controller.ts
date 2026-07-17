@@ -106,30 +106,6 @@ export class BeauticianController {
     };
   }
 
-  @Post('me/profile-photo')
-  @UseGuards(KycVerifiedGuard)
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: { image: { type: 'string', format: 'binary' } },
-    },
-  })
-  @UseInterceptors(imageInterceptor('image'))
-  @ApiOperation({ summary: 'Upload profile photo' })
-  async uploadProfilePhoto(
-    @GetUser('id') userId: string,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
-    if (!file) throw new BadRequestException('Image file is required');
-    const data = await this.profileService.uploadProfilePhoto(userId, file);
-    return {
-      success: true,
-      message: 'Profile photo uploaded successfully',
-      data,
-    };
-  }
-
   @Post('me/certifications')
   @UseGuards(KycVerifiedGuard)
   @ApiConsumes('multipart/form-data')

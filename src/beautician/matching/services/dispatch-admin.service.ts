@@ -14,10 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { normalizeBookingServices } from '../../../booking/utils/booking.utils';
-import {
-  extractHomeServiceIds,
-  sumHomeServiceAmount,
-} from '../utils/booking-assignment.utils';
+import { extractHomeServiceIds } from '../utils/booking-assignment.utils';
 import { DispatchStateService } from './dispatch-state.service';
 import { MatchingOrchestratorService } from './matching-orchestrator.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
@@ -25,6 +22,8 @@ import { HomeServiceSettingsService } from '../../services/home-service-settings
 import { DISPATCH_EVENT_TYPES } from '../constants/dispatch-event.constants';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
+import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
 
 @Injectable()
 export class DispatchAdminService {
@@ -36,6 +35,8 @@ export class DispatchAdminService {
     private readonly matchingOrchestrator: MatchingOrchestratorService,
     private readonly locationIndex: BeauticianLocationIndexService,
     private readonly settingsService: HomeServiceSettingsService,
+    private readonly earningsCalculator: EarningsCalculatorService,
+    private readonly serviceCommissionRates: ServiceCommissionRateService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly commsSessionService: CommsSessionService,
   ) {}
@@ -68,6 +69,8 @@ export class DispatchAdminService {
         id: true,
         status: true,
         services: true,
+        bookingType: true,
+        totalAmount: true,
         dispatchStatus: true,
       },
     });
@@ -138,12 +141,17 @@ export class DispatchAdminService {
 
     const settings = await this.settingsService.getSettings();
     const services = normalizeBookingServices(booking.services);
-    const homeServiceAmount = sumHomeServiceAmount(services);
-    const commissionRate =
-      beautician.commissionRateOverride != null
-        ? Number(beautician.commissionRateOverride)
-        : Number(settings.commissionRate);
-    const estEarnings = homeServiceAmount * commissionRate;
+    const homeServiceIds = extractHomeServiceIds(services);
+    const serviceCommissionRates =
+      await this.serviceCommissionRates.getRateMapForServiceIds(homeServiceIds);
+    const earnings = this.earningsCalculator.calculate({
+      bookingType: booking.bookingType,
+      services: booking.services,
+      totalAmount: Number(booking.totalAmount),
+      defaultCommissionRate: Number(settings.commissionRate),
+      serviceCommissionRates,
+    });
+    const estEarnings = earnings.earningsAmount;
     const now = new Date();
 
     const offer = await this.prisma.$transaction(async (tx) => {

@@ -5,6 +5,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { BeauticianController } from './beautician.controller';
 import { AdminBeauticianController } from './admin-beautician.controller';
 import { AdminHomeServiceSettingsController } from './admin-home-service-settings.controller';
+import { AdminServiceCommissionController } from './admin-service-commission.controller';
 import { BeauticianReadService } from './services/beautician-read.service';
 import { BeauticianProfileService } from './services/beautician-profile.service';
 import { BeauticianAdminService } from './services/beautician-admin.service';
@@ -55,6 +56,7 @@ import { BeauticianMeCacheService } from './services/beautician-me-cache.service
     BeauticianController,
     AdminBeauticianController,
     AdminHomeServiceSettingsController,
+    AdminServiceCommissionController,
   ],
   providers: [
     BeauticianMeCacheService,

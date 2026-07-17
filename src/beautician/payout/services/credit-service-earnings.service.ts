@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   BookingStatus,
   BookingType,
+  Prisma,
   TransactionStatus,
   TransactionType,
 } from '@prisma/client';
@@ -10,6 +11,7 @@ import { RedisService } from '../../../redis/redis.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { EarningsCalculatorService } from './earnings-calculator.service';
 import { BeauticianStatsService } from './beautician-stats.service';
+import { ServiceCommissionRateService } from './service-commission-rate.service';
 
 @Injectable()
 export class CreditServiceEarningsService {
@@ -19,6 +21,7 @@ export class CreditServiceEarningsService {
     private readonly prisma: PrismaService,
     private readonly settingsService: HomeServiceSettingsService,
     private readonly earningsCalculator: EarningsCalculatorService,
+    private readonly serviceCommissionRates: ServiceCommissionRateService,
     private readonly statsService: BeauticianStatsService,
     private readonly redis: RedisService,
   ) {}
@@ -88,22 +91,17 @@ export class CreditServiceEarningsService {
       };
     }
 
-    const [settings, profile] = await Promise.all([
+    const [settings, serviceCommissionRates] = await Promise.all([
       this.settingsService.getSettings(),
-      this.prisma.beauticianProfile.findUnique({
-        where: { userId: booking.assignedBeauticianUserId },
-        select: { commissionRateOverride: true },
-      }),
+      this.serviceCommissionRates.getRateMapForBookingServices(booking.services),
     ]);
 
     const calculation = this.earningsCalculator.calculate({
       bookingType: booking.bookingType,
       services: booking.services,
       totalAmount: Number(booking.totalAmount),
-      commissionRate: settings.commissionRate,
-      commissionRateOverride: profile?.commissionRateOverride
-        ? Number(profile.commissionRateOverride)
-        : null,
+      defaultCommissionRate: settings.commissionRate,
+      serviceCommissionRates,
     });
 
     if (calculation.earningsAmount <= 0) {
@@ -148,9 +146,11 @@ export class CreditServiceEarningsService {
             bookingId,
             reservationCode: booking.reservationCode,
             commissionRate: calculation.commissionRate,
+            defaultCommissionRate: calculation.defaultCommissionRate,
             earningsBaseAmount: calculation.earningsBaseAmount,
             bookingTotalAmount: Number(booking.totalAmount),
-          },
+            lines: calculation.lines,
+          } as unknown as Prisma.InputJsonValue,
         },
       });
 

@@ -4,60 +4,62 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
-import type { Queue } from 'bull';
 import {
   BookingStatus,
   DispatchStatus,
-  JobOfferStatus,
   MatchingExhaustedReason,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { GeocodingService } from '../../../common/services/geocoding.service';
 import { normalizeBookingServices } from '../../../booking/utils/booking.utils';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
-import {
-  extractHomeServiceIds,
-  sumHomeServiceAmount,
-} from '../utils/booking-assignment.utils';
+import { extractHomeServiceIds } from '../utils/booking-assignment.utils';
 import { MatchingConfigService } from './matching-config.service';
 import { CandidateFinderService } from './candidate-finder.service';
-import { CandidatePoolAnalyzerService } from './candidate-pool-analyzer.service';
-import { MatchingExhaustionResolverService } from './matching-exhaustion-resolver.service';
 import { OfferExclusionService } from './offer-exclusion.service';
 import { OfferManagerService } from './offer-manager.service';
 import { DispatchStateService } from './dispatch-state.service';
 import { DISPATCH_EVENT_TYPES } from '../constants/dispatch-event.constants';
-import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
 import { RedisService } from '../../../redis/redis.service';
 import { bookingExhaustedWakeRetryKey } from '../constants/location-index.constants';
+import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
+import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import { MatchingLockService } from './matching-lock.service';
+import { MatchingQueueService } from './matching-queue.service';
+import { BookingCoordinatesService } from './booking-coordinates.service';
+import { OfferLifecycleService } from './offer-lifecycle.service';
+import { MatchingAttemptService } from './matching-attempt.service';
+import { matchingJobIds } from '../constants/matching-queue.constants';
 
+/**
+ * Thin coordinator for home-service matching.
+ * Heavy work lives in focused collaborators (lock, queue, coords, lifecycle, attempts).
+ */
 @Injectable()
 export class MatchingOrchestratorService {
   private readonly logger = new Logger(MatchingOrchestratorService.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly geocodingService: GeocodingService,
     private readonly settingsService: HomeServiceSettingsService,
     private readonly matchingConfig: MatchingConfigService,
     private readonly candidateFinder: CandidateFinderService,
-    private readonly poolAnalyzer: CandidatePoolAnalyzerService,
-    private readonly exhaustionResolver: MatchingExhaustionResolverService,
     private readonly offerExclusion: OfferExclusionService,
     private readonly offerManager: OfferManagerService,
     private readonly dispatchState: DispatchStateService,
-    private readonly realtimePublisher: RealtimePublisherService,
     private readonly redis: RedisService,
-    @InjectQueue(HOME_SERVICE_MATCHING_QUEUE)
-    private readonly matchingQueue: Queue,
+    private readonly earningsCalculator: EarningsCalculatorService,
+    private readonly serviceCommissionRates: ServiceCommissionRateService,
+    private readonly matchingLock: MatchingLockService,
+    private readonly matchingQueue: MatchingQueueService,
+    private readonly bookingCoordinates: BookingCoordinatesService,
+    private readonly offerLifecycle: OfferLifecycleService,
+    private readonly matchingAttempts: MatchingAttemptService,
   ) {}
 
   async createOffersForBooking(
     bookingId: string,
     matchingAttempt = 1,
-  ) {
+  ): Promise<void> {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
       select: {
@@ -99,256 +101,59 @@ export class MatchingOrchestratorService {
     await this.continueMatching(bookingId, matchingAttempt);
   }
 
-  async continueMatching(bookingId: string, matchingAttempt?: number) {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: { address: true },
-    });
-
-    if (!booking) {
-      return;
-    }
-
-    if (
-      booking.status !== BookingStatus.PENDING_ASSIGNMENT ||
-      booking.matchingExhaustedAt
-    ) {
-      return;
-    }
-
-    const attempt = matchingAttempt ?? booking.matchingAttempt;
-    const maxAttempts = this.matchingConfig.getMaxAttempts();
-
-    if (attempt > maxAttempts) {
-      await this.markMatchingExhausted(
-        bookingId,
-        MatchingExhaustedReason.NO_CANDIDATES_IN_AREA,
-      );
-      return;
-    }
-
-    if (await this.hasActiveOffers(bookingId)) {
+  /**
+   * Core matching step. Protected by a per-booking Redis lock so concurrent
+   * triggers (queue, expire, wake, retry) cannot race.
+   */
+  async continueMatching(
+    bookingId: string,
+    matchingAttempt?: number,
+  ): Promise<void> {
+    const ran = await this.matchingLock.runExclusive(bookingId, () =>
+      this.runMatchingPass(bookingId, matchingAttempt),
+    );
+    if (ran === null) {
       this.logger.log(
-        `Skipping continueMatching for ${bookingId} — active offer pending`,
+        `continueMatching skipped for ${bookingId} — lock not acquired`,
       );
-      return;
     }
-
-    if (booking.matchingAttempt !== attempt) {
-      await this.prisma.booking.update({
-        where: { id: bookingId },
-        data: { matchingAttempt: attempt },
-      });
-    }
-
-    if (booking.dispatchStatus === DispatchStatus.OFFERING) {
-      await this.dispatchState.transition(bookingId, {
-        from: DispatchStatus.OFFERING,
-        to: DispatchStatus.PENDING_MATCH,
-        eventType: DISPATCH_EVENT_TYPES.CANDIDATES_SEARCHED,
-        payload: { phase: 'resume_search', tier: attempt },
-      });
-    }
-
-    const services = normalizeBookingServices(booking.services);
-    const requiredServiceIds = extractHomeServiceIds(services);
-
-    if (!requiredServiceIds.length) {
-      this.logger.warn(`Booking ${bookingId} has no home service items`);
-      return;
-    }
-
-    const coordinates = await this.resolveBookingCoordinates(booking);
-    if (!coordinates) {
-      this.logger.error(
-        `Booking ${bookingId} has no geocoded address — cannot match beauticians`,
-      );
-      return;
-    }
-
-    const settings = await this.settingsService.getSettings();
-    const excludeIds = await this.offerExclusion.getExcludedBeauticianIds(
-      bookingId,
-    );
-    const rotateAfterBeauticianUserId =
-      await this.offerExclusion.getLastOfferedBeauticianUserId(bookingId);
-    const radiusKm = this.matchingConfig.resolveRadiusKm(attempt);
-
-    this.logger.log(
-      `Matching booking ${bookingId} attempt ${attempt}/${maxAttempts} within ${radiusKm}km`,
-    );
-
-    const searchContext = {
-      customerLat: coordinates.lat,
-      customerLng: coordinates.lng,
-      requiredServiceIds,
-      excludeIds,
-      tierRadiusKm: radiusKm,
-    };
-
-    const candidate = await this.candidateFinder.getNextCandidate({
-      bookingId,
-      matchingAttempt: attempt,
-      customerLat: coordinates.lat,
-      customerLng: coordinates.lng,
-      radiusKm,
-      requiredServiceIds,
-      excludeBeauticianUserIds: excludeIds,
-      rotateAfterBeauticianUserId,
-    });
-
-    await this.dispatchState.recordEvent(
-      bookingId,
-      DISPATCH_EVENT_TYPES.CANDIDATES_SEARCHED,
-      {
-        tier: attempt,
-        radiusKm,
-        candidateCount: candidate ? 1 : 0,
-        excludedCount: excludeIds.length,
-        rotateAfterBeauticianUserId,
-      },
-    );
-
-    const homeServiceAmount = sumHomeServiceAmount(services);
-
-    if (!candidate) {
-      await this.handleNoCandidate(bookingId, attempt, searchContext);
-      return;
-    }
-
-    await this.offerManager.createNextOffer({
-      bookingId,
-      matchingAttempt: attempt,
-      candidate,
-      homeServiceAmount,
-      globalCommissionRate: Number(settings.commissionRate),
-      offerTtlSeconds: this.matchingConfig.getOfferTtlSeconds(attempt),
-    });
   }
 
-  async expireOffer(offerId: string, bookingId: string, matchingAttempt: number) {
-    const now = new Date();
-
-    const expired = await this.prisma.jobOffer.updateMany({
-      where: {
-        id: offerId,
-        bookingId,
-        status: JobOfferStatus.OFFERED,
-      },
-      data: {
-        status: JobOfferStatus.EXPIRED,
-        respondedAt: now,
-      },
-    });
-
-    if (expired.count === 0) {
+  async expireOffer(
+    offerId: string,
+    bookingId: string,
+    matchingAttempt: number,
+  ): Promise<void> {
+    const result = await this.offerLifecycle.expireOffer(
+      offerId,
+      bookingId,
+      matchingAttempt,
+    );
+    if (!result.expired) {
       return;
     }
-
-    const offer = await this.prisma.jobOffer.findUnique({
-      where: { id: offerId },
-      select: { beauticianUserId: true },
-    });
-
-    if (offer) {
-      await this.offerManager.releaseBeauticianToOnline(offer.beauticianUserId);
-      this.realtimePublisher.emitOfferExpired(offer.beauticianUserId, bookingId);
-    }
-
-    await this.dispatchState.recordEvent(
-      bookingId,
-      DISPATCH_EVENT_TYPES.OFFER_EXPIRED,
-      { offerId, tier: matchingAttempt },
-      `expire:${offerId}`,
-    );
-
     await this.continueMatching(bookingId, matchingAttempt);
   }
 
-  /** Handles stale batch-expiry queue jobs; forwards to continueMatching. */
-  async expireOffersForBooking(bookingId: string, matchingAttempt = 1) {
-    const now = new Date();
-
-    const expiringOffers = await this.prisma.jobOffer.findMany({
-      where: {
-        bookingId,
-        status: JobOfferStatus.OFFERED,
-        expiresAt: { lte: now },
-      },
-      select: { id: true, beauticianUserId: true },
-    });
-
-    if (!expiringOffers.length) {
+  /** Handles stale batch-expiry queue jobs. */
+  async expireOffersForBooking(
+    bookingId: string,
+    matchingAttempt = 1,
+  ): Promise<void> {
+    const count =
+      await this.offerLifecycle.expireStaleOffersForBooking(bookingId);
+    if (!count) {
       return;
     }
-
-    await this.prisma.jobOffer.updateMany({
-      where: {
-        bookingId,
-        status: JobOfferStatus.OFFERED,
-        expiresAt: { lte: now },
-      },
-      data: {
-        status: JobOfferStatus.EXPIRED,
-        respondedAt: now,
-      },
-    });
-
-    for (const offer of expiringOffers) {
-      await this.offerManager.releaseBeauticianToOnline(offer.beauticianUserId);
-      this.realtimePublisher.emitOfferExpired(offer.beauticianUserId, bookingId);
-    }
-
     await this.continueMatching(bookingId, matchingAttempt);
   }
 
-  async cancelBeauticianPendingOffers(beauticianUserId: string) {
-    const now = new Date();
+  async cancelBeauticianPendingOffers(beauticianUserId: string): Promise<void> {
+    const resume =
+      await this.offerLifecycle.cancelBeauticianPendingOffers(beauticianUserId);
 
-    const pendingOffers = await this.prisma.jobOffer.findMany({
-      where: {
-        beauticianUserId,
-        status: JobOfferStatus.OFFERED,
-        expiresAt: { gt: now },
-      },
-      select: { id: true, bookingId: true },
-    });
-
-    if (!pendingOffers.length) {
-      return;
-    }
-
-    await this.prisma.jobOffer.updateMany({
-      where: {
-        id: { in: pendingOffers.map((offer) => offer.id) },
-        status: JobOfferStatus.OFFERED,
-      },
-      data: {
-        status: JobOfferStatus.CANCELLED,
-        respondedAt: now,
-      },
-    });
-
-    await this.offerManager.releaseBeauticianToOnline(beauticianUserId);
-
-    for (const offer of pendingOffers) {
-      const job = await this.matchingQueue.getJob(`expire-offer:${offer.id}`);
-      if (job) {
-        await job.remove();
-      }
-
-      const booking = await this.prisma.booking.findUnique({
-        where: { id: offer.bookingId },
-        select: { matchingAttempt: true, status: true, matchingExhaustedAt: true },
-      });
-
-      if (
-        booking &&
-        booking.status === BookingStatus.PENDING_ASSIGNMENT &&
-        !booking.matchingExhaustedAt
-      ) {
-        await this.continueMatching(offer.bookingId, booking.matchingAttempt);
-      }
+    for (const item of resume) {
+      await this.continueMatching(item.bookingId, item.matchingAttempt);
     }
   }
 
@@ -383,7 +188,7 @@ export class MatchingOrchestratorService {
       );
     }
 
-    await this.cancelPendingMatchingJobs(bookingId);
+    await this.matchingQueue.cancelBookingJobs(bookingId);
 
     await this.prisma.booking.update({
       where: { id: bookingId },
@@ -402,14 +207,9 @@ export class MatchingOrchestratorService {
       `retry:${bookingId}:${Date.now()}`,
     );
 
-    await this.matchingQueue.add(
-      'create-offers',
+    await this.matchingQueue.scheduleCreateOffers(
       { bookingId, matchingAttempt: startAtTier },
-      {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: true,
-      },
+      { jobId: matchingJobIds.manualRetry(bookingId) },
     );
 
     this.logger.warn(
@@ -453,7 +253,7 @@ export class MatchingOrchestratorService {
       return false;
     }
 
-    await this.cancelPendingMatchingJobs(bookingId);
+    await this.matchingQueue.cancelBookingJobs(bookingId);
 
     await this.prisma.booking.update({
       where: { id: bookingId },
@@ -472,15 +272,9 @@ export class MatchingOrchestratorService {
       `exhausted-wake:${bookingId}`,
     );
 
-    await this.matchingQueue.add(
-      'create-offers',
+    await this.matchingQueue.scheduleCreateOffers(
       { bookingId, matchingAttempt: 1 },
-      {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: true,
-        jobId: `matching-exhausted-wake:${bookingId}:${Date.now()}`,
-      },
+      { jobId: matchingJobIds.exhaustedWake(bookingId) },
     );
 
     this.logger.log(
@@ -511,23 +305,24 @@ export class MatchingOrchestratorService {
       return false;
     }
 
-    if (await this.hasActiveOffers(bookingId)) {
+    // Under queue-only path: skip if an active offer already exists (cheap gate).
+    // Atomic create still guards TOCTOU inside OfferManager.
+    if (await this.offerLifecycle.hasActiveOffers(bookingId)) {
       return false;
     }
 
-    await this.cancelPendingMatchingJobs(bookingId);
+    await this.matchingQueue.cancelBookingJobs(bookingId);
 
-    await this.matchingQueue.add(
-      'create-offers',
+    await this.matchingQueue.scheduleCreateOffers(
       {
         bookingId,
         matchingAttempt: booking.matchingAttempt,
       },
       {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: true,
-        jobId: `matching-immediate:${bookingId}:${Date.now()}`,
+        jobId: matchingJobIds.immediate(
+          bookingId,
+          booking.matchingAttempt,
+        ),
       },
     );
 
@@ -544,46 +339,11 @@ export class MatchingOrchestratorService {
     return true;
   }
 
-  async clearActiveOffersAndJobs(bookingId: string) {
-    const now = new Date();
-    const activeOffers = await this.prisma.jobOffer.findMany({
-      where: {
-        bookingId,
-        status: JobOfferStatus.OFFERED,
-        expiresAt: { gt: now },
-      },
-      select: { id: true, beauticianUserId: true },
-    });
-
-    if (activeOffers.length) {
-      await this.prisma.jobOffer.updateMany({
-        where: {
-          id: { in: activeOffers.map((offer) => offer.id) },
-          status: JobOfferStatus.OFFERED,
-        },
-        data: {
-          status: JobOfferStatus.CANCELLED,
-          respondedAt: now,
-        },
-      });
-
-      for (const offer of activeOffers) {
-        await this.offerManager.releaseBeauticianToOnline(offer.beauticianUserId);
-        const job = await this.matchingQueue.getJob(`expire-offer:${offer.id}`);
-        if (job) {
-          await job.remove();
-        }
-        this.realtimePublisher.emitOfferExpired(
-          offer.beauticianUserId,
-          bookingId,
-        );
-      }
-    }
-
-    await this.cancelPendingMatchingJobs(bookingId);
+  async clearActiveOffersAndJobs(bookingId: string): Promise<void> {
+    await this.offerLifecycle.clearActiveOffersAndJobs(bookingId);
   }
 
-  async cancelDispatchForBooking(bookingId: string) {
+  async cancelDispatchForBooking(bookingId: string): Promise<void> {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
       select: {
@@ -601,7 +361,7 @@ export class MatchingOrchestratorService {
       return;
     }
 
-    await this.clearActiveOffersAndJobs(bookingId);
+    await this.offerLifecycle.clearActiveOffersAndJobs(bookingId);
 
     await this.dispatchState.transition(bookingId, {
       from: booking.dispatchStatus ?? undefined,
@@ -611,304 +371,195 @@ export class MatchingOrchestratorService {
     });
   }
 
-  private async handleNoCandidate(
+  // ─── private matching pass ─────────────────────────────────────────────────
+
+  private async runMatchingPass(
     bookingId: string,
-    attempt: number,
-    searchContext: {
-      customerLat: number;
-      customerLng: number;
-      requiredServiceIds: string[];
-      excludeIds: string[];
-      tierRadiusKm: number;
-    },
-  ) {
-    const declinedIds = await this.offerExclusion.getDeclinedBeauticianIds(
-      bookingId,
-    );
-    const maxRadiusKm = this.matchingConfig.getMaxRadiusKm();
+    matchingAttempt?: number,
+  ): Promise<void> {
+    const booking = await this.loadMatchableBooking(bookingId);
+    if (!booking) {
+      return;
+    }
 
-    const statsAll = await this.poolAnalyzer.analyze({
-      customerLat: searchContext.customerLat,
-      customerLng: searchContext.customerLng,
-      tierRadiusKm: searchContext.tierRadiusKm,
-      maxRadiusKm,
-      requiredServiceIds: searchContext.requiredServiceIds,
-      excludeBeauticianUserIds: [],
-    });
+    const attempt = matchingAttempt ?? booking.matchingAttempt;
+    const maxAttempts = this.matchingConfig.getMaxAttempts();
 
-    const statsEligible = await this.poolAnalyzer.analyze({
-      customerLat: searchContext.customerLat,
-      customerLng: searchContext.customerLng,
-      tierRadiusKm: searchContext.tierRadiusKm,
-      maxRadiusKm,
-      requiredServiceIds: searchContext.requiredServiceIds,
-      excludeBeauticianUserIds: declinedIds,
-    });
-
-    if (
-      statsEligible.inTierRadiusCount === 0 &&
-      declinedIds.length > 0 &&
-      statsAll.inTierRadiusCount > 0
-    ) {
-      await this.markMatchingExhausted(
+    if (attempt > maxAttempts) {
+      await this.matchingAttempts.markMatchingExhausted(
         bookingId,
-        MatchingExhaustedReason.OFFERS_NOT_ACCEPTED,
+        MatchingExhaustedReason.NO_CANDIDATES_IN_AREA,
       );
       return;
     }
 
-    if (statsAll.onlineEligibleCount === 0) {
-      await this.scheduleSameTierRetry(bookingId, attempt);
+    // Still useful as a fast path; OfferManager also enforces one active offer
+    // atomically inside a transaction (TOCTOU-safe under lock + txn).
+    if (await this.offerLifecycle.hasActiveOffers(bookingId)) {
+      this.logger.log(
+        `Skipping continueMatching for ${bookingId} — active offer pending`,
+      );
       return;
     }
 
-    const maxAttempts = this.matchingConfig.getMaxAttempts();
-    if (statsEligible.inTierRadiusCount === 0 && attempt < maxAttempts) {
-      await this.scheduleNextMatchingAttempt(bookingId, attempt, searchContext);
+    await this.prepareAttemptState(booking, attempt);
+
+    const requiredServiceIds = extractHomeServiceIds(
+      normalizeBookingServices(booking.services),
+    );
+    if (!requiredServiceIds.length) {
+      this.logger.warn(`Booking ${bookingId} has no home service items`);
       return;
     }
 
-    if (statsEligible.inTierRadiusCount === 0) {
-      await this.markMatchingExhaustedFromContext(bookingId, {
-        ...searchContext,
-        excludeIds: declinedIds,
-      });
+    const coordinates = await this.bookingCoordinates.resolve(booking);
+    if (!coordinates) {
+      this.logger.error(
+        `Booking ${bookingId} has no geocoded address — cannot match beauticians`,
+      );
       return;
     }
 
-    await this.scheduleSameTierRetry(bookingId, attempt);
-  }
+    const [settings, excludeIds, rotateAfterBeauticianUserId] =
+      await Promise.all([
+        this.settingsService.getSettings(),
+        this.offerExclusion.getExcludedBeauticianIds(bookingId),
+        this.offerExclusion.getLastOfferedBeauticianUserId(bookingId),
+      ]);
 
-  private async scheduleSameTierRetry(bookingId: string, attempt: number) {
-    const delaySeconds = this.matchingConfig.getInterTierDelaySeconds();
-    const delayMs = delaySeconds * 1000;
+    const radiusKm = this.matchingConfig.resolveRadiusKm(attempt);
+    this.logger.log(
+      `Matching booking ${bookingId} attempt ${attempt}/${maxAttempts} within ${radiusKm}km`,
+    );
+
+    const searchContext = {
+      customerLat: coordinates.lat,
+      customerLng: coordinates.lng,
+      requiredServiceIds,
+      excludeIds,
+      tierRadiusKm: radiusKm,
+    };
+
+    const candidate = await this.candidateFinder.getNextCandidate({
+      bookingId,
+      matchingAttempt: attempt,
+      customerLat: coordinates.lat,
+      customerLng: coordinates.lng,
+      radiusKm,
+      requiredServiceIds,
+      excludeBeauticianUserIds: excludeIds,
+      rotateAfterBeauticianUserId,
+    });
 
     await this.dispatchState.recordEvent(
       bookingId,
       DISPATCH_EVENT_TYPES.CANDIDATES_SEARCHED,
       {
         tier: attempt,
-        phase: 'wait_for_online_candidates',
-        delaySeconds,
-      },
-      `wait-online:${bookingId}:${Date.now()}`,
-    );
-
-    await this.matchingQueue.add(
-      'create-offers',
-      { bookingId, matchingAttempt: attempt },
-      {
-        delay: delayMs,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: true,
-        jobId: `matching-wait-online:${bookingId}:${Date.now()}`,
+        radiusKm,
+        candidateCount: candidate ? 1 : 0,
+        excludedCount: excludeIds.length,
+        rotateAfterBeauticianUserId,
       },
     );
 
-    this.logger.log(
-      `Scheduled same-tier retry for booking ${bookingId} (tier ${attempt}) in ${delaySeconds}s — waiting for online beauticians`,
-    );
-  }
-
-  private async scheduleNextMatchingAttempt(
-    bookingId: string,
-    currentAttempt: number,
-    searchContext: {
-      customerLat: number;
-      customerLng: number;
-      requiredServiceIds: string[];
-      excludeIds: string[];
-      tierRadiusKm: number;
-    },
-  ) {
-    const nextAttempt = currentAttempt + 1;
-    const maxAttempts = this.matchingConfig.getMaxAttempts();
-
-    if (nextAttempt > maxAttempts) {
-      await this.markMatchingExhaustedFromContext(bookingId, searchContext);
+    if (!candidate) {
+      await this.matchingAttempts.handleNoCandidate(
+        bookingId,
+        attempt,
+        searchContext,
+      );
       return;
     }
 
-    const delaySeconds = this.matchingConfig.getInterTierDelaySeconds();
-    const delayMs = delaySeconds * 1000;
-
-    await this.dispatchState.recordEvent(
-      bookingId,
-      DISPATCH_EVENT_TYPES.TIER_ESCALATED,
-      {
-        fromTier: currentAttempt,
-        toTier: nextAttempt,
-        delaySeconds: delaySeconds,
-      },
-      `tier:${bookingId}:${nextAttempt}`,
-    );
-
-    await this.matchingQueue.add(
-      'create-offers',
-      { bookingId, matchingAttempt: nextAttempt },
-      {
-        delay: delayMs,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: true,
-      },
-    );
-
-    this.logger.log(
-      `Scheduled matching attempt ${nextAttempt} for booking ${bookingId} in ${delaySeconds} second(s)`,
-    );
-  }
-
-  private async markMatchingExhausted(
-    bookingId: string,
-    reason: MatchingExhaustedReason,
-  ) {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id: bookingId },
-      select: {
-        status: true,
-        matchingExhaustedAt: true,
-        dispatchStatus: true,
-      },
+    const estEarnings = await this.calculateEstEarnings({
+      bookingType: booking.bookingType,
+      services: booking.services,
+      totalAmount: Number(booking.totalAmount),
+      defaultCommissionRate: Number(settings.commissionRate),
+      requiredServiceIds,
     });
 
+    await this.offerManager.createNextOffer({
+      bookingId,
+      matchingAttempt: attempt,
+      candidate,
+      estEarnings,
+      offerTtlSeconds: this.matchingConfig.getOfferTtlSeconds(attempt),
+    });
+  }
+
+  private async loadMatchableBooking(bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { address: true },
+    });
+
+    if (!booking) {
+      this.logger.warn(`continueMatching: booking ${bookingId} not found`);
+      return null;
+    }
+
     if (
-      !booking ||
       booking.status !== BookingStatus.PENDING_ASSIGNMENT ||
       booking.matchingExhaustedAt
     ) {
-      return;
-    }
-
-    const result = await this.dispatchState.transition(bookingId, {
-      from: booking.dispatchStatus ?? undefined,
-      to: DispatchStatus.MATCH_EXHAUSTED,
-      eventType: DISPATCH_EVENT_TYPES.MATCH_EXHAUSTED,
-      matchingExhaustedAt: new Date(),
-      matchingExhaustedReason: reason,
-      payload: { reason },
-      idempotencyKey: `exhausted:${bookingId}:${reason}`,
-    });
-
-    if (result.applied) {
-      this.logger.warn(
-        `Matching exhausted for booking ${bookingId} — ${reason}`,
+      this.logger.log(
+        `continueMatching: booking ${bookingId} not matchable (status=${booking.status}, exhausted=${Boolean(booking.matchingExhaustedAt)})`,
       );
+      return null;
     }
+
+    return booking;
   }
 
-  private async hadOffersInBooking(bookingId: string) {
-    const count = await this.prisma.jobOffer.count({
-      where: { bookingId },
-    });
-
-    return count > 0;
-  }
-
-  private async markMatchingExhaustedFromContext(
-    bookingId: string,
-    searchContext: {
-      customerLat: number;
-      customerLng: number;
-      requiredServiceIds: string[];
-      excludeIds: string[];
-      tierRadiusKm: number;
+  private async prepareAttemptState(
+    booking: {
+      id: string;
+      matchingAttempt: number;
+      dispatchStatus: DispatchStatus | null;
     },
-  ) {
-    const stats = await this.poolAnalyzer.analyze({
-      customerLat: searchContext.customerLat,
-      customerLng: searchContext.customerLng,
-      tierRadiusKm: searchContext.tierRadiusKm,
-      maxRadiusKm: this.matchingConfig.getMaxRadiusKm(),
-      requiredServiceIds: searchContext.requiredServiceIds,
-      excludeBeauticianUserIds: searchContext.excludeIds,
-    });
-
-    const reason = this.exhaustionResolver.resolve({
-      stats,
-      hadOffersInBooking: await this.hadOffersInBooking(bookingId),
-    });
-
-    await this.markMatchingExhausted(bookingId, reason);
-  }
-
-  private async hasActiveOffers(bookingId: string): Promise<boolean> {
-    const count = await this.prisma.jobOffer.count({
-      where: {
-        bookingId,
-        status: JobOfferStatus.OFFERED,
-        expiresAt: { gt: new Date() },
-      },
-    });
-
-    return count > 0;
-  }
-
-  private async cancelPendingMatchingJobs(bookingId: string) {
-    const jobs = await this.matchingQueue.getJobs(['delayed', 'waiting', 'paused']);
-
-    await Promise.all(
-      jobs
-        .filter(
-          (job) =>
-            job.data?.bookingId === bookingId &&
-            (job.name === 'create-offers' ||
-              job.name === 'expire-offers' ||
-              job.name === 'expire-offer'),
-        )
-        .map((job) => job.remove()),
-    );
-  }
-
-  /**
-   * Resolve customer coords from temporary booking location first, then saved
-   * address (with optional geocoding fallback).
-   */
-  private async resolveBookingCoordinates(booking: {
-    tempLatitude?: unknown;
-    tempLongitude?: unknown;
-    tempFullAddress?: string | null;
-    address: {
-      latitude: unknown;
-      longitude: unknown;
-      fullAddress: string;
-      placeId: string | null;
-    } | null;
-  }): Promise<{ lat: number; lng: number } | null> {
-    if (booking.tempLatitude != null && booking.tempLongitude != null) {
-      return {
-        lat: Number(booking.tempLatitude),
-        lng: Number(booking.tempLongitude),
-      };
+    attempt: number,
+  ): Promise<void> {
+    if (booking.matchingAttempt !== attempt) {
+      await this.prisma.booking.update({
+        where: { id: booking.id },
+        data: { matchingAttempt: attempt },
+      });
     }
 
-    return this.resolveCoordinates(booking.address);
+    if (booking.dispatchStatus === DispatchStatus.OFFERING) {
+      await this.dispatchState.transition(booking.id, {
+        from: DispatchStatus.OFFERING,
+        to: DispatchStatus.PENDING_MATCH,
+        eventType: DISPATCH_EVENT_TYPES.CANDIDATES_SEARCHED,
+        payload: { phase: 'resume_search', tier: attempt },
+      });
+    }
   }
 
-  private async resolveCoordinates(
-    address: {
-      latitude: unknown;
-      longitude: unknown;
-      fullAddress: string;
-      placeId: string | null;
-    } | null,
-  ): Promise<{ lat: number; lng: number } | null> {
-    if (!address) return null;
+  private async calculateEstEarnings(params: {
+    bookingType: Parameters<
+      EarningsCalculatorService['calculate']
+    >[0]['bookingType'];
+    services: unknown;
+    totalAmount: number;
+    defaultCommissionRate: number;
+    requiredServiceIds: string[];
+  }): Promise<number> {
+    const serviceCommissionRates =
+      await this.serviceCommissionRates.getRateMapForServiceIds(
+        params.requiredServiceIds,
+      );
 
-    if (address.latitude != null && address.longitude != null) {
-      return {
-        lat: Number(address.latitude),
-        lng: Number(address.longitude),
-      };
-    }
+    const earnings = this.earningsCalculator.calculate({
+      bookingType: params.bookingType,
+      services: params.services,
+      totalAmount: params.totalAmount,
+      defaultCommissionRate: params.defaultCommissionRate,
+      serviceCommissionRates,
+    });
 
-    if (address.placeId) {
-      const geo = await this.geocodingService.geocodeByPlaceId(address.placeId);
-      if (geo) return { lat: geo.latitude, lng: geo.longitude };
-    }
-
-    const geo = await this.geocodingService.geocodeAddress(address.fullAddress);
-    return geo ? { lat: geo.latitude, lng: geo.longitude } : null;
+    return earnings.earningsAmount;
   }
 }

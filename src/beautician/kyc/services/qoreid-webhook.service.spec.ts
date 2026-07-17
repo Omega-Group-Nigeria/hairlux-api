@@ -40,6 +40,45 @@ describe('QoreidWebhookService', () => {
     ).toThrow(UnauthorizedException);
   });
 
+  it('extracts liveness imageUrl from verification_completed payload', () => {
+    const url =
+      'https://media.qoreid.com/v1/file/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test';
+    expect(
+      service.extractLivenessImageUrl({
+        event: 'workflow',
+        event_type: 'verification_completed',
+        data: {
+          summary: {
+            liveness_check: {
+              imageUrl: url,
+              isLive: true,
+            },
+          },
+        },
+      }),
+    ).toBe(url);
+  });
+
+  it('returns null when liveness imageUrl is missing', () => {
+    expect(
+      service.extractLivenessImageUrl({
+        event_type: 'verification_completed',
+        data: { summary: { nin_check: {} } },
+      }),
+    ).toBeNull();
+  });
+
+  it('detects verification_completed event_type', () => {
+    expect(
+      service.isVerificationCompletedEvent({
+        event_type: 'verification_completed',
+      }),
+    ).toBe(true);
+    expect(
+      service.isVerificationCompletedEvent({ event_type: 'verification_started' }),
+    ).toBe(false);
+  });
+
   describe('isRegistrationProbe', () => {
     it('returns true when signature and body are both missing', () => {
       expect(

@@ -19,6 +19,11 @@ import { DispatchConfigStoreService } from './services/dispatch-config-store.ser
 import { DispatchConfigResolverService } from './services/dispatch-config-resolver.service';
 import { DispatchConfigAdminService } from './services/dispatch-config-admin.service';
 import { MatchingOrchestratorService } from './services/matching-orchestrator.service';
+import { MatchingLockService } from './services/matching-lock.service';
+import { MatchingQueueService } from './services/matching-queue.service';
+import { BookingCoordinatesService } from './services/booking-coordinates.service';
+import { OfferLifecycleService } from './services/offer-lifecycle.service';
+import { MatchingAttemptService } from './services/matching-attempt.service';
 import { DispatchStateService } from './services/dispatch-state.service';
 import { DispatchTraceService } from './services/dispatch-trace.service';
 import { AdminDispatchSettingsController } from './admin-dispatch-settings.controller';
@@ -29,6 +34,7 @@ import { CreateJobOffersProcessor } from './processors/create-job-offers.process
 import { ExpireJobOfferProcessor } from './processors/expire-job-offer.processor';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { CommsModule } from '../../comms/comms.module';
+import { PayoutModule } from '../payout/payout.module';
 
 @Module({
   imports: [
@@ -39,6 +45,7 @@ import { CommsModule } from '../../comms/comms.module';
     RealtimeModule,
     BullModule.registerQueue({ name: HOME_SERVICE_MATCHING_QUEUE }),
     CommsModule,
+    PayoutModule,
   ],
   controllers: [AdminDispatchSettingsController],
   providers: [
@@ -55,6 +62,11 @@ import { CommsModule } from '../../comms/comms.module';
     OfferExclusionService,
     BeauticianLocationIndexService,
     CandidateFinderService,
+    MatchingLockService,
+    MatchingQueueService,
+    BookingCoordinatesService,
+    OfferLifecycleService,
+    MatchingAttemptService,
     OfferManagerService,
     DispatchStateService,
     DispatchTraceService,
@@ -67,6 +79,7 @@ import { CommsModule } from '../../comms/comms.module';
   exports: [
     MatchingOrchestratorService,
     OfferManagerService,
+    OfferLifecycleService,
     PendingBookingMatcherService,
     MatchingConfigService,
     DispatchConfigAdminService,

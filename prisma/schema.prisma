@@ -438,8 +438,23 @@ model Service {
   reviews             Review[]
   branchServices      BranchService[]
   beauticianServices  BeauticianService[]
+  commissionRateOverride ServiceCommissionRate?
 
   @@map("services")
+}
+
+/// Optional per-service beautician commission override.
+/// Missing row → use HomeServiceSettings.commissionRate (platform default for all).
+model ServiceCommissionRate {
+  id             String   @id @default(uuid())
+  serviceId      String   @unique @map("service_id")
+  commissionRate Decimal  @db.Decimal(5, 4) @map("commission_rate")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_commission_rates")
 }
 
 model Booking {

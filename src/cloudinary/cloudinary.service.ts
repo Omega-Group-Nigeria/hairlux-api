@@ -95,6 +95,36 @@ export class CloudinaryService {
   }
 
   /**
+   * Downloads a remote image URL, converts to WebP, then uploads to Cloudinary.
+   * Used for KYC liveness frames (QoreID) and other server-side remote assets.
+   */
+  async uploadImageFromUrl(
+    imageUrl: string,
+    folder: string,
+    publicId?: string,
+  ): Promise<CloudinaryUploadResult> {
+    let buffer: Buffer;
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error(
+          `HTTP ${response.status} ${response.statusText} fetching ${imageUrl}`,
+        );
+      }
+      buffer = Buffer.from(await response.arrayBuffer());
+    } catch (err) {
+      this.logger.error(
+        `Failed to download remote image: ${(err as Error).message}`,
+      );
+      throw new InternalServerErrorException(
+        'Failed to download remote image for upload',
+      );
+    }
+
+    return this.uploadImage(buffer, folder, publicId);
+  }
+
+  /**
    * Deletes an image from Cloudinary by its public_id.
    * Swallows errors so a missing asset never blocks the main flow.
    */

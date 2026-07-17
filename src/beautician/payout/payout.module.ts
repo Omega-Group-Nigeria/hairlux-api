@@ -5,6 +5,7 @@ import { RedisModule } from '../../redis/redis.module';
 import { PaymentModule } from '../../payment/payment.module';
 import { HomeServiceSharedModule } from '../home-service-booking/home-service-shared.module';
 import { EarningsCalculatorService } from './services/earnings-calculator.service';
+import { ServiceCommissionRateService } from './services/service-commission-rate.service';
 import { BeauticianStatsService } from './services/beautician-stats.service';
 import { CreditServiceEarningsService } from './services/credit-service-earnings.service';
 import { EarningsSummaryService } from './services/earnings-summary.service';
@@ -31,6 +32,7 @@ import { DailyPayoutLimitService } from './services/daily-payout-limit.service';
   controllers: [AdminPayoutController, PaystackTransferWebhookController],
   providers: [
     EarningsCalculatorService,
+    ServiceCommissionRateService,
     BeauticianStatsService,
     CreditServiceEarningsService,
     EarningsSummaryService,
@@ -46,6 +48,7 @@ import { DailyPayoutLimitService } from './services/daily-payout-limit.service';
   ],
   exports: [
     EarningsCalculatorService,
+    ServiceCommissionRateService,
     CreditServiceEarningsService,
     EarningsSummaryService,
     DailyPayoutLimitService,
