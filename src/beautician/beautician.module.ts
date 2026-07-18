@@ -18,6 +18,7 @@ import { BeauticianWithdrawalGuard } from './guards/beautician-withdrawal.guard'
 import { KycVerifiedGuard } from './guards/kyc-verified.guard';
 import { FullyVerifiedGuard } from './guards/fully-verified.guard';
 import { BeauticianPerformanceService } from './admin/services/beautician-performance.service';
+import { AdminBeauticianReviewsService } from './admin/services/admin-beautician-reviews.service';
 import { AdminHomeServiceAnalyticsService } from './admin/services/admin-home-service-analytics.service';
 import { ActiveHomeServiceBookingsService } from './admin/services/active-home-service-bookings.service';
 import { KycModule } from './kyc/kyc.module';
@@ -68,6 +69,7 @@ import { BeauticianMeCacheService } from './services/beautician-me-cache.service
     HomeServiceSettingsService,
     NoShowPenaltyService,
     BeauticianPerformanceService,
+    AdminBeauticianReviewsService,
     AdminHomeServiceAnalyticsService,
     ActiveHomeServiceBookingsService,
     BeauticianRoleGuard,

@@ -11,10 +11,15 @@ export { shopOrderConfirmationTemplate } from './shop-order-confirmation.templat
 export { beauticianKycResultTemplate } from './beautician-kyc-result.template';
 export { beauticianProfileReviewTemplate } from './beautician-profile-review.template';
 export { beauticianJobOfferTemplate } from './beautician-job-offer.template';
+export { beauticianDispatchSuspensionTemplate } from './beautician-dispatch-suspension.template';
 export {
   arrivalVerificationNeededTemplate,
   serviceCompletedTemplate,
 } from './beautician-home-service-lifecycle.template';
+export type {
+  DispatchSuspensionEmailData,
+  DispatchSuspensionEmailKind,
+} from './beautician-dispatch-suspension.template';
 export type { BaseEmailOptions } from './base.template';
 export type { BookingConfirmationData } from './booking-confirmation.template';
 export type { GuestBookingNotificationData } from './guest-booking-notification.template';

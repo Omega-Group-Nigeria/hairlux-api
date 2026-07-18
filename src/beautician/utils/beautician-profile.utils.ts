@@ -36,6 +36,8 @@ export type BeauticianMeVolatileInput = {
   profileStatus: ProfileReviewStatus;
   isActive: boolean;
   dispatchSuspended: boolean;
+  dispatchSuspendedUntil: Date | null;
+  dispatchSuspensionReason: string | null;
   ratingAverage: { toNumber?: () => number } | number;
   totalJobsCompleted: number;
   totalEarnings: { toNumber?: () => number } | number;
@@ -53,6 +55,8 @@ export function extractBeauticianMeVolatile(
     profileStatus: profile.profileStatus,
     isActive: profile.isActive,
     dispatchSuspended: profile.dispatchSuspended,
+    dispatchSuspendedUntil: profile.dispatchSuspendedUntil,
+    dispatchSuspensionReason: profile.dispatchSuspensionReason,
     ratingAverage: profile.ratingAverage,
     totalJobsCompleted: profile.totalJobsCompleted,
     totalEarnings: profile.totalEarnings,
@@ -117,6 +121,8 @@ export function buildBeauticianMeResponse(
     profileStatus: volatile.profileStatus,
     isActive: volatile.isActive,
     dispatchSuspended: volatile.dispatchSuspended,
+    dispatchSuspendedUntil: volatile.dispatchSuspendedUntil,
+    dispatchSuspensionReason: volatile.dispatchSuspensionReason,
     ratingAverage: toDecimalNumber(volatile.ratingAverage) ?? 0,
     totalJobsCompleted: volatile.totalJobsCompleted,
     totalEarnings: toDecimalNumber(volatile.totalEarnings) ?? 0,

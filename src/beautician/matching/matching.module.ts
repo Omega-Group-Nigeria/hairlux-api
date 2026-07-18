@@ -3,8 +3,10 @@ import { BullModule } from '@nestjs/bull';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { RedisModule } from '../../redis/redis.module';
+import { MailModule } from '../../mail/mail.module';
 import { BeauticianNotificationModule } from '../notification/notification.module';
 import { HOME_SERVICE_MATCHING_QUEUE } from '../home-service-booking/home-service-booking.service';
+import { DISPATCH_PROBATION_QUEUE } from './constants/dispatch-probation.constants';
 import { HomeServiceSettingsService } from '../services/home-service-settings.service';
 import { CandidateFinderService } from './services/candidate-finder.service';
 import { CandidateEligibilityService } from './services/candidate-eligibility.service';
@@ -32,6 +34,7 @@ import { BeauticianLocationIndexService } from './services/beautician-location-i
 import { DispatchAdminService } from './services/dispatch-admin.service';
 import { CreateJobOffersProcessor } from './processors/create-job-offers.processor';
 import { ExpireJobOfferProcessor } from './processors/expire-job-offer.processor';
+import { DispatchProbationProcessor } from './processors/dispatch-probation.processor';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { CommsModule } from '../../comms/comms.module';
 import { PayoutModule } from '../payout/payout.module';
@@ -41,9 +44,11 @@ import { PayoutModule } from '../payout/payout.module';
     ConfigModule,
     PrismaModule,
     RedisModule,
+    MailModule,
     BeauticianNotificationModule,
     RealtimeModule,
     BullModule.registerQueue({ name: HOME_SERVICE_MATCHING_QUEUE }),
+    BullModule.registerQueue({ name: DISPATCH_PROBATION_QUEUE }),
     CommsModule,
     PayoutModule,
   ],
@@ -74,6 +79,7 @@ import { PayoutModule } from '../payout/payout.module';
     PendingBookingMatcherService,
     CreateJobOffersProcessor,
     ExpireJobOfferProcessor,
+    DispatchProbationProcessor,
     DispatchAdminService,
   ],
   exports: [

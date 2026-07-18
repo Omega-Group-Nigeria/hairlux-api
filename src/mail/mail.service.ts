@@ -21,10 +21,12 @@ import {
   beauticianKycResultTemplate,
   beauticianProfileReviewTemplate,
   beauticianJobOfferTemplate,
+  beauticianDispatchSuspensionTemplate,
   arrivalVerificationNeededTemplate,
   serviceCompletedTemplate,
 } from './templates';
 import type { ShopOrderConfirmationData } from './templates/shop-order-confirmation.template';
+import type { DispatchSuspensionEmailData } from './templates/beautician-dispatch-suspension.template';
 
 @Injectable()
 export class MailService {
@@ -427,6 +429,36 @@ export class MailService {
     } catch (error) {
       this.logger.error(
         `Error queuing beautician profile review email: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async sendBeauticianDispatchSuspensionEmail(
+    email: string,
+    data: Omit<DispatchSuspensionEmailData, 'firstName'> & {
+      firstName: string;
+    },
+  ) {
+    try {
+      const subject =
+        data.kind === 'SUSPENDED'
+          ? 'Dispatch Access Suspended — HairLux Beautician'
+          : 'Dispatch Access Restored — HairLux Beautician';
+
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject,
+          html: beauticianDispatchSuspensionTemplate(data),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Error queuing beautician dispatch suspension email: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

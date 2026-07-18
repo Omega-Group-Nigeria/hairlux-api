@@ -969,6 +969,10 @@ model BeauticianProfile {
   payoutBankVerifiedAt   DateTime?            @map("payout_bank_verified_at")
   isActive              Boolean              @default(true) @map("is_active")
   dispatchSuspended     Boolean              @default(false) @map("dispatch_suspended")
+  /// When set with dispatchSuspended, auto-lift at this time (timed probation).
+  dispatchSuspendedUntil DateTime?           @map("dispatch_suspended_until")
+  /// Admin-facing reason shared in beautician suspension email.
+  dispatchSuspensionReason String?           @map("dispatch_suspension_reason")
   createdAt             DateTime             @default(now()) @map("created_at")
   updatedAt             DateTime             @updatedAt @map("updated_at")
 
@@ -981,6 +985,7 @@ model BeauticianProfile {
   @@index([availabilityStatus])
   @@index([isActive])
   @@index([dispatchSuspended])
+  @@index([dispatchSuspendedUntil])
   @@map("beautician_profiles")
 }
 

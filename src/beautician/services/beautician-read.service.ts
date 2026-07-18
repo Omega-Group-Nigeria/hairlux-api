@@ -18,6 +18,8 @@ const BEAUTICIAN_ME_VOLATILE_SELECT = {
   profileStatus: true,
   isActive: true,
   dispatchSuspended: true,
+  dispatchSuspendedUntil: true,
+  dispatchSuspensionReason: true,
   ratingAverage: true,
   totalJobsCompleted: true,
   totalEarnings: true,

@@ -4,6 +4,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bull';
+import type { Queue } from 'bull';
 import {
   AvailabilityStatus,
   BookingStatus,
@@ -13,6 +15,7 @@ import {
   ProfileReviewStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { MailService } from '../../../mail/mail.service';
 import { normalizeBookingServices } from '../../../booking/utils/booking.utils';
 import { extractHomeServiceIds } from '../utils/booking-assignment.utils';
 import { DispatchStateService } from './dispatch-state.service';
@@ -20,10 +23,17 @@ import { MatchingOrchestratorService } from './matching-orchestrator.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { DISPATCH_EVENT_TYPES } from '../constants/dispatch-event.constants';
+import {
+  DISPATCH_PROBATION_JOB,
+  DISPATCH_PROBATION_QUEUE,
+  dispatchProbationJobId,
+  type DispatchProbationJobData,
+} from '../constants/dispatch-probation.constants';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
 import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import type { UpdateBeauticianDispatchDto } from '../dto/update-beautician-dispatch.dto';
 
 @Injectable()
 export class DispatchAdminService {
@@ -39,6 +49,9 @@ export class DispatchAdminService {
     private readonly serviceCommissionRates: ServiceCommissionRateService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly commsSessionService: CommsSessionService,
+    private readonly mailService: MailService,
+    @InjectQueue(DISPATCH_PROBATION_QUEUE)
+    private readonly probationQueue: Queue<DispatchProbationJobData>,
   ) {}
 
   async forceAssign(
@@ -239,13 +252,29 @@ export class DispatchAdminService {
     };
   }
 
-  async updateDispatchSuspension(profileId: string, suspended: boolean) {
+  /**
+   * Soft-suspend / re-enable for dispatch matching.
+   * Optional timed probation via `until` or `durationHours` auto-lifts suspension.
+   */
+  async updateDispatchSuspension(
+    profileId: string,
+    dto: UpdateBeauticianDispatchDto,
+  ) {
+    const { suspended } = dto;
     const profile = await this.prisma.beauticianProfile.findUnique({
       where: { id: profileId },
       select: {
         id: true,
         userId: true,
         dispatchSuspended: true,
+        dispatchSuspendedUntil: true,
+        dispatchSuspensionReason: true,
+        user: {
+          select: {
+            email: true,
+            firstName: true,
+          },
+        },
       },
     });
 
@@ -253,48 +282,305 @@ export class DispatchAdminService {
       throw new NotFoundException('Beautician profile not found');
     }
 
-    if (profile.dispatchSuspended === suspended) {
+    if (!suspended) {
+      return this.reinstateDispatch(profile, { automatic: false });
+    }
+
+    const suspendedUntil = this.resolveSuspendedUntil(dto);
+    const reason =
+      dto.reason?.trim() ||
+      (profile.dispatchSuspended ? profile.dispatchSuspensionReason : null);
+
+    const alreadySame =
+      profile.dispatchSuspended &&
+      this.sameInstant(profile.dispatchSuspendedUntil, suspendedUntil) &&
+      (reason ?? null) === (profile.dispatchSuspensionReason ?? null);
+
+    if (alreadySame) {
       return {
         profileId: profile.id,
         userId: profile.userId,
-        dispatchSuspended: suspended,
-        message: suspended
-          ? 'Beautician is already suspended from dispatch.'
-          : 'Beautician is already eligible for dispatch.',
+        dispatchSuspended: true,
+        dispatchSuspendedUntil: profile.dispatchSuspendedUntil,
+        dispatchSuspensionReason: profile.dispatchSuspensionReason,
+        message: suspendedUntil
+          ? 'Beautician is already on the same timed dispatch probation.'
+          : 'Beautician is already suspended from dispatch.',
       };
     }
 
     const updated = await this.prisma.beauticianProfile.update({
       where: { id: profileId },
-      data: { dispatchSuspended: suspended },
+      data: {
+        dispatchSuspended: true,
+        dispatchSuspendedUntil: suspendedUntil,
+        dispatchSuspensionReason: reason,
+      },
       select: {
         id: true,
         userId: true,
         dispatchSuspended: true,
+        dispatchSuspendedUntil: true,
+        dispatchSuspensionReason: true,
         availabilityStatus: true,
       },
     });
 
-    if (suspended) {
-      await this.locationIndex.remove(profile.userId);
-      await this.matchingOrchestrator.cancelBeauticianPendingOffers(
+    await this.locationIndex.remove(profile.userId);
+    await this.matchingOrchestrator.cancelBeauticianPendingOffers(
+      profile.userId,
+    );
+
+    if (suspendedUntil) {
+      await this.scheduleProbationLift(
+        profile.id,
         profile.userId,
+        suspendedUntil,
       );
+    } else {
+      await this.cancelProbationJob(profile.id);
     }
 
+    await this.mailService.sendBeauticianDispatchSuspensionEmail(
+      profile.user.email,
+      {
+        firstName: profile.user.firstName,
+        kind: 'SUSPENDED',
+        reason: updated.dispatchSuspensionReason,
+        suspendedUntil: updated.dispatchSuspendedUntil,
+      },
+    );
+
     this.logger.log(
-      `Beautician ${profile.userId} dispatch suspension set to ${suspended}`,
+      `Beautician ${profile.userId} dispatch suspended` +
+        (suspendedUntil
+          ? ` until ${suspendedUntil.toISOString()}`
+          : ' (indefinite)'),
     );
 
     return {
       profileId: updated.id,
       userId: updated.userId,
       dispatchSuspended: updated.dispatchSuspended,
+      dispatchSuspendedUntil: updated.dispatchSuspendedUntil,
+      dispatchSuspensionReason: updated.dispatchSuspensionReason,
       availabilityStatus: updated.availabilityStatus,
-      message: suspended
-        ? 'Beautician suspended from dispatch matching.'
+      message: suspendedUntil
+        ? `Beautician suspended from dispatch until ${suspendedUntil.toISOString()}.`
+        : 'Beautician suspended from dispatch matching (indefinite).',
+    };
+  }
+
+  /**
+   * Called by delayed Bull job when timed probation ends.
+   * No-ops if suspension was lifted early or extended past the job's until.
+   */
+  async liftDispatchSuspensionFromJob(data: DispatchProbationJobData) {
+    const profile = await this.prisma.beauticianProfile.findUnique({
+      where: { id: data.profileId },
+      select: {
+        id: true,
+        userId: true,
+        dispatchSuspended: true,
+        dispatchSuspendedUntil: true,
+        dispatchSuspensionReason: true,
+        user: {
+          select: {
+            email: true,
+            firstName: true,
+          },
+        },
+      },
+    });
+
+    if (!profile) {
+      this.logger.warn(
+        `Dispatch probation job: profile ${data.profileId} not found`,
+      );
+      return { lifted: false, reason: 'profile_not_found' as const };
+    }
+
+    if (!profile.dispatchSuspended) {
+      return { lifted: false, reason: 'already_eligible' as const };
+    }
+
+    const jobUntil = new Date(data.suspendedUntil);
+    if (
+      !profile.dispatchSuspendedUntil ||
+      !this.sameInstant(profile.dispatchSuspendedUntil, jobUntil)
+    ) {
+      this.logger.log(
+        `Ignoring stale dispatch probation job for ${profile.userId} (until mismatch)`,
+      );
+      return { lifted: false, reason: 'stale_job' as const };
+    }
+
+    // Allow a small clock skew; job may run a few ms early.
+    const now = Date.now();
+    if (profile.dispatchSuspendedUntil.getTime() > now + 5_000) {
+      this.logger.warn(
+        `Dispatch probation job fired early for ${profile.userId}; rescheduling`,
+      );
+      await this.scheduleProbationLift(
+        profile.id,
+        profile.userId,
+        profile.dispatchSuspendedUntil,
+      );
+      return { lifted: false, reason: 'rescheduled' as const };
+    }
+
+    await this.reinstateDispatch(profile, { automatic: true });
+    return { lifted: true as const };
+  }
+
+  private async reinstateDispatch(
+    profile: {
+      id: string;
+      userId: string;
+      dispatchSuspended: boolean;
+      user: { email: string; firstName: string };
+    },
+    opts: { automatic: boolean },
+  ) {
+    if (!profile.dispatchSuspended) {
+      await this.cancelProbationJob(profile.id);
+      return {
+        profileId: profile.id,
+        userId: profile.userId,
+        dispatchSuspended: false,
+        dispatchSuspendedUntil: null as Date | null,
+        dispatchSuspensionReason: null as string | null,
+        message: 'Beautician is already eligible for dispatch.',
+      };
+    }
+
+    const updated = await this.prisma.beauticianProfile.update({
+      where: { id: profile.id },
+      data: {
+        dispatchSuspended: false,
+        dispatchSuspendedUntil: null,
+        dispatchSuspensionReason: null,
+      },
+      select: {
+        id: true,
+        userId: true,
+        dispatchSuspended: true,
+        dispatchSuspendedUntil: true,
+        dispatchSuspensionReason: true,
+        availabilityStatus: true,
+      },
+    });
+
+    await this.cancelProbationJob(profile.id);
+
+    await this.mailService.sendBeauticianDispatchSuspensionEmail(
+      profile.user.email,
+      {
+        firstName: profile.user.firstName,
+        kind: 'REINSTATED',
+        automatic: opts.automatic,
+      },
+    );
+
+    this.logger.log(
+      `Beautician ${profile.userId} dispatch reinstated` +
+        (opts.automatic ? ' (auto probation end)' : ' (admin)'),
+    );
+
+    return {
+      profileId: updated.id,
+      userId: updated.userId,
+      dispatchSuspended: updated.dispatchSuspended,
+      dispatchSuspendedUntil: updated.dispatchSuspendedUntil,
+      dispatchSuspensionReason: updated.dispatchSuspensionReason,
+      availabilityStatus: updated.availabilityStatus,
+      message: opts.automatic
+        ? 'Timed probation ended; beautician re-enabled for dispatch matching.'
         : 'Beautician re-enabled for dispatch matching.',
     };
+  }
+
+  private resolveSuspendedUntil(
+    dto: UpdateBeauticianDispatchDto,
+  ): Date | null {
+    if (dto.until && dto.durationHours != null) {
+      throw new BadRequestException(
+        'Provide either `until` or `durationHours`, not both',
+      );
+    }
+
+    if (dto.until) {
+      const until = new Date(dto.until);
+      if (Number.isNaN(until.getTime())) {
+        throw new BadRequestException('Invalid `until` datetime');
+      }
+      if (until.getTime() <= Date.now()) {
+        throw new BadRequestException('`until` must be in the future');
+      }
+      return until;
+    }
+
+    if (dto.durationHours != null) {
+      return new Date(Date.now() + dto.durationHours * 60 * 60 * 1000);
+    }
+
+    return null;
+  }
+
+  private sameInstant(
+    a: Date | null | undefined,
+    b: Date | null | undefined,
+  ): boolean {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    return Math.abs(a.getTime() - b.getTime()) < 1000;
+  }
+
+  private async scheduleProbationLift(
+    profileId: string,
+    userId: string,
+    until: Date,
+  ): Promise<void> {
+    const delayMs = Math.max(0, until.getTime() - Date.now());
+    const jobId = dispatchProbationJobId(profileId);
+    await this.cancelProbationJob(profileId);
+
+    await this.probationQueue.add(
+      DISPATCH_PROBATION_JOB,
+      {
+        profileId,
+        userId,
+        suspendedUntil: until.toISOString(),
+      },
+      {
+        jobId,
+        delay: delayMs,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
+
+    this.logger.log(
+      `Scheduled dispatch probation lift for ${userId} in ${delayMs}ms (job ${jobId})`,
+    );
+  }
+
+  private async cancelProbationJob(profileId: string): Promise<void> {
+    const jobId = dispatchProbationJobId(profileId);
+    try {
+      const existing = await this.probationQueue.getJob(jobId);
+      if (existing) {
+        await existing.remove();
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Could not remove probation job ${jobId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   private assertBeauticianEligibleForForceAssign(

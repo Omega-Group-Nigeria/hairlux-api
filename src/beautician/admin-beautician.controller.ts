@@ -40,7 +40,9 @@ import {
 } from './dto/admin-beautician.dto';
 import { UpdateAvailabilityDto } from './dto/update-availability.dto';
 import { PerformanceQueryDto } from './dto/performance-query.dto';
+import { QueryBeauticianReviewsDto } from './dto/query-beautician-reviews.dto';
 import { BeauticianPerformanceService } from './admin/services/beautician-performance.service';
+import { AdminBeauticianReviewsService } from './admin/services/admin-beautician-reviews.service';
 import { DispatchAdminService } from './matching/services/dispatch-admin.service';
 import { UpdateBeauticianDispatchDto } from './matching/dto/update-beautician-dispatch.dto';
 
@@ -56,6 +58,7 @@ export class AdminBeauticianController {
     private readonly assignmentService: BeauticianServiceAssignmentService,
     private readonly kycStatusService: KycStatusService,
     private readonly performanceService: BeauticianPerformanceService,
+    private readonly reviewsService: AdminBeauticianReviewsService,
     private readonly dispatchAdminService: DispatchAdminService,
     private readonly availabilityService: BeauticianAvailabilityService,
   ) {}
@@ -114,12 +117,35 @@ export class AdminBeauticianController {
     };
   }
 
+  @Get(':id/reviews')
+  @Permission(PERMISSIONS.BEAUTICIANS_READ)
+  @ApiOperation({
+    summary: 'List customer reviews for a beautician',
+    description:
+      'Paginated service reviews linked via completed bookings assigned to this beautician. Filter by rating range and review status; sort by rating or created date.',
+  })
+  @ApiParam({ name: 'id', description: 'Beautician profile ID' })
+  async listReviews(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: QueryBeauticianReviewsDto,
+  ) {
+    const data = await this.reviewsService.listForProfile(id, query);
+    return {
+      success: true,
+      message: 'Beautician reviews retrieved successfully',
+      data,
+    };
+  }
+
   @Patch(':id/dispatch')
   @Permission(PERMISSIONS.BEAUTICIANS_MANAGE)
   @ApiOperation({
-    summary: 'Suspend or re-enable beautician from dispatch matching',
+    summary:
+      'Suspend or re-enable beautician from dispatch matching (optional timed probation)',
     description:
-      'Suspended beauticians are removed from the geo index and excluded from new offers.',
+      'Suspended beauticians are removed from the geo index and excluded from new offers. ' +
+      'Pass `until` (ISO datetime) or `durationHours` for timed probation that auto-unsuspends; omit both for indefinite suspension. ' +
+      'A notification email is sent on suspend and on reinstate (manual or automatic).',
   })
   async updateDispatch(
     @Param('id', ParseUUIDPipe) id: string,
@@ -127,7 +153,7 @@ export class AdminBeauticianController {
   ) {
     const data = await this.dispatchAdminService.updateDispatchSuspension(
       id,
-      dto.suspended,
+      dto,
     );
     return {
       success: true,
