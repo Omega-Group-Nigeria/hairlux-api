@@ -38,6 +38,12 @@ export type StaffEmploymentTypeValue =
   (typeof STAFF_EMPLOYMENT_TYPE_VALUES)[number];
 
 export class CreateStaffDto {
+
+  @ApiPropertyOptional({description: 'Link to an existing User account — set automatically by convertToStaff(), not typically provided directly',})
+  @IsOptional()
+  @IsUUID()
+  userId?: string;
+
   @ApiProperty({ example: 'Amara Okafor' })
   @IsString()
   @IsNotEmpty()

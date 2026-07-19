@@ -361,46 +361,37 @@ export class AuthService {
     }
   }
 
-  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
-    const { email } = forgotPasswordDto;
+  /**
+ * Generates a password-setup token and emails it. Shared by genuine
+ * forgot-password requests and by brand-new accounts that start with an
+ * unusable random password (e.g. staff created via convertToStaff).
+ */
+  async initiatePasswordSetup(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
-
-    // Don't reveal if user exists or not
-    if (!user) {
-      return {
-        message: 'If the email exists, a password reset link has been sent',
-      };
-    }
-
-    // Generate reset token
     const resetToken = randomBytes(32).toString('hex');
-    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
-
-    // Hash reset token before storing
+    const resetTokenExpiry = new Date(Date.now() + 3600000);
     const hashedResetToken = await argon2.hash(resetToken);
-
     await this.prisma.user.update({
       where: { id: user.id },
-      data: {
-        resetToken: hashedResetToken,
-        resetTokenExpiry,
-      },
+      data: { resetToken: hashedResetToken, resetTokenExpiry },
     });
 
-    // TODO: Send email with reset link containing the token
-    await this.mailService.sendPasswordResetEmail(
-      user.email,
-      resetToken,
-      user.firstName,
-      user.role,
-    );
+    await this.mailService.sendPasswordResetEmail(user.email, resetToken, user.firstName, user.role);
+  }
 
-    return {
-      message: 'If the email exists, a password reset link has been sent',
-    };
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
+    const { email } = forgotPasswordDto;
+    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+
+    if (!user) {
+    return { message: 'If the email exists, a password reset link has been sent' };
+    }
+
+    await this.initiatePasswordSetup(user.id);
+
+    return { message: 'If the email exists, a password reset link has been sent' };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
@@ -556,12 +547,20 @@ export class AuthService {
       throw new UnauthorizedException(ErrorMessages.SESSION_REVOKED);
     }
 
+    const roleAssignments = await this.prisma.userRoleAssignment.findMany({
+    where: { userId: user.id },
+    select: { role: true },
+  });
+
+    const roles = Array.from(new Set([user.role, ...roleAssignments.map((r) => r.role)]));
+
+
     const permissions = await this.getPermissionsForUser(
       user.role,
       user.adminRoleId ?? null,
     );
 
-    return { ...user, permissions };
+    return { ...user, permissions, roles };
   }
 
   private async getPermissionsForUser(
@@ -613,6 +612,14 @@ export class AuthService {
       user.adminRoleId ?? null,
     );
 
+    // ── same computation as validateUser() ──
+    const roleAssignments = await this.prisma.userRoleAssignment.findMany({
+      where: { userId: user.id },
+      select: { role: true },
+    });
+    const roles = Array.from(new Set([user.role, ...roleAssignments.map((r) => r.role)]));
+
+
     const hasPin = !!user.pin;
 
     const {
@@ -630,6 +637,7 @@ export class AuthService {
         ...userWithoutSensitiveData,
         adminRole: user.adminRole ?? null,
         permissions,
+        roles,
         hasPin,
       },
       ...tokens,

@@ -27,6 +27,8 @@ import { BranchModule } from './branch/branch.module';
 import { CommonModule } from './common/common.module';
 import { BeauticianModule } from './beautician/beautician.module';
 import { CommsModule } from './comms/comms.module';
+import { NinModule } from './nin/nin.module';
+import { ApplicationModule } from './application/application.module';
 
 @Module({
   imports: [
@@ -89,6 +91,8 @@ import { CommsModule } from './comms/comms.module';
     CommonModule,
     BeauticianModule,
     CommsModule,
+    NinModule,
+    ApplicationModule,
   ],
   controllers: [AppController],
   providers: [

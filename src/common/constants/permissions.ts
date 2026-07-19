@@ -84,6 +84,11 @@ export const PERMISSIONS = {
   ROLES_UPDATE: 'roles:update', // Edit role permissions
   ROLES_DELETE: 'roles:delete', // Delete roles
   ROLES_ASSIGN: 'roles:assign', // Assign roles to admin users
+
+  // ── Applications ──────────────────────────────────────────────────────────────
+  APPLICATION_READ: 'application:read',
+  APPLICATION_MANAGE_STATUS: 'application:manage_status',
+  APPLICATION_CONVERT: 'application:convert',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

@@ -11,7 +11,7 @@ export function beauticianKycResultTemplate(
       : outcome === 'REJECTED'
         ? 'KYC Not Approved — HairLux'
         : 'KYC Under Review — HairLux';
-
+ 
   const body =
     outcome === 'VERIFIED'
       ? `<p>Hi ${firstName},</p>
