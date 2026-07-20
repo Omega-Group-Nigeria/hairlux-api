@@ -132,18 +132,27 @@ export class BeauticianController {
 
   @Post('profile/submit-for-review')
   @UseGuards(KycVerifiedGuard)
-  @ApiOperation({ summary: 'Submit profile for admin review' })
+  @ApiOperation({
+    summary: 'Submit professional profile (step 2 of 3)',
+    description:
+      'Locks profile fields and sets status to AWAITING_VIDEO. Beautician must then upload the 1-minute KYC video before entering admin review.',
+  })
   async submitForReview(@GetUser('id') userId: string) {
     const data = await this.profileService.submitForReview(userId);
     return {
       success: true,
-      message: 'Profile submitted for review successfully',
+      message:
+        'Profile submitted. Complete video submission to enter admin review.',
       data,
     };
   }
 
   @Get('profile/review-status')
-  @ApiOperation({ summary: 'Get profile review status' })
+  @ApiOperation({
+    summary: 'Get profile review status (includes video step)',
+    description:
+      'Returns profileStatus, video submission flags, and nextStep for the 3-step onboarding pipeline.',
+  })
   async getReviewStatus(@GetUser('id') userId: string) {
     const data = await this.profileService.getReviewStatus(userId);
     return {

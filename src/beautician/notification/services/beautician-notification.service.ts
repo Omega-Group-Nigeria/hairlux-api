@@ -61,7 +61,7 @@ export class BeauticianNotificationService {
 
   async notifyProfileReviewResult(
     user: BeauticianUserContact,
-    outcome: 'APPROVED' | 'REJECTED',
+    outcome: 'APPROVED' | 'REJECTED' | 'VIDEO_ONLY',
     notes?: string,
   ) {
     await this.mailService.sendBeauticianProfileReviewEmail(
@@ -70,6 +70,17 @@ export class BeauticianNotificationService {
       outcome,
       notes,
     );
+
+    if (outcome === 'VIDEO_ONLY') {
+      await this.push(
+        user,
+        'Video re-upload required',
+        'Your intro video was not accepted. Please record and submit a new video.',
+        { type: 'profile_review', outcome },
+      );
+      return;
+    }
+
     await this.push(
       user,
       'Profile review',

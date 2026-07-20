@@ -23,7 +23,11 @@ export class KycStatusService {
         kycVerifiedAt: true,
         qoreIdSessionId: true,
         qoreIdCustomerId: true,
+        portfolioUrl: true,
         reviewNotes: true,
+        profileStatus: true,
+        kycVideoKey: true,
+        updatedAt: true,
       },
     });
 
@@ -31,7 +35,12 @@ export class KycStatusService {
       throw new NotFoundException('Beautician profile not found');
     }
 
-    return profile;
+    const { kycVideoKey, ...rest } = profile;
+
+    return {
+      ...rest,
+      hasKycVideo: Boolean(kycVideoKey),
+    };
   }
 
   async adminApprove(profileId: string, adminUserId: string) {

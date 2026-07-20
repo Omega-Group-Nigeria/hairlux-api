@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { HomeServiceStatusService } from '../../home-service-booking/home-service-status.service';
 import { MatchingConfigService } from './matching-config.service';
 
 export interface EligibleBeauticianProfile {
@@ -14,7 +15,10 @@ export interface EligibleBeauticianProfile {
 
 @Injectable()
 export class CandidateEligibilityService {
-  constructor(private readonly matchingConfig: MatchingConfigService) {}
+  constructor(
+    private readonly matchingConfig: MatchingConfigService,
+    private readonly homeServiceStatus: HomeServiceStatusService,
+  ) {}
 
   hasFreshLocation(lastLocationUpdate: Date | null, now = new Date()): boolean {
     if (!lastLocationUpdate) {
@@ -25,6 +29,24 @@ export class CandidateEligibilityService {
     const ageMs = now.getTime() - lastLocationUpdate.getTime();
 
     return ageMs <= stalenessMinutes * 60 * 1000;
+  }
+
+  /**
+   * ON_JOB beauticians become offer-eligible after enough of their current
+   * service duration has elapsed (config/env percent, default 90).
+   */
+  isOnJobNearServiceComplete(
+    serviceStartedAt: Date | null | undefined,
+    services: unknown,
+    now = new Date(),
+  ): boolean {
+    const percent = this.matchingConfig.getOnJobOfferEligiblePercent();
+    return this.homeServiceStatus.hasReachedServiceProgressPercent(
+      serviceStartedAt,
+      services,
+      percent,
+      now,
+    );
   }
 
   coversAllServices(

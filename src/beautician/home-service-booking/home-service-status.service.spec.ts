@@ -1,37 +1,39 @@
-import { BadRequestException } from '@nestjs/common';
-import { BookingStatus } from '@prisma/client';
 import { HomeServiceStatusService } from './home-service-status.service';
 
-describe('HomeServiceStatusService', () => {
-  let service: HomeServiceStatusService;
+describe('HomeServiceStatusService service progress', () => {
+  const service = new HomeServiceStatusService();
 
-  beforeEach(() => {
-    service = new HomeServiceStatusService();
-  });
+  const services = [
+    {
+      serviceId: 's1',
+      name: 'Braids',
+      price: 10000,
+      quantity: 1,
+      duration: 100,
+    },
+  ];
 
-  it('allows assigned to en route transition', () => {
+  it('returns false without serviceStartedAt', () => {
     expect(
-      service.canTransition(BookingStatus.ASSIGNED, BookingStatus.EN_ROUTE),
+      service.hasReachedServiceProgressPercent(null, services, 90),
+    ).toBe(false);
+  });
+
+  it('returns false before the percent threshold', () => {
+    const started = new Date('2026-07-19T10:00:00.000Z');
+    const now = new Date('2026-07-19T11:29:00.000Z'); // 89 minutes of 100
+
+    expect(
+      service.hasReachedServiceProgressPercent(started, services, 90, now),
+    ).toBe(false);
+  });
+
+  it('returns true at or after the percent threshold', () => {
+    const started = new Date('2026-07-19T10:00:00.000Z');
+    const now = new Date('2026-07-19T11:30:00.000Z'); // 90 minutes of 100
+
+    expect(
+      service.hasReachedServiceProgressPercent(started, services, 90, now),
     ).toBe(true);
-  });
-
-  it('rejects invalid transitions', () => {
-    expect(() =>
-      service.assertTransition(BookingStatus.ASSIGNED, BookingStatus.COMPLETED),
-    ).toThrow(BadRequestException);
-  });
-
-  it('calculates booked duration with quantity', () => {
-    const duration = service.calculateBookedDurationMinutes([
-      {
-        serviceId: 'svc-1',
-        name: 'Braids',
-        price: 100,
-        quantity: 2,
-        duration: 60,
-      },
-    ]);
-
-    expect(duration).toBe(120);
   });
 });

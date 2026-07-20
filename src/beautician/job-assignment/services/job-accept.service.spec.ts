@@ -1,6 +1,20 @@
 import { ConflictException } from '@nestjs/common';
 import { getQueueToken } from '@nestjs/bull';
 import { Test, TestingModule } from '@nestjs/testing';
+
+jest.mock('../../../comms/services/comms-session.service', () => ({
+  CommsSessionService: class CommsSessionService {},
+}));
+jest.mock('../../../comms/services/comms-realtime.service', () => ({
+  CommsRealtimeService: class CommsRealtimeService {},
+}));
+jest.mock('../../matching/services/dispatch-state.service', () => ({
+  DispatchStateService: class DispatchStateService {},
+}));
+jest.mock('../../matching/services/beautician-location-index.service', () => ({
+  BeauticianLocationIndexService: class BeauticianLocationIndexService {},
+}));
+
 import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
 import {
   AvailabilityStatus,

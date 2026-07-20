@@ -18,7 +18,7 @@ export class KycProfilePhotoService {
   ) {}
 
   /**
-   * Download remote liveness image → Cloudinary `profiles/` → save profilePhotoUrl.
+   * Download remote liveness image → Cloudinary `beauticians/profile-photos/` → save profilePhotoUrl.
    * Same DB field as the former POST /beauticians/me/profile-photo endpoint.
    */
   async applyFromRemoteLivenessUrl(
@@ -39,7 +39,7 @@ export class KycProfilePhotoService {
     const publicId = `beautician-${userId}`;
     const upload = await this.cloudinaryService.uploadImageFromUrl(
       imageUrl,
-      'profiles',
+      'beauticians/profile-photos',
       publicId,
     );
 

@@ -64,6 +64,45 @@ export class DispatchConfigResolverService {
     return Number.isFinite(override) && override > 0 ? override : null;
   }
 
+  /**
+   * Env DISPATCH_ON_JOB_OFFER_ELIGIBLE_PERCENT overrides DB/default config.
+   * Clamped to 1–100. Default 90.
+   */
+  getOnJobOfferEligiblePercent(): number {
+    const envRaw = this.configService.get<string>(
+      'DISPATCH_ON_JOB_OFFER_ELIGIBLE_PERCENT',
+    );
+    if (envRaw != null && envRaw.trim() !== '') {
+      const parsed = Number(envRaw);
+      if (Number.isFinite(parsed)) {
+        return Math.min(100, Math.max(1, Math.round(parsed)));
+      }
+    }
+
+    const fromStore = this.getInt(
+      DISPATCH_CONFIG_KEYS.ON_JOB_OFFER_ELIGIBLE_PERCENT,
+      90,
+    );
+    return Math.min(100, Math.max(1, fromStore));
+  }
+
+  /**
+   * How many beauticians may hold an active offer for the same booking at once.
+   * Env DISPATCH_CONCURRENT_OFFERS; if unset, defaults to 1. Clamped 1–10.
+   */
+  getConcurrentOffers(): number {
+    const envRaw = this.configService.get<string>('DISPATCH_CONCURRENT_OFFERS');
+    if (envRaw != null && envRaw.trim() !== '') {
+      const parsed = Number(envRaw);
+      if (Number.isFinite(parsed)) {
+        return Math.min(10, Math.max(1, Math.round(parsed)));
+      }
+    }
+
+    // Env not set → default 1 (do not fall through to a higher DB default)
+    return 1;
+  }
+
   getTierRadiusKm(tier: number): number {
     const envRadii = this.getRadiiKmFromEnv();
     if (envRadii) {

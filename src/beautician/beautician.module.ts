@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../redis/redis.module';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
+import { StorageModule } from '../storage/storage.module';
 import { BeauticianController } from './beautician.controller';
 import { AdminBeauticianController } from './admin-beautician.controller';
 import { AdminHomeServiceSettingsController } from './admin-home-service-settings.controller';
@@ -41,6 +42,7 @@ import { BeauticianMeCacheService } from './services/beautician-me-cache.service
     RedisModule,
     WalletModule,
     CloudinaryModule,
+    StorageModule,
     FcmModule,
     BeauticianNotificationModule,
     KycModule,

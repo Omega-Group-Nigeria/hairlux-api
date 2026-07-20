@@ -67,4 +67,30 @@ export class HomeServiceStatusService {
       serviceStartedAt.getTime() + (durationMinutes + bufferMinutes) * 60_000,
     );
   }
+
+  /**
+   * True when elapsed time since service start is at least `percent` of booked duration.
+   * e.g. percent=90, duration=100min → true after 90 minutes of service.
+   */
+  hasReachedServiceProgressPercent(
+    serviceStartedAt: Date | null | undefined,
+    services: unknown,
+    percent: number,
+    now = new Date(),
+  ): boolean {
+    if (!serviceStartedAt) {
+      return false;
+    }
+
+    const durationMinutes = this.calculateBookedDurationMinutes(services);
+    if (durationMinutes <= 0) {
+      return false;
+    }
+
+    const threshold = Math.min(100, Math.max(1, percent)) / 100;
+    const elapsedMs = now.getTime() - serviceStartedAt.getTime();
+    const requiredMs = durationMinutes * 60_000 * threshold;
+
+    return elapsedMs >= requiredMs;
+  }
 }

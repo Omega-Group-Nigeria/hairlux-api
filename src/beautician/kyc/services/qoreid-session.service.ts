@@ -9,11 +9,54 @@ import { HttpService } from '@nestjs/axios';
 import { KycStatus } from '@prisma/client';
 import { firstValueFrom } from 'rxjs';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { RedisService } from '../../../redis/redis.service';
 
 interface QoreIdSessionResponse {
   sessionId: string;
   sdkSessionToken: string;
   expiresAt: string;
+}
+
+/** Extra runtime checks beyond class-validator (host, scheme, no userinfo). */
+function assertSafePortfolioUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new BadRequestException('portfolioUrl must be a valid https URL');
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new BadRequestException('portfolioUrl must use https');
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new BadRequestException(
+      'portfolioUrl must not include credentials',
+    );
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === 'localhost' ||
+    host.endsWith('.local') ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host) ||
+    host === 'metadata.google.internal' ||
+    host.endsWith('.internal')
+  ) {
+    throw new BadRequestException(
+      'portfolioUrl must be a public https URL',
+    );
+  }
+
+  // Normalize: drop hash; keep pathname/query as provided by the beautician
+  parsed.hash = '';
+  return parsed.toString();
 }
 
 @Injectable()
@@ -24,9 +67,12 @@ export class QoreidSessionService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
   ) {}
 
-  async initiateSession(userId: string) {
+  async initiateSession(userId: string, portfolioUrl: string) {
+    const safePortfolioUrl = assertSafePortfolioUrl(portfolioUrl);
+
     const profile = await this.prisma.beauticianProfile.findUnique({
       where: { userId },
     });
@@ -85,8 +131,12 @@ export class QoreidSessionService {
         data: {
           kycStatus: KycStatus.IN_PROGRESS,
           qoreIdSessionId: data.sessionId,
+          portfolioUrl: safePortfolioUrl,
         },
       });
+
+      // Keep GET /beauticians/me cache in sync (same key as KycProfilePhotoService)
+      await this.redis.del(`beautician:me:stable:${userId}`);
 
       const expiresAt = new Date(data.expiresAt);
       const expiresIn = Math.max(
@@ -99,10 +149,14 @@ export class QoreidSessionService {
         sessionId: data.sessionId,
         expiresIn,
         expiresAt: data.expiresAt,
+        portfolioUrl: safePortfolioUrl,
         instructions:
           'Launch the QoreID React Native SDK with this sessionToken',
       };
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       this.logger.error(
         `QoreID session creation failed: ${
           error instanceof Error ? error.message : String(error)

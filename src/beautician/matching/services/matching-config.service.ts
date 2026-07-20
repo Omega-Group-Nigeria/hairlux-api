@@ -65,6 +65,20 @@ export class MatchingConfigService {
     );
   }
 
+  /**
+   * % of booked service duration that must elapse (after serviceStartedAt)
+   * before an ON_JOB beautician is eligible for another offer.
+   * Env: DISPATCH_ON_JOB_OFFER_ELIGIBLE_PERCENT (1–100, default 90).
+   */
+  getOnJobOfferEligiblePercent(): number {
+    return this.resolver.getOnJobOfferEligiblePercent();
+  }
+
+  /** Simultaneous active offers per booking. Env DISPATCH_CONCURRENT_OFFERS, default 1. */
+  getConcurrentOffers(): number {
+    return this.resolver.getConcurrentOffers();
+  }
+
   getScoringWeights() {
     return {
       distance: this.resolver.getFloat(

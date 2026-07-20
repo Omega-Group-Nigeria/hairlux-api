@@ -77,6 +77,7 @@ export function buildBeauticianMeStableCache(profile: {
   id: string;
   bio: string | null;
   profilePhotoUrl: string | null;
+  portfolioUrl: string | null;
   specialties: string[];
   yearsOfExperience: number | null;
   maxTravelRadiusKm: { toNumber?: () => number } | number | null;
@@ -87,6 +88,7 @@ export function buildBeauticianMeStableCache(profile: {
     id: profile.id,
     bio: profile.bio,
     profilePhotoUrl: profile.profilePhotoUrl,
+    portfolioUrl: profile.portfolioUrl,
     specialties: profile.specialties,
     yearsOfExperience: profile.yearsOfExperience,
     maxTravelRadiusKm: toDecimalNumber(profile.maxTravelRadiusKm),
@@ -109,6 +111,7 @@ export function buildBeauticianMeResponse(
     id: stable.id,
     bio: stable.bio,
     profilePhotoUrl: stable.profilePhotoUrl,
+    portfolioUrl: stable.portfolioUrl,
     specialties: stable.specialties,
     yearsOfExperience: stable.yearsOfExperience,
     maxTravelRadiusKm: stable.maxTravelRadiusKm,

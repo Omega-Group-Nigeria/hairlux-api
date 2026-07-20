@@ -4,12 +4,31 @@ export function pickNextCandidateInRotation(
   ranked: MatchingCandidate[],
   rotateAfterBeauticianUserId?: string | null,
 ): MatchingCandidate | null {
-  if (!ranked.length) {
-    return null;
+  const top = pickTopCandidatesInRotation(
+    ranked,
+    rotateAfterBeauticianUserId,
+    1,
+  );
+  return top[0] ?? null;
+}
+
+/**
+ * Take up to `limit` candidates from the ranked list, rotating after the last
+ * offered beautician so expired candidates cycle fairly.
+ */
+export function pickTopCandidatesInRotation(
+  ranked: MatchingCandidate[],
+  rotateAfterBeauticianUserId: string | null | undefined,
+  limit: number,
+): MatchingCandidate[] {
+  if (!ranked.length || limit <= 0) {
+    return [];
   }
 
+  const cap = Math.min(limit, ranked.length);
+
   if (!rotateAfterBeauticianUserId) {
-    return ranked[0];
+    return ranked.slice(0, cap);
   }
 
   const currentIndex = ranked.findIndex(
@@ -17,8 +36,13 @@ export function pickNextCandidateInRotation(
   );
 
   if (currentIndex === -1) {
-    return ranked[0];
+    return ranked.slice(0, cap);
   }
 
-  return ranked[(currentIndex + 1) % ranked.length];
+  const rotated = [
+    ...ranked.slice(currentIndex + 1),
+    ...ranked.slice(0, currentIndex + 1),
+  ];
+
+  return rotated.slice(0, cap);
 }

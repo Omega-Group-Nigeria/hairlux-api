@@ -29,14 +29,18 @@ export class OfferLifecycleService {
   ) {}
 
   async hasActiveOffers(bookingId: string): Promise<boolean> {
-    const count = await this.prisma.jobOffer.count({
+    const count = await this.countActiveOffers(bookingId);
+    return count > 0;
+  }
+
+  async countActiveOffers(bookingId: string): Promise<number> {
+    return this.prisma.jobOffer.count({
       where: {
         bookingId,
         status: JobOfferStatus.OFFERED,
         expiresAt: { gt: new Date() },
       },
     });
-    return count > 0;
   }
 
   async expireOffer(

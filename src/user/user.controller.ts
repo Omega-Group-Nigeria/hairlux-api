@@ -154,6 +154,8 @@ export class UserController {
           state: 'Lagos',
           country: 'Nigeria',
           placeId: 'ChIJ...',
+          latitude: 6.4474,
+          longitude: 3.4721,
           addressComponents: {
             streetAddress: '12 Admiralty Way',
             city: 'Lagos',
@@ -207,6 +209,8 @@ export class UserController {
         state: 'Lagos',
         country: 'Nigeria',
         placeId: 'ChIJ...',
+        latitude: 6.4474,
+        longitude: 3.4721,
         addressComponents: {
           streetAddress: '12 Admiralty Way',
           city: 'Lagos',
@@ -250,6 +254,8 @@ export class UserController {
         state: 'Lagos',
         country: 'Nigeria',
         placeId: 'ChIJ...',
+        latitude: 6.4281,
+        longitude: 3.4219,
         addressComponents: {
           streetAddress: '25 Victoria Island',
           city: 'Lagos',

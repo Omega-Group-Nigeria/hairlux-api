@@ -40,13 +40,7 @@ export function beauticianDispatchSuspensionTemplate(
         <p>Your account has been <strong>suspended from dispatch matching</strong>. You will not receive new home-service job offers while this is in effect.</p>
         ${reasonBlock}
         ${timedBlock}
-        <p><strong>What you can still do:</strong></p>
-        <ul>
-          <li>Sign in to the beautician app and review your profile</li>
-          <li>Complete any job already assigned to you</li>
-          <li>Contact support if you believe this was applied in error</li>
-        </ul>
-        <p>You cannot go online for new offers until dispatch access is restored.</p>
+        <p>You cannot go online for new offers until dispatch access is restored. Contact support if you believe this was applied in error.</p>
         <p>— HairLux Operations</p>
       `,
     });

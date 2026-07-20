@@ -29,6 +29,7 @@ const BEAUTICIAN_ME_STABLE_SELECT = {
   id: true,
   bio: true,
   profilePhotoUrl: true,
+  portfolioUrl: true,
   specialties: true,
   yearsOfExperience: true,
   maxTravelRadiusKm: true,

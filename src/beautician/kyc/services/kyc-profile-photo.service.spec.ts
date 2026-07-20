@@ -28,16 +28,17 @@ describe('KycProfilePhotoService', () => {
     );
   });
 
-  it('uploads remote liveness image to profiles folder and saves profilePhotoUrl', async () => {
+  it('uploads remote liveness image to beauticians/profile-photos and saves profilePhotoUrl', async () => {
     mockPrisma.beauticianProfile.findUnique.mockResolvedValue({ id: 'p1' });
     mockCloudinary.uploadImageFromUrl.mockResolvedValue({
-      secureUrl: 'https://res.cloudinary.com/demo/profiles/beautician-user-1.webp',
-      publicId: 'profiles/beautician-user-1',
-      url: 'http://res.cloudinary.com/demo/profiles/beautician-user-1.webp',
+      secureUrl:
+        'https://res.cloudinary.com/demo/beauticians/profile-photos/beautician-user-1.webp',
+      publicId: 'beauticians/profile-photos/beautician-user-1',
+      url: 'http://res.cloudinary.com/demo/beauticians/profile-photos/beautician-user-1.webp',
     });
     mockPrisma.beauticianProfile.update.mockResolvedValue({
       profilePhotoUrl:
-        'https://res.cloudinary.com/demo/profiles/beautician-user-1.webp',
+        'https://res.cloudinary.com/demo/beauticians/profile-photos/beautician-user-1.webp',
     });
 
     const result = await service.applyFromRemoteLivenessUrl(
@@ -47,14 +48,14 @@ describe('KycProfilePhotoService', () => {
 
     expect(mockCloudinary.uploadImageFromUrl).toHaveBeenCalledWith(
       'https://media.qoreid.com/v1/file/abc',
-      'profiles',
+      'beauticians/profile-photos',
       'beautician-user-1',
     );
     expect(mockPrisma.beauticianProfile.update).toHaveBeenCalledWith({
       where: { userId: 'user-1' },
       data: {
         profilePhotoUrl:
-          'https://res.cloudinary.com/demo/profiles/beautician-user-1.webp',
+          'https://res.cloudinary.com/demo/beauticians/profile-photos/beautician-user-1.webp',
       },
       select: { profilePhotoUrl: true },
     });

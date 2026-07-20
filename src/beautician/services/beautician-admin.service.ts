@@ -11,12 +11,14 @@ import {
 } from '../../common/constants/admin-user-select';
 import { serializeBeauticianProfile } from '../utils/beautician-profile.utils';
 import { BeauticianMeCacheService } from './beautician-me-cache.service';
+import { R2Service } from '../../storage/r2.service';
 
 @Injectable()
 export class BeauticianAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly meCache: BeauticianMeCacheService,
+    private readonly r2: R2Service,
   ) {}
 
   async findAll(query: QueryBeauticiansDto) {
@@ -158,17 +160,40 @@ export class BeauticianAdminService {
       }),
     ]);
 
+    const serialized = serializeBeauticianProfile(profile) as Record<
+      string,
+      unknown
+    >;
+    // Prefer structured kycVideo; avoid duplicating raw key at top level
+    delete serialized.kycVideoKey;
+
     return {
-      ...serializeBeauticianProfile(profile),
+      ...serialized,
       walletBalance: Number(wallet?.balance ?? 0),
       kycReferences: {
         qoreIdCustomerId: profile.qoreIdCustomerId,
         qoreIdSessionId: profile.qoreIdSessionId,
       },
+      kycVideo: this.buildKycVideoPayload(profile.kycVideoKey),
       recentJobs: recentJobs.map((job) => ({
         ...job,
         totalAmount: Number(job.totalAmount),
       })),
+    };
+  }
+
+  /**
+   * Public R2 URL for admin players — no presigning.
+   * fileKey is the full object key (e.g. kyc-videos/{userId}/{uuid}.mp4).
+   */
+  private buildKycVideoPayload(kycVideoKey: string | null) {
+    if (!kycVideoKey) {
+      return null;
+    }
+
+    return {
+      fileKey: kycVideoKey,
+      url: this.r2.getPublicUrl(kycVideoKey),
     };
   }
 

@@ -38,6 +38,7 @@ import { DispatchProbationProcessor } from './processors/dispatch-probation.proc
 import { RealtimeModule } from '../realtime/realtime.module';
 import { CommsModule } from '../../comms/comms.module';
 import { PayoutModule } from '../payout/payout.module';
+import { HomeServiceSharedModule } from '../home-service-booking/home-service-shared.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { PayoutModule } from '../payout/payout.module';
     BullModule.registerQueue({ name: DISPATCH_PROBATION_QUEUE }),
     CommsModule,
     PayoutModule,
+    HomeServiceSharedModule,
   ],
   controllers: [AdminDispatchSettingsController],
   providers: [

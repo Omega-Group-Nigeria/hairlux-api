@@ -1,4 +1,7 @@
-import { pickNextCandidateInRotation } from './offer-rotation.util';
+import {
+  pickNextCandidateInRotation,
+  pickTopCandidatesInRotation,
+} from './offer-rotation.util';
 
 const candidate = (userId: string) => ({
   userId,
@@ -6,6 +9,7 @@ const candidate = (userId: string) => ({
   distanceKm: 1,
   score: 1,
   scoreSnapshot: {},
+  isOnJob: false,
 });
 
 describe('pickNextCandidateInRotation', () => {
@@ -32,5 +36,21 @@ describe('pickNextCandidateInRotation', () => {
 
   it('returns null when no candidates are eligible', () => {
     expect(pickNextCandidateInRotation([], 'b')).toBeNull();
+  });
+});
+
+describe('pickTopCandidatesInRotation', () => {
+  const ranked = [candidate('a'), candidate('b'), candidate('c')];
+
+  it('returns top N without rotation', () => {
+    expect(pickTopCandidatesInRotation(ranked, null, 2).map((c) => c.userId)).toEqual(
+      ['a', 'b'],
+    );
+  });
+
+  it('returns top N after rotating past last offered', () => {
+    expect(
+      pickTopCandidatesInRotation(ranked, 'a', 2).map((c) => c.userId),
+    ).toEqual(['b', 'c']);
   });
 });

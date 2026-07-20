@@ -34,6 +34,7 @@ import { QueryPendingProfileReviewsDto } from './dto/query-pending-profile-revie
 import {
   ApproveProfileDto,
   AssignBeauticianServicesDto,
+  ProfileRejectScope,
   RejectKycDto,
   RejectProfileDto,
   UpdateAdminBeauticianDto,
@@ -106,7 +107,11 @@ export class AdminBeauticianController {
 
   @Get(':id')
   @Permission(PERMISSIONS.BEAUTICIANS_READ)
-  @ApiOperation({ summary: 'Get beautician details' })
+  @ApiOperation({
+    summary: 'Get beautician details (includes KYC video for profile review)',
+    description:
+      'Full profile plus wallet, recent jobs, and `kycVideo` (`fileKey` + public `url`) when a verification video was submitted. No signed URLs — uses R2 public base URL.',
+  })
   @ApiParam({ name: 'id', description: 'Beautician profile ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.adminService.findOne(id);
@@ -244,7 +249,12 @@ export class AdminBeauticianController {
 
   @Patch(':id/profile/reject')
   @Permission(PERMISSIONS.BEAUTICIANS_REVIEW)
-  @ApiOperation({ summary: 'Reject professional profile with reason' })
+  @ApiOperation({
+    summary: 'Reject professional profile / request video re-upload',
+    description:
+      'scope=FULL (default): full rejection → REJECTED, profile editable again. ' +
+      'scope=VIDEO_ONLY: clear video, set AWAITING_VIDEO; beautician re-records video only.',
+  })
   async rejectProfile(
     @Param('id', ParseUUIDPipe) id: string,
     @GetUser('id') adminUserId: string,
@@ -255,10 +265,14 @@ export class AdminBeauticianController {
       adminUserId,
       dto.reason,
       dto.notes,
+      dto.scope,
     );
+    const videoOnly = dto.scope === ProfileRejectScope.VIDEO_ONLY;
     return {
       success: true,
-      message: 'Profile rejected successfully',
+      message: videoOnly
+        ? 'Video rejected; beautician must re-upload intro video'
+        : 'Profile rejected successfully',
       data,
     };
   }

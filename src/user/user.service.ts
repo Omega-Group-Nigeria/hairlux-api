@@ -37,6 +37,8 @@ interface AddressRecord {
   country?: string | null;
   placeId?: string | null;
   addressComponents?: unknown;
+  latitude?: { toNumber?: () => number } | number | null;
+  longitude?: { toNumber?: () => number } | number | null;
   isDefault: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -187,6 +189,8 @@ export class UserService {
           country: resolvedAddress.country,
           placeId: resolvedAddress.placeId,
           addressComponents: resolvedAddress.addressComponents,
+          latitude: resolvedAddress.latitude,
+          longitude: resolvedAddress.longitude,
           isDefault: shouldBeDefault,
         },
       }) as any;
@@ -254,6 +258,8 @@ export class UserService {
           ...(resolvedAddress.addressComponents !== undefined && {
             addressComponents: resolvedAddress.addressComponents,
           }),
+          latitude: resolvedAddress.latitude,
+          longitude: resolvedAddress.longitude,
           ...(updateAddressDto.isDefault !== undefined && {
             isDefault: updateAddressDto.isDefault,
           }),
@@ -350,6 +356,8 @@ export class UserService {
       state,
       country,
       placeId: address.placeId,
+      latitude: this.toCoordinateNumber(address.latitude),
+      longitude: this.toCoordinateNumber(address.longitude),
       addressComponents: addressComponents ?? {
         streetAddress,
         city,
@@ -360,6 +368,13 @@ export class UserService {
       createdAt: address.createdAt,
       updatedAt: address.updatedAt,
     };
+  }
+
+  private toCoordinateNumber(
+    value: { toNumber?: () => number } | number | null | undefined,
+  ): number | null {
+    if (value == null) return null;
+    return typeof value === 'number' ? value : Number(value);
   }
 
   private resolveAddressValues(
@@ -416,6 +431,8 @@ export class UserService {
       state,
       country,
       placeId: dto.placeId,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
       addressComponents: shouldRebuildComponents
         ? this.normalizeAddressComponents({
             streetAddress,

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AvailabilityStatus,
+  BookingStatus,
   DispatchStatus,
   JobOfferStatus,
   Prisma,
@@ -13,6 +14,7 @@ import { RealtimePublisherService } from '../../realtime/realtime-publisher.serv
 import { MatchingCandidate } from './candidate-finder.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
 import { MatchingQueueService } from './matching-queue.service';
+import { MatchingConfigService } from './matching-config.service';
 
 @Injectable()
 export class OfferManagerService {
@@ -25,6 +27,7 @@ export class OfferManagerService {
     private readonly notificationService: BeauticianNotificationService,
     private readonly realtimePublisher: RealtimePublisherService,
     private readonly locationIndex: BeauticianLocationIndexService,
+    private readonly matchingConfig: MatchingConfigService,
   ) {}
 
   async createNextOffer(params: {
@@ -39,6 +42,7 @@ export class OfferManagerService {
       Date.now() + params.offerTtlSeconds * 1000,
     );
     const estEarnings = params.estEarnings;
+    const maxConcurrent = this.matchingConfig.getConcurrentOffers();
 
     type CreatedOffer = {
       id: string;
@@ -55,15 +59,31 @@ export class OfferManagerService {
     };
 
     const offer = await this.prisma.$transaction(async (tx) => {
-      const activeOffer = await tx.jobOffer.findFirst({
+      const now = new Date();
+
+      const activeCount = await tx.jobOffer.count({
         where: {
           bookingId: params.bookingId,
           status: JobOfferStatus.OFFERED,
-          expiresAt: { gt: new Date() },
+          expiresAt: { gt: now },
         },
       });
 
-      if (activeOffer) {
+      if (activeCount >= maxConcurrent) {
+        return null;
+      }
+
+      const alreadyOffered = await tx.jobOffer.findFirst({
+        where: {
+          bookingId: params.bookingId,
+          beauticianUserId: params.candidate.userId,
+          status: JobOfferStatus.OFFERED,
+          expiresAt: { gt: now },
+        },
+        select: { id: true },
+      });
+
+      if (alreadyOffered) {
         return null;
       }
 
@@ -100,7 +120,7 @@ export class OfferManagerService {
 
     if (!offer) {
       this.logger.log(
-        `Skipped duplicate offer creation for booking ${params.bookingId}`,
+        `Skipped offer creation for booking ${params.bookingId} (at concurrent cap ${maxConcurrent} or already offered)`,
       );
       return null;
     }
@@ -155,6 +175,12 @@ export class OfferManagerService {
     return offer;
   }
 
+  /**
+   * After decline / expire / cancel of an offer: restore prior operational state.
+   * If they still have an active job → ON_JOB (stay out of free geo index).
+   * Otherwise → ONLINE and re-index for free matching.
+   * Uses conditional OFFERED→next update so concurrent release/accept cannot clobber state.
+   */
   async releaseBeauticianToOnline(beauticianUserId: string) {
     const profile = await this.prisma.beauticianProfile.findUnique({
       where: { userId: beauticianUserId },
@@ -167,10 +193,48 @@ export class OfferManagerService {
       return;
     }
 
-    await this.prisma.beauticianProfile.update({
-      where: { userId: beauticianUserId },
+    const activeJob = await this.prisma.booking.findFirst({
+      where: {
+        assignedBeauticianUserId: beauticianUserId,
+        status: {
+          in: [
+            BookingStatus.ASSIGNED,
+            BookingStatus.EN_ROUTE,
+            BookingStatus.ARRIVED,
+            BookingStatus.ARRIVED_VERIFIED,
+            BookingStatus.IN_PROGRESS,
+            BookingStatus.AWAITING_CUSTOMER_CONFIRM,
+          ],
+        },
+      },
+      select: { id: true },
+    });
+
+    if (activeJob) {
+      const moved = await this.prisma.beauticianProfile.updateMany({
+        where: {
+          userId: beauticianUserId,
+          availabilityStatus: AvailabilityStatus.OFFERED,
+        },
+        data: { availabilityStatus: AvailabilityStatus.ON_JOB },
+      });
+      if (moved.count === 1) {
+        await this.locationIndex.remove(beauticianUserId);
+      }
+      return;
+    }
+
+    const moved = await this.prisma.beauticianProfile.updateMany({
+      where: {
+        userId: beauticianUserId,
+        availabilityStatus: AvailabilityStatus.OFFERED,
+      },
       data: { availabilityStatus: AvailabilityStatus.ONLINE },
     });
+
+    if (moved.count !== 1) {
+      return;
+    }
 
     if (profile.currentLat != null && profile.currentLng != null) {
       await this.locationIndex.upsertOnline({

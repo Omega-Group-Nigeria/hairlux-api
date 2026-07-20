@@ -23,6 +23,10 @@ export const DISPATCH_CONFIG_KEYS = {
   SCORE_WEIGHT_ACCEPTANCE_RATE: 'score_weight_acceptance_rate',
   SCORE_WEIGHT_IDLE_MINUTES: 'score_weight_idle_minutes',
   WAKE_EXHAUSTED_ON_ONLINE_ENABLED: 'wake_exhausted_on_online_enabled',
+  /** When ON_JOB beautician has consumed this % of booked service minutes, they may receive offers. */
+  ON_JOB_OFFER_ELIGIBLE_PERCENT: 'on_job_offer_eligible_percent',
+  /** Max simultaneous active offers per booking (env DISPATCH_CONCURRENT_OFFERS). */
+  CONCURRENT_OFFERS: 'concurrent_offers',
 } as const;
 
 export const DISPATCH_CONFIG_DEFAULTS: DispatchConfigDefault[] = [
@@ -82,6 +86,16 @@ export const DISPATCH_CONFIG_DEFAULTS: DispatchConfigDefault[] = [
   {
     key: DISPATCH_CONFIG_KEYS.WAKE_EXHAUSTED_ON_ONLINE_ENABLED,
     value: '0',
+    valueType: 'int',
+  },
+  {
+    key: DISPATCH_CONFIG_KEYS.ON_JOB_OFFER_ELIGIBLE_PERCENT,
+    value: '90',
+    valueType: 'int',
+  },
+  {
+    key: DISPATCH_CONFIG_KEYS.CONCURRENT_OFFERS,
+    value: '1',
     valueType: 'int',
   },
 ];

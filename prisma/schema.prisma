@@ -81,6 +81,8 @@ enum KycStatus {
 
 enum ProfileReviewStatus {
   NOT_SUBMITTED
+  /// Profile fields submitted; beautician must record KYC video before admin review.
+  AWAITING_VIDEO
   PENDING_REVIEW
   APPROVED
   REJECTED
@@ -941,6 +943,8 @@ model BeauticianProfile {
   userId                String               @unique @map("user_id")
   bio                   String?
   profilePhotoUrl       String?              @map("profile_photo_url")
+  /// Public portfolio / work showcase URL collected at KYC initiate (https only).
+  portfolioUrl          String?              @map("portfolio_url")
   specialties           String[]             @default([])
   yearsOfExperience     Int?                 @map("years_of_experience")
   certifications        String[]             @default([])
@@ -958,6 +962,9 @@ model BeauticianProfile {
   profileReviewedAt     DateTime?            @map("profile_reviewed_at")
   profileReviewedById   String?              @map("profile_reviewed_by_id")
   reviewNotes           String?              @map("review_notes")
+  /// Cloudflare R2 object key for the KYC intro video (1 min, highly compressed).
+  /// Content-Type and size live on the R2 object; submission time ≈ profile updatedAt after confirm.
+  kycVideoKey           String?              @map("kyc_video_key")
   ratingAverage         Decimal              @default(0) @db.Decimal(3, 2) @map("rating_average")
   totalJobsCompleted    Int                  @default(0) @map("total_jobs_completed")
   totalEarnings         Decimal              @default(0) @db.Decimal(12, 2) @map("total_earnings")

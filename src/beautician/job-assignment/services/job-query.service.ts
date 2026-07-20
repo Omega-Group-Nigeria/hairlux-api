@@ -27,10 +27,12 @@ export class JobQueryService {
       select: { availabilityStatus: true },
     });
 
+    // ONLINE / OFFERED free queue, and ON_JOB near end of service (still receive offers)
     if (
       !profile ||
       (profile.availabilityStatus !== AvailabilityStatus.ONLINE &&
-        profile.availabilityStatus !== AvailabilityStatus.OFFERED)
+        profile.availabilityStatus !== AvailabilityStatus.OFFERED &&
+        profile.availabilityStatus !== AvailabilityStatus.ON_JOB)
     ) {
       return [];
     }

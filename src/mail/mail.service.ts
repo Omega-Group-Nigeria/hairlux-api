@@ -406,7 +406,7 @@ export class MailService {
   async sendBeauticianProfileReviewEmail(
     email: string,
     firstName: string,
-    outcome: 'APPROVED' | 'REJECTED' | 'SUBMITTED',
+    outcome: 'APPROVED' | 'REJECTED' | 'SUBMITTED' | 'VIDEO_ONLY',
     notes?: string,
   ) {
     try {
@@ -415,7 +415,9 @@ export class MailService {
           ? 'Profile Approved — HairLux Beautician'
           : outcome === 'REJECTED'
             ? 'Profile Not Approved — HairLux Beautician'
-            : 'Profile Submitted — HairLux Beautician';
+            : outcome === 'VIDEO_ONLY'
+              ? 'Intro Video Re-upload Required — HairLux Beautician'
+              : 'Profile Submitted — HairLux Beautician';
 
       await this.emailQueue.add(
         'send',

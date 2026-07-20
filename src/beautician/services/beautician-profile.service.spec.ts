@@ -5,8 +5,10 @@ import {
   ProfileReviewStatus,
 } from '@prisma/client';
 import { BeauticianProfileService } from './beautician-profile.service';
+import { ProfileRejectScope } from '../dto/admin-beautician.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
+import { R2Service } from '../../storage/r2.service';
 import { BeauticianNotificationService } from '../notification/services/beautician-notification.service';
 import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
@@ -23,12 +25,14 @@ describe('BeauticianProfileService', () => {
     specialties: ['Box Braids'],
     yearsOfExperience: 6,
     certifications: [],
+    kycVideoKey: null as string | null,
   };
 
   const mockPrisma = {
     beauticianProfile: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
   };
 
@@ -42,6 +46,10 @@ describe('BeauticianProfileService', () => {
     invalidate: jest.fn(),
   };
 
+  const mockR2 = {
+    deleteObject: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -52,6 +60,7 @@ describe('BeauticianProfileService', () => {
         { provide: CloudinaryService, useValue: mockCloudinary },
         { provide: BeauticianNotificationService, useValue: mockNotification },
         { provide: BeauticianMeCacheService, useValue: mockMeCache },
+        { provide: R2Service, useValue: mockR2 },
       ],
     }).compile();
 
@@ -69,18 +78,126 @@ describe('BeauticianProfileService', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 
-  it('submits profile for review and locks further edits', async () => {
-    mockPrisma.beauticianProfile.findUnique.mockResolvedValue(mockProfile);
-    mockPrisma.beauticianProfile.update.mockResolvedValue({
+  it('locks profile updates while awaiting video', async () => {
+    mockPrisma.beauticianProfile.findUnique.mockResolvedValue({
       ...mockProfile,
-      profileStatus: ProfileReviewStatus.PENDING_REVIEW,
-      profileSubmittedAt: new Date(),
-      user: { firstName: 'Ada', lastName: 'Okafor', email: 'ada@example.com' },
+      profileStatus: ProfileReviewStatus.AWAITING_VIDEO,
     });
+
+    await expect(
+      service.updateProfile('user-1', { bio: 'Updated bio text here.' }),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('submits profile and advances to AWAITING_VIDEO (not full review yet)', async () => {
+    mockPrisma.beauticianProfile.findUnique
+      .mockResolvedValueOnce(mockProfile)
+      .mockResolvedValueOnce({
+        profileStatus: ProfileReviewStatus.AWAITING_VIDEO,
+        profileSubmittedAt: new Date(),
+      });
+    mockPrisma.beauticianProfile.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await service.submitForReview('user-1');
 
-    expect(result.profileStatus).toBe(ProfileReviewStatus.PENDING_REVIEW);
-    expect(mockNotification.notifyProfileSubmitted).toHaveBeenCalled();
+    expect(result.profileStatus).toBe(ProfileReviewStatus.AWAITING_VIDEO);
+    expect(result.nextStep).toBe('VIDEO_SUBMISSION');
+    expect(mockNotification.notifyProfileSubmitted).not.toHaveBeenCalled();
+    expect(mockMeCache.invalidate).toHaveBeenCalledWith('user-1');
+  });
+
+  it('FULL reject sets REJECTED, clears video key, and deletes R2 object', async () => {
+    mockPrisma.beauticianProfile.findUnique
+      .mockResolvedValueOnce({
+        ...mockProfile,
+        profileStatus: ProfileReviewStatus.PENDING_REVIEW,
+        kycVideoKey: 'kyc-videos/user-1/old.mp4',
+      })
+      .mockResolvedValueOnce({
+        ...mockProfile,
+        userId: 'user-1',
+        profileStatus: ProfileReviewStatus.REJECTED,
+        kycVideoKey: null,
+        user: {
+          id: 'user-1',
+          email: 'ada@example.com',
+          firstName: 'Ada',
+          lastName: 'Okafor',
+        },
+      });
+    mockPrisma.beauticianProfile.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.rejectProfile(
+      'profile-1',
+      'admin-1',
+      'Incomplete portfolio',
+    );
+
+    expect(result.profileStatus).toBe(ProfileReviewStatus.REJECTED);
+    expect(mockPrisma.beauticianProfile.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          profileStatus: ProfileReviewStatus.REJECTED,
+          kycVideoKey: null,
+        }),
+      }),
+    );
+    expect(mockR2.deleteObject).toHaveBeenCalledWith(
+      'kyc-videos/user-1/old.mp4',
+    );
+    expect(mockNotification.notifyProfileReviewResult).toHaveBeenCalledWith(
+      expect.anything(),
+      'REJECTED',
+      'Incomplete portfolio',
+    );
+  });
+
+  it('VIDEO_ONLY reject sets AWAITING_VIDEO and deletes R2 object', async () => {
+    mockPrisma.beauticianProfile.findUnique
+      .mockResolvedValueOnce({
+        ...mockProfile,
+        profileStatus: ProfileReviewStatus.PENDING_REVIEW,
+        kycVideoKey: 'kyc-videos/user-1/old.mp4',
+      })
+      .mockResolvedValueOnce({
+        ...mockProfile,
+        userId: 'user-1',
+        profileStatus: ProfileReviewStatus.AWAITING_VIDEO,
+        kycVideoKey: null,
+        user: {
+          id: 'user-1',
+          email: 'ada@example.com',
+          firstName: 'Ada',
+          lastName: 'Okafor',
+        },
+      });
+    mockPrisma.beauticianProfile.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.rejectProfile(
+      'profile-1',
+      'admin-1',
+      'Video too dark',
+      undefined,
+      ProfileRejectScope.VIDEO_ONLY,
+    );
+
+    expect(result.profileStatus).toBe(ProfileReviewStatus.AWAITING_VIDEO);
+    expect(mockPrisma.beauticianProfile.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          profileStatus: ProfileReviewStatus.AWAITING_VIDEO,
+          kycVideoKey: null,
+        }),
+      }),
+    );
+    expect(mockR2.deleteObject).toHaveBeenCalledWith(
+      'kyc-videos/user-1/old.mp4',
+    );
+    expect(mockNotification.notifyProfileReviewResult).toHaveBeenCalledWith(
+      expect.anything(),
+      'VIDEO_ONLY',
+      'Video too dark',
+    );
+    expect(mockMeCache.invalidate).toHaveBeenCalledWith('user-1');
   });
 });

@@ -7,6 +7,7 @@ export type BeauticianMeStableCache = {
   id: string;
   bio: string | null;
   profilePhotoUrl: string | null;
+  portfolioUrl: string | null;
   specialties: string[];
   yearsOfExperience: number | null;
   maxTravelRadiusKm: number | null;

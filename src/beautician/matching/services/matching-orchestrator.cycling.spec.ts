@@ -54,6 +54,7 @@ describe('MatchingOrchestratorService cycling', () => {
     },
   };
 
+  // isOnJob optional for mocks if not set on all fixtures
   const candidateB = {
     userId: 'beautician-b',
     profileId: 'profile-b',
@@ -85,6 +86,9 @@ describe('MatchingOrchestratorService cycling', () => {
 
   const mockCandidateFinder = {
     getNextCandidate: jest.fn(async () => nextCandidate),
+    getTopCandidates: jest.fn(async ({ limit }: { limit: number }) =>
+      nextCandidate ? [nextCandidate].slice(0, limit) : [],
+    ),
   };
 
   const mockOfferExclusion = {
@@ -113,6 +117,8 @@ describe('MatchingOrchestratorService cycling', () => {
       return { id: `offer-${lastOffered}` };
     }),
   };
+
+  // concurrent default 1 in tests unless overridden
 
   const mockDispatchState = {
     transition: jest.fn(async () => ({ applied: true })),
@@ -176,6 +182,7 @@ describe('MatchingOrchestratorService cycling', () => {
           provide: OfferLifecycleService,
           useValue: {
             hasActiveOffers: jest.fn(async () => false),
+            countActiveOffers: jest.fn(async () => 0),
             expireOffer: jest.fn(),
             expireStaleOffersForBooking: jest.fn(async () => 0),
             cancelBeauticianPendingOffers: jest.fn(async () => []),
@@ -215,6 +222,7 @@ describe('MatchingOrchestratorService cycling', () => {
             getInterTierDelaySeconds: () => 15,
             getMaxRadiusKm: () => 20,
             isWakeExhaustedOnOnlineEnabled: () => false,
+            getConcurrentOffers: () => 1,
           },
         },
         { provide: CandidateFinderService, useValue: mockCandidateFinder },

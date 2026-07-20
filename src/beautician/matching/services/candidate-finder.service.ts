@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   AvailabilityStatus,
+  BookingStatus,
   KycStatus,
   ProfileReviewStatus,
 } from '@prisma/client';
@@ -10,7 +11,11 @@ import { CandidateEligibilityService } from './candidate-eligibility.service';
 import { CandidateMetricsService } from './candidate-metrics.service';
 import { CandidateScorerService } from './candidate-scorer.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
-import { pickNextCandidateInRotation } from '../utils/offer-rotation.util';
+import { MatchingConfigService } from './matching-config.service';
+import {
+  pickNextCandidateInRotation,
+  pickTopCandidatesInRotation,
+} from '../utils/offer-rotation.util';
 
 export interface MatchingCandidate {
   userId: string;
@@ -18,7 +23,16 @@ export interface MatchingCandidate {
   distanceKm: number;
   score: number;
   scoreSnapshot: Record<string, unknown>;
+  /** Free ONLINE candidates rank above near-complete ON_JOB. */
+  isOnJob: boolean;
 }
+
+/** Bookings where service time is underway (serviceStartedAt set on arrival verify). */
+const ON_JOB_ACTIVE_STATUSES: BookingStatus[] = [
+  BookingStatus.ARRIVED_VERIFIED,
+  BookingStatus.IN_PROGRESS,
+  BookingStatus.AWAITING_CUSTOMER_CONFIRM,
+];
 
 @Injectable()
 export class CandidateFinderService {
@@ -30,6 +44,7 @@ export class CandidateFinderService {
     private readonly metricsService: CandidateMetricsService,
     private readonly scorer: CandidateScorerService,
     private readonly locationIndex: BeauticianLocationIndexService,
+    private readonly matchingConfig: MatchingConfigService,
   ) {}
 
   async findRankedCandidates(params: {
@@ -41,6 +56,77 @@ export class CandidateFinderService {
     requiredServiceIds: string[];
     excludeBeauticianUserIds: string[];
   }): Promise<MatchingCandidate[]> {
+    const excludeSet = new Set(params.excludeBeauticianUserIds);
+    const now = new Date();
+    const tier = params.matchingAttempt ?? 1;
+
+    const freeCandidates = await this.findFreeOnlineCandidates(params, excludeSet, now, tier);
+    const freeUserIds = new Set(freeCandidates.map((c) => c.userId));
+
+    const onJobCandidates = await this.findNearCompleteOnJobCandidates(
+      params,
+      excludeSet,
+      freeUserIds,
+      now,
+      tier,
+    );
+
+    // Free (ONLINE) always before ON_JOB; within each group, higher score first
+    const ranked = [...freeCandidates, ...onJobCandidates];
+
+    if (!ranked.length) {
+      this.logger.warn(
+        `No matching beauticians found for booking ${params.bookingId}` +
+          (params.matchingAttempt
+            ? ` on attempt ${params.matchingAttempt} (${params.radiusKm}km)`
+            : ` within ${params.radiusKm}km`),
+      );
+    } else if (onJobCandidates.length) {
+      this.logger.debug(
+        `Booking ${params.bookingId}: ${freeCandidates.length} free + ${onJobCandidates.length} near-complete ON_JOB candidates`,
+      );
+    }
+
+    return ranked;
+  }
+
+  async getNextCandidate(
+    params: Parameters<CandidateFinderService['findRankedCandidates']>[0] & {
+      rotateAfterBeauticianUserId?: string | null;
+    },
+  ): Promise<MatchingCandidate | null> {
+    const { rotateAfterBeauticianUserId, ...rankedParams } = params;
+    const ranked = await this.findRankedCandidates(rankedParams);
+    return pickNextCandidateInRotation(ranked, rotateAfterBeauticianUserId);
+  }
+
+  /** Top N candidates for concurrent offers (same ranking / free-first priority). */
+  async getTopCandidates(
+    params: Parameters<CandidateFinderService['findRankedCandidates']>[0] & {
+      rotateAfterBeauticianUserId?: string | null;
+      limit: number;
+    },
+  ): Promise<MatchingCandidate[]> {
+    const { rotateAfterBeauticianUserId, limit, ...rankedParams } = params;
+    const ranked = await this.findRankedCandidates(rankedParams);
+    return pickTopCandidatesInRotation(
+      ranked,
+      rotateAfterBeauticianUserId,
+      limit,
+    );
+  }
+
+  private async findFreeOnlineCandidates(
+    params: {
+      customerLat: number;
+      customerLng: number;
+      radiusKm: number;
+      requiredServiceIds: string[];
+    },
+    excludeSet: Set<string>,
+    now: Date,
+    tier: number,
+  ): Promise<MatchingCandidate[]> {
     const geoHits = await this.locationIndex.searchNearby(
       params.customerLng,
       params.customerLat,
@@ -48,23 +134,144 @@ export class CandidateFinderService {
       50,
     );
 
-    const excludeSet = new Set(params.excludeBeauticianUserIds);
     const geoUserIds = geoHits
       .map((hit) => hit.userId)
       .filter((userId) => !excludeSet.has(userId));
 
     const profiles =
       geoUserIds.length > 0
-        ? await this.loadProfilesByUserIds(geoUserIds)
-        : await this.loadAllOnlineProfiles(params.excludeBeauticianUserIds);
+        ? await this.loadProfilesByUserIds(geoUserIds, [
+            AvailabilityStatus.ONLINE,
+          ])
+        : await this.loadProfilesByStatus(
+            [AvailabilityStatus.ONLINE],
+            [...excludeSet],
+          );
 
     const distanceByUserId = new Map(
       geoHits.map((hit) => [hit.userId, hit.distanceKm]),
     );
 
-    const now = new Date();
-    const tier = params.matchingAttempt ?? 1;
-    const eligibleProfiles = profiles.filter((profile) => {
+    return this.rankProfiles({
+      profiles,
+      distanceByUserId,
+      params,
+      now,
+      tier,
+      isOnJob: false,
+    });
+  }
+
+  private async findNearCompleteOnJobCandidates(
+    params: {
+      customerLat: number;
+      customerLng: number;
+      radiusKm: number;
+      requiredServiceIds: string[];
+    },
+    excludeSet: Set<string>,
+    freeUserIds: Set<string>,
+    now: Date,
+    tier: number,
+  ): Promise<MatchingCandidate[]> {
+    const profiles = await this.loadProfilesByStatus(
+      [AvailabilityStatus.ON_JOB],
+      [...excludeSet, ...freeUserIds],
+    );
+
+    if (!profiles.length) {
+      return [];
+    }
+
+    const userIds = profiles.map((p) => p.userId);
+    const activeJobs = await this.prisma.booking.findMany({
+      where: {
+        assignedBeauticianUserId: { in: userIds },
+        status: { in: ON_JOB_ACTIVE_STATUSES },
+        serviceStartedAt: { not: null },
+      },
+      select: {
+        assignedBeauticianUserId: true,
+        serviceStartedAt: true,
+        services: true,
+        status: true,
+        updatedAt: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const jobByBeautician = new Map<
+      string,
+      { serviceStartedAt: Date; services: unknown }
+    >();
+
+    for (const job of activeJobs) {
+      const uid = job.assignedBeauticianUserId;
+      if (!uid || jobByBeautician.has(uid) || !job.serviceStartedAt) {
+        continue;
+      }
+      jobByBeautician.set(uid, {
+        serviceStartedAt: job.serviceStartedAt,
+        services: job.services,
+      });
+    }
+
+    const eligibleOnJob = profiles.filter((profile) => {
+      const job = jobByBeautician.get(profile.userId);
+      if (!job) {
+        return false;
+      }
+      return this.eligibility.isOnJobNearServiceComplete(
+        job.serviceStartedAt,
+        job.services,
+        now,
+      );
+    });
+
+    if (!eligibleOnJob.length) {
+      return [];
+    }
+
+    const percent = this.matchingConfig.getOnJobOfferEligiblePercent();
+
+    return this.rankProfiles({
+      profiles: eligibleOnJob,
+      distanceByUserId: new Map(),
+      params,
+      now,
+      tier,
+      isOnJob: true,
+      scoreSnapshotExtra: {
+        isOnJob: true,
+        onJobEligiblePercent: percent,
+      },
+    });
+  }
+
+  private async rankProfiles(args: {
+    profiles: Array<{
+      id: string;
+      userId: string;
+      currentLat: unknown;
+      currentLng: unknown;
+      lastLocationUpdate: Date | null;
+      maxTravelRadiusKm: unknown;
+      ratingAverage: unknown;
+      assignedServices: Array<{ serviceId: string }>;
+    }>;
+    distanceByUserId: Map<string, number>;
+    params: {
+      customerLat: number;
+      customerLng: number;
+      radiusKm: number;
+      requiredServiceIds: string[];
+    };
+    now: Date;
+    tier: number;
+    isOnJob: boolean;
+    scoreSnapshotExtra?: Record<string, unknown>;
+  }): Promise<MatchingCandidate[]> {
+    const eligibleProfiles = args.profiles.filter((profile) => {
       const assignedServiceIds = profile.assignedServices.map(
         (item) => item.serviceId,
       );
@@ -72,15 +279,16 @@ export class CandidateFinderService {
       return (
         this.eligibility.coversAllServices(
           assignedServiceIds,
-          params.requiredServiceIds,
-        ) && this.eligibility.hasFreshLocation(profile.lastLocationUpdate, now)
+          args.params.requiredServiceIds,
+        ) &&
+        this.eligibility.hasFreshLocation(profile.lastLocationUpdate, args.now)
       );
     });
 
     const userIds = eligibleProfiles.map((profile) => profile.userId);
     const metricsByUser = await this.metricsService.loadMetrics(userIds);
 
-    const ranked = eligibleProfiles
+    return eligibleProfiles
       .map((profile) => {
         const lat = profile.currentLat ? Number(profile.currentLat) : null;
         const lng = profile.currentLng ? Number(profile.currentLng) : null;
@@ -90,12 +298,12 @@ export class CandidateFinderService {
         }
 
         const distanceKm =
-          distanceByUserId.get(profile.userId) ??
+          args.distanceByUserId.get(profile.userId) ??
           haversineKm(
             lat,
             lng,
-            params.customerLat,
-            params.customerLng,
+            args.params.customerLat,
+            args.params.customerLng,
           );
 
         const maxTravelRadiusKm = profile.maxTravelRadiusKm
@@ -103,7 +311,10 @@ export class CandidateFinderService {
           : null;
 
         if (
-          !this.eligibility.isWithinTierRadius(distanceKm, params.radiusKm) ||
+          !this.eligibility.isWithinTierRadius(
+            distanceKm,
+            args.params.radiusKm,
+          ) ||
           !this.eligibility.isWithinBeauticianTravelLimit(
             distanceKm,
             maxTravelRadiusKm,
@@ -121,7 +332,7 @@ export class CandidateFinderService {
           distanceKm,
           Number(profile.ratingAverage),
           metrics,
-          tier,
+          args.tier,
         );
 
         return {
@@ -129,35 +340,22 @@ export class CandidateFinderService {
           profileId: profile.id,
           distanceKm,
           score: scored.score,
-          scoreSnapshot: scored.snapshot,
+          isOnJob: args.isOnJob,
+          scoreSnapshot: {
+            ...scored.snapshot,
+            isOnJob: args.isOnJob,
+            ...args.scoreSnapshotExtra,
+          },
         };
       })
       .filter((item): item is NonNullable<typeof item> => item !== null)
       .sort((a, b) => b.score - a.score);
-
-    if (!ranked.length) {
-      this.logger.warn(
-        `No matching beauticians found for booking ${params.bookingId}` +
-          (params.matchingAttempt
-            ? ` on attempt ${params.matchingAttempt} (${params.radiusKm}km)`
-            : ` within ${params.radiusKm}km`),
-      );
-    }
-
-    return ranked;
   }
 
-  async getNextCandidate(
-    params: Parameters<CandidateFinderService['findRankedCandidates']>[0] & {
-      rotateAfterBeauticianUserId?: string | null;
-    },
-  ): Promise<MatchingCandidate | null> {
-    const { rotateAfterBeauticianUserId, ...rankedParams } = params;
-    const ranked = await this.findRankedCandidates(rankedParams);
-    return pickNextCandidateInRotation(ranked, rotateAfterBeauticianUserId);
-  }
-
-  private async loadProfilesByUserIds(userIds: string[]) {
+  private async loadProfilesByUserIds(
+    userIds: string[],
+    statuses: AvailabilityStatus[],
+  ) {
     return this.prisma.beauticianProfile.findMany({
       where: {
         userId: { in: userIds },
@@ -165,7 +363,7 @@ export class CandidateFinderService {
         dispatchSuspended: false,
         kycStatus: KycStatus.VERIFIED,
         profileStatus: ProfileReviewStatus.APPROVED,
-        availabilityStatus: AvailabilityStatus.ONLINE,
+        availabilityStatus: { in: statuses },
       },
       include: {
         assignedServices: { select: { serviceId: true } },
@@ -173,15 +371,22 @@ export class CandidateFinderService {
     });
   }
 
-  private async loadAllOnlineProfiles(excludeBeauticianUserIds: string[]) {
+  private async loadProfilesByStatus(
+    statuses: AvailabilityStatus[],
+    excludeBeauticianUserIds: string[],
+  ) {
     return this.prisma.beauticianProfile.findMany({
       where: {
         isActive: true,
         dispatchSuspended: false,
         kycStatus: KycStatus.VERIFIED,
         profileStatus: ProfileReviewStatus.APPROVED,
-        availabilityStatus: AvailabilityStatus.ONLINE,
-        userId: { notIn: excludeBeauticianUserIds },
+        availabilityStatus: { in: statuses },
+        currentLat: { not: null },
+        currentLng: { not: null },
+        ...(excludeBeauticianUserIds.length
+          ? { userId: { notIn: excludeBeauticianUserIds } }
+          : {}),
       },
       include: {
         assignedServices: { select: { serviceId: true } },

@@ -393,11 +393,15 @@ export class MatchingOrchestratorService {
       return;
     }
 
-    // Still useful as a fast path; OfferManager also enforces one active offer
-    // atomically inside a transaction (TOCTOU-safe under lock + txn).
-    if (await this.offerLifecycle.hasActiveOffers(bookingId)) {
+    const maxConcurrent = this.matchingConfig.getConcurrentOffers();
+    const activeOfferCount =
+      await this.offerLifecycle.countActiveOffers(bookingId);
+    const openSlots = maxConcurrent - activeOfferCount;
+
+    // Cap is full — wait for accept / decline / expire (OfferManager also enforces).
+    if (openSlots <= 0) {
       this.logger.log(
-        `Skipping continueMatching for ${bookingId} — active offer pending`,
+        `Skipping continueMatching for ${bookingId} — ${activeOfferCount}/${maxConcurrent} concurrent offers active`,
       );
       return;
     }
@@ -429,7 +433,7 @@ export class MatchingOrchestratorService {
 
     const radiusKm = this.matchingConfig.resolveRadiusKm(attempt);
     this.logger.log(
-      `Matching booking ${bookingId} attempt ${attempt}/${maxAttempts} within ${radiusKm}km`,
+      `Matching booking ${bookingId} attempt ${attempt}/${maxAttempts} within ${radiusKm}km (slots ${openSlots}/${maxConcurrent})`,
     );
 
     const searchContext = {
@@ -440,7 +444,7 @@ export class MatchingOrchestratorService {
       tierRadiusKm: radiusKm,
     };
 
-    const candidate = await this.candidateFinder.getNextCandidate({
+    const candidates = await this.candidateFinder.getTopCandidates({
       bookingId,
       matchingAttempt: attempt,
       customerLat: coordinates.lat,
@@ -449,6 +453,7 @@ export class MatchingOrchestratorService {
       requiredServiceIds,
       excludeBeauticianUserIds: excludeIds,
       rotateAfterBeauticianUserId,
+      limit: openSlots,
     });
 
     await this.dispatchState.recordEvent(
@@ -457,13 +462,23 @@ export class MatchingOrchestratorService {
       {
         tier: attempt,
         radiusKm,
-        candidateCount: candidate ? 1 : 0,
+        candidateCount: candidates.length,
+        concurrentOffers: maxConcurrent,
+        openSlots,
         excludedCount: excludeIds.length,
         rotateAfterBeauticianUserId,
       },
     );
 
-    if (!candidate) {
+    if (!candidates.length) {
+      // Still have live offers → wait; only escalate/exhaust when none remain.
+      if (activeOfferCount > 0) {
+        this.logger.log(
+          `No fill candidates for ${bookingId}; ${activeOfferCount} offer(s) still active`,
+        );
+        return;
+      }
+
       await this.matchingAttempts.handleNoCandidate(
         bookingId,
         attempt,
@@ -480,13 +495,17 @@ export class MatchingOrchestratorService {
       requiredServiceIds,
     });
 
-    await this.offerManager.createNextOffer({
-      bookingId,
-      matchingAttempt: attempt,
-      candidate,
-      estEarnings,
-      offerTtlSeconds: this.matchingConfig.getOfferTtlSeconds(attempt),
-    });
+    const offerTtlSeconds = this.matchingConfig.getOfferTtlSeconds(attempt);
+
+    for (const candidate of candidates) {
+      await this.offerManager.createNextOffer({
+        bookingId,
+        matchingAttempt: attempt,
+        candidate,
+        estEarnings,
+        offerTtlSeconds,
+      });
+    }
   }
 
   private async loadMatchableBooking(bookingId: string) {
