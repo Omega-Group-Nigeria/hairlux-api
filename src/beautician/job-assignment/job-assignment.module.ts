@@ -15,6 +15,8 @@ import { MatchingModule } from '../matching/matching.module';
 import { BullModule } from '@nestjs/bull';
 import { HOME_SERVICE_MATCHING_QUEUE } from '../home-service-booking/home-service-booking.service';
 import { CommsModule } from '../../comms/comms.module';
+import { BookingNotificationsModule } from '../../notifications/booking/booking-notifications.module';
+import { JobNotificationsModule } from '../../notifications/job/job-notifications.module';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { CommsModule } from '../../comms/comms.module';
     PayoutModule,
     BullModule.registerQueue({ name: HOME_SERVICE_MATCHING_QUEUE }),
     CommsModule,
+    BookingNotificationsModule,
+    JobNotificationsModule,
   ],
   controllers: [BeauticianJobsController],
   providers: [

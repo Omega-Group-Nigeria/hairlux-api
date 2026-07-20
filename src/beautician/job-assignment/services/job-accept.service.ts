@@ -24,6 +24,8 @@ import { DispatchStateService } from '../../matching/services/dispatch-state.ser
 import { DISPATCH_EVENT_TYPES } from '../../matching/constants/dispatch-event.constants';
 import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
+import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 @Injectable()
 export class JobAcceptService {
@@ -38,6 +40,8 @@ export class JobAcceptService {
     private readonly dispatchState: DispatchStateService,
     private readonly locationIndex: BeauticianLocationIndexService,
     private readonly commsSessionService: CommsSessionService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
+    private readonly jobPushNotifier: JobPushNotifier,
     @InjectQueue(HOME_SERVICE_MATCHING_QUEUE)
     private readonly matchingQueue: Queue,
   ) {}
@@ -98,6 +102,17 @@ export class JobAcceptService {
       }
 
       const now = new Date();
+
+      // Concurrent offer holders who will lose when this accept commits.
+      const concurrentLosers = await this.prisma.jobOffer.findMany({
+        where: {
+          bookingId,
+          id: { not: offer.id },
+          status: JobOfferStatus.OFFERED,
+          expiresAt: { gt: now },
+        },
+        select: { beauticianUserId: true },
+      });
 
       const updatedBooking = await this.prisma.$transaction(async (tx) => {
         const acceptedOffer = await tx.jobOffer.updateMany({
@@ -184,6 +199,21 @@ export class JobAcceptService {
           assignedBeauticianUserId: beauticianUserId,
         },
       );
+
+      if (bookingForResponse.userId) {
+        this.bookingPushNotifier.notifyBeauticianAssigned({
+          customerUserId: bookingForResponse.userId,
+          bookingId,
+          beauticianUserId,
+        });
+      }
+
+      for (const loser of concurrentLosers) {
+        this.jobPushNotifier.notifyOfferTaken({
+          beauticianUserId: loser.beauticianUserId,
+          bookingId,
+        });
+      }
 
       const [settings, serviceCommissionRates] = await Promise.all([
         this.settingsService.getSettings(),

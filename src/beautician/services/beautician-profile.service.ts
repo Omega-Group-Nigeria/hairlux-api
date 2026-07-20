@@ -13,6 +13,7 @@ import { R2Service } from '../../storage/r2.service';
 import { UpdateBeauticianProfileDto } from '../dto/update-beautician-profile.dto';
 import { ProfileRejectScope } from '../dto/admin-beautician.dto';
 import { BeauticianNotificationService } from '../notification/services/beautician-notification.service';
+import { OnboardingPushNotifier } from '../../notifications/onboarding/onboarding-push.notifier';
 import { serializeBeauticianProfile } from '../utils/beautician-profile.utils';
 import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
@@ -26,6 +27,7 @@ export class BeauticianProfileService {
     private readonly notificationService: BeauticianNotificationService,
     private readonly meCache: BeauticianMeCacheService,
     private readonly r2: R2Service,
+    private readonly onboardingPushNotifier: OnboardingPushNotifier,
   ) {}
 
   async updateProfile(userId: string, dto: UpdateBeauticianProfileDto) {
@@ -221,7 +223,12 @@ export class BeauticianProfileService {
       where: { id: profileId },
       include: {
         user: {
-          select: { email: true, firstName: true, lastName: true },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+          },
         },
       },
     });
@@ -235,6 +242,11 @@ export class BeauticianProfileService {
       'APPROVED',
       notes,
     );
+    this.onboardingPushNotifier.notifyProfileReview({
+      beauticianUserId: updated.userId,
+      outcome: 'APPROVED',
+      notes,
+    });
 
     return serializeBeauticianProfile(updated);
   }
@@ -308,11 +320,17 @@ export class BeauticianProfileService {
 
     await this.meCache.invalidate(updated.userId);
 
+    const reviewOutcome = isVideoOnly ? 'VIDEO_ONLY' : 'REJECTED';
     await this.notificationService.notifyProfileReviewResult(
       updated.user,
-      isVideoOnly ? 'VIDEO_ONLY' : 'REJECTED',
+      reviewOutcome,
       combinedNotes,
     );
+    this.onboardingPushNotifier.notifyProfileReview({
+      beauticianUserId: updated.userId,
+      outcome: reviewOutcome,
+      notes: combinedNotes,
+    });
 
     return serializeBeauticianProfile(updated);
   }

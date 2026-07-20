@@ -24,6 +24,7 @@ import { AdminHomeServiceAnalyticsService } from './admin/services/admin-home-se
 import { ActiveHomeServiceBookingsService } from './admin/services/active-home-service-bookings.service';
 import { KycModule } from './kyc/kyc.module';
 import { BeauticianNotificationModule } from './notification/notification.module';
+import { OnboardingNotificationsModule } from '../notifications/onboarding/onboarding-notifications.module';
 import { FcmModule } from './fcm/fcm.module';
 import { HomeServiceBookingModule } from './home-service-booking/home-service-booking.module';
 import { HomeServiceLifecycleModule } from './home-service-booking/home-service-lifecycle.module';
@@ -45,6 +46,7 @@ import { BeauticianMeCacheService } from './services/beautician-me-cache.service
     StorageModule,
     FcmModule,
     BeauticianNotificationModule,
+    OnboardingNotificationsModule,
     KycModule,
     HomeServiceBookingModule,
     HomeServiceLifecycleModule,

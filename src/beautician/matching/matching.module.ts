@@ -39,6 +39,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
 import { CommsModule } from '../../comms/comms.module';
 import { PayoutModule } from '../payout/payout.module';
 import { HomeServiceSharedModule } from '../home-service-booking/home-service-shared.module';
+import { JobNotificationsModule } from '../../notifications/job/job-notifications.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { HomeServiceSharedModule } from '../home-service-booking/home-service-sh
     CommsModule,
     PayoutModule,
     HomeServiceSharedModule,
+    JobNotificationsModule,
   ],
   controllers: [AdminDispatchSettingsController],
   providers: [

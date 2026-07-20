@@ -5,7 +5,6 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { BookingStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
 import { BookingParticipantService } from '../../home-service-booking/services/booking-participant.service';
 import { HomeServiceStatusService } from '../../home-service-booking/home-service-status.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
@@ -13,6 +12,7 @@ import { ArrivalPinService } from './arrival-pin.service';
 import { ArrivalQrTokenService } from './arrival-qr-token.service';
 import { VerifyArrivalService } from './verify-arrival.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 describe('VerifyArrivalService', () => {
   let service: VerifyArrivalService;
@@ -88,7 +88,7 @@ describe('VerifyArrivalService', () => {
     })),
   };
 
-  const mockNotification = {
+  const mockJobPush = {
     notifyArrivalVerified: jest.fn(),
   };
 
@@ -107,7 +107,7 @@ describe('VerifyArrivalService', () => {
         { provide: ArrivalPinService, useValue: mockPinService },
         { provide: ArrivalQrTokenService, useValue: mockQrTokenService },
         { provide: HomeServiceSettingsService, useValue: mockSettings },
-        { provide: BeauticianNotificationService, useValue: mockNotification },
+        { provide: JobPushNotifier, useValue: mockJobPush },
         {
           provide: CommsRealtimeService,
           useValue: { emitBookingStatus: jest.fn().mockResolvedValue(undefined) },

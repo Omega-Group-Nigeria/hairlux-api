@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { RedisService } from '../../../redis/redis.service';
+import { WalletPushNotifier } from '../../../notifications/wallet/wallet-push.notifier';
 
 @Injectable()
 export class PayoutTransferSettlementService {
@@ -14,6 +15,7 @@ export class PayoutTransferSettlementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly walletPushNotifier: WalletPushNotifier,
   ) {}
 
   async completeTransfer(
@@ -81,6 +83,13 @@ export class PayoutTransferSettlementService {
 
     void this.redis.del(`wallet:balance:${payoutRequest.userId}`);
 
+    this.walletPushNotifier.notifyPayoutCompleted({
+      userId: payoutRequest.userId,
+      amount,
+      reference,
+      payoutRequestId: payoutRequest.id,
+    });
+
     this.logger.log(`Transfer payout completed: ${reference}, ₦${amount}`);
     return { status: 'success', reference, amount };
   }
@@ -90,6 +99,11 @@ export class PayoutTransferSettlementService {
     reference: string,
     reason: string,
   ) {
+    const existing = await this.prisma.payoutRequest.findUnique({
+      where: { id: payoutRequestId },
+      select: { userId: true, amount: true, status: true },
+    });
+
     await this.prisma.payoutRequest.update({
       where: { id: payoutRequestId },
       data: {
@@ -97,6 +111,20 @@ export class PayoutTransferSettlementService {
         rejectionReason: reason,
       },
     });
+
+    if (
+      existing &&
+      existing.status !== PayoutRequestStatus.REJECTED &&
+      existing.status !== PayoutRequestStatus.COMPLETED
+    ) {
+      this.walletPushNotifier.notifyPayoutFailed({
+        userId: existing.userId,
+        amount: Number(existing.amount),
+        reference,
+        reason,
+        payoutRequestId,
+      });
+    }
 
     this.logger.warn(`Transfer payout rejected: ${reference} — ${reason}`);
     return { status: 'rejected', reference, reason };

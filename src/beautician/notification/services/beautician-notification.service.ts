@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { MailService } from '../../../mail/mail.service';
-import { PushNotificationService } from '../../fcm/push-notification.service';
 
 interface BeauticianUserContact {
   id?: string;
@@ -9,23 +8,15 @@ interface BeauticianUserContact {
   lastName?: string;
 }
 
+/**
+ * Beautician email notifications.
+ * Critical FCM for onboarding/jobs lives on domain notifiers under src/notifications.
+ */
 @Injectable()
 export class BeauticianNotificationService {
-  constructor(
-    private readonly mailService: MailService,
-    private readonly pushService: PushNotificationService,
-  ) {}
+  constructor(private readonly mailService: MailService) {}
 
-  private async push(
-    user: BeauticianUserContact,
-    title: string,
-    body: string,
-    data?: Record<string, string>,
-  ) {
-    if (!user.id) return;
-    void this.pushService.sendToUser(user.id, { title, body, data });
-  }
-
+  /** Email only — push is OnboardingPushNotifier (`onboarding.kyc_result`). */
   async notifyKycResult(
     user: BeauticianUserContact,
     outcome: 'VERIFIED' | 'REJECTED' | 'NEEDS_REVIEW',
@@ -37,28 +28,22 @@ export class BeauticianNotificationService {
       outcome,
       reason,
     );
-    await this.push(
-      user,
-      'KYC update',
-      `Your identity verification status is ${outcome.replace('_', ' ').toLowerCase()}.`,
-      { type: 'kyc_result', outcome },
-    );
   }
 
+  /**
+   * Email only — profile submitted is not a critical v1 push (plan §3.5).
+   */
   async notifyProfileSubmitted(user: BeauticianUserContact) {
     await this.mailService.sendBeauticianProfileReviewEmail(
       user.email,
       user.firstName,
       'SUBMITTED',
     );
-    await this.push(
-      user,
-      'Profile submitted',
-      'Your professional profile is under review.',
-      { type: 'profile_submitted' },
-    );
   }
 
+  /**
+   * Email only — push is OnboardingPushNotifier (`onboarding.profile_review`).
+   */
   async notifyProfileReviewResult(
     user: BeauticianUserContact,
     outcome: 'APPROVED' | 'REJECTED' | 'VIDEO_ONLY',
@@ -70,25 +55,9 @@ export class BeauticianNotificationService {
       outcome,
       notes,
     );
-
-    if (outcome === 'VIDEO_ONLY') {
-      await this.push(
-        user,
-        'Video re-upload required',
-        'Your intro video was not accepted. Please record and submit a new video.',
-        { type: 'profile_review', outcome },
-      );
-      return;
-    }
-
-    await this.push(
-      user,
-      'Profile review',
-      `Your profile was ${outcome.toLowerCase()}.`,
-      { type: 'profile_review', outcome },
-    );
   }
 
+  /** Email only — job offer FCM is JobPushNotifier (`job.offer`). */
   async notifyNewJobOffer(
     user: BeauticianUserContact,
     bookingId: string,
@@ -100,14 +69,11 @@ export class BeauticianNotificationService {
       bookingId,
       estEarnings,
     );
-    await this.push(
-      user,
-      'New job offer',
-      `You have a new home-service job. Est. earnings ₦${estEarnings.toLocaleString()}.`,
-      { type: 'job_offer', bookingId },
-    );
   }
 
+  /**
+   * Email only — customer also gets BookingPushNotifier `booking.arrived`.
+   */
   async notifyArrivalVerificationNeeded(
     user: BeauticianUserContact,
     bookingId: string,
@@ -117,38 +83,29 @@ export class BeauticianNotificationService {
       user.firstName,
       bookingId,
     );
-    await this.push(
-      user,
-      'Verify arrival',
-      'Your beautician has arrived — please verify their PIN.',
-      { type: 'arrival_verify', bookingId },
-    );
   }
 
+  /**
+   * @deprecated Prefer JobPushNotifier.notifyArrivalVerified.
+   */
   async notifyArrivalVerified(
-    user: BeauticianUserContact,
-    bookingId: string,
+    _user: BeauticianUserContact,
+    _bookingId: string,
   ) {
-    await this.push(
-      user,
-      'Arrival confirmed',
-      'The customer verified your arrival. You can start the service.',
-      { type: 'arrival_verified', bookingId },
-    );
+    // Push moved to JobPushNotifier.
   }
 
+  /**
+   * @deprecated Prefer JobPushNotifier.notifyCompletionRequested.
+   */
   async notifyServiceAwaitingConfirmation(
-    user: BeauticianUserContact,
-    bookingId: string,
+    _user: BeauticianUserContact,
+    _bookingId: string,
   ) {
-    await this.push(
-      user,
-      'Service complete',
-      'Please confirm service completion.',
-      { type: 'awaiting_confirmation', bookingId },
-    );
+    // Push moved to JobPushNotifier.
   }
 
+  /** Email only — job completed FCM is JobPushNotifier (`job.completed`). */
   async notifyServiceCompleted(
     user: BeauticianUserContact,
     bookingId: string,
@@ -159,12 +116,6 @@ export class BeauticianNotificationService {
       user.firstName,
       bookingId,
       rating,
-    );
-    await this.push(
-      user,
-      'Job completed',
-      `Booking completed. Customer rating: ${rating}/5.`,
-      { type: 'service_completed', bookingId },
     );
   }
 }

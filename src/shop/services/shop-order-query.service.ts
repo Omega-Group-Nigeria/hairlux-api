@@ -21,12 +21,14 @@ import {
   normalizeShopOrderItems,
 } from '../utils/shop.utils';
 import { invalidateShopCatalogCache } from '../utils/shop-cache.utils';
+import { ShopPushNotifier } from '../../notifications/shop/shop-push.notifier';
 
 @Injectable()
 export class ShopOrderQueryService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
+    private shopPushNotifier: ShopPushNotifier,
   ) {}
 
   private buildDateFilter(startDate?: string, endDate?: string) {
@@ -273,6 +275,31 @@ export class ShopOrderQueryService {
       void invalidateShopCatalogCache(this.redis);
     }
 
+    this.notifyStatusPush(order.userId, order.id, order.orderCode, dto.status);
+
     return formatAdminShopOrderResponse(updated, updated.user);
+  }
+
+  private notifyStatusPush(
+    userId: string,
+    orderId: string,
+    orderCode: string,
+    status: ShopOrderStatus,
+  ): void {
+    const payload = { userId, orderId, orderCode };
+    switch (status) {
+      case ShopOrderStatus.SHIPPED:
+        this.shopPushNotifier.notifyShipped(payload);
+        break;
+      case ShopOrderStatus.DELIVERED:
+        this.shopPushNotifier.notifyDelivered(payload);
+        break;
+      case ShopOrderStatus.CANCELLED:
+        this.shopPushNotifier.notifyCancelled(payload);
+        break;
+      default:
+        // CONFIRMED / PROCESSING — no critical push
+        break;
+    }
   }
 }

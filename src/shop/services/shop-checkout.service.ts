@@ -26,6 +26,7 @@ import { invalidateShopCatalogCache } from '../utils/shop-cache.utils';
 import { DeliveryPricingService } from './delivery-pricing.service';
 import { ProductCatalogService } from './product-catalog.service';
 import { ShopOrderCodeService } from './shop-order-code.service';
+import { ShopPushNotifier } from '../../notifications/shop/shop-push.notifier';
 
 @Injectable()
 export class ShopCheckoutService {
@@ -37,6 +38,7 @@ export class ShopCheckoutService {
     private mailService: MailService,
     private redis: RedisService,
     private shopOrderCodeService: ShopOrderCodeService,
+    private shopPushNotifier: ShopPushNotifier,
   ) {}
 
   private normalizeIdempotencyKey(value: unknown): string | null {
@@ -231,6 +233,12 @@ export class ShopCheckoutService {
           totalAmount: context.totalAmount,
         },
       );
+
+      this.shopPushNotifier.notifyPlaced({
+        userId,
+        orderId: order.id,
+        orderCode: order.orderCode,
+      });
 
       return {
         order: formatShopOrderResponse(order),

@@ -15,6 +15,7 @@ import { MatchingCandidate } from './candidate-finder.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
 import { MatchingQueueService } from './matching-queue.service';
 import { MatchingConfigService } from './matching-config.service';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 @Injectable()
 export class OfferManagerService {
@@ -28,6 +29,7 @@ export class OfferManagerService {
     private readonly realtimePublisher: RealtimePublisherService,
     private readonly locationIndex: BeauticianLocationIndexService,
     private readonly matchingConfig: MatchingConfigService,
+    private readonly jobPushNotifier: JobPushNotifier,
   ) {}
 
   async createNextOffer(params: {
@@ -145,6 +147,8 @@ export class OfferManagerService {
       delayMs: params.offerTtlSeconds * 1000,
     });
 
+    const estEarningsNum = Number(offer.estEarningsAtOffer ?? 0);
+
     await this.notificationService.notifyNewJobOffer(
       {
         id: offer.beautician.id,
@@ -153,13 +157,20 @@ export class OfferManagerService {
         lastName: offer.beautician.lastName ?? '',
       },
       params.bookingId,
-      Number(offer.estEarningsAtOffer ?? 0),
+      estEarningsNum,
     );
+
+    this.jobPushNotifier.notifyOffer({
+      beauticianUserId: offer.beauticianUserId,
+      bookingId: params.bookingId,
+      offerId: offer.id,
+      estEarnings: estEarningsNum,
+    });
 
     this.realtimePublisher.emitJobOffer(offer.beauticianUserId, {
       offerId: offer.id,
       bookingId: params.bookingId,
-      estEarnings: Number(offer.estEarningsAtOffer ?? 0),
+      estEarnings: estEarningsNum,
       expiresAt: offer.expiresAt.toISOString(),
       distanceKm: offer.distanceKmAtOffer
         ? Number(offer.distanceKmAtOffer)

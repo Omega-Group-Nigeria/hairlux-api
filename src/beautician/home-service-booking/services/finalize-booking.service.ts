@@ -6,6 +6,8 @@ import { BookingParticipantService } from './booking-participant.service';
 import { CreditServiceEarningsService } from '../../payout/services/credit-service-earnings.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
+import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 @Injectable()
 export class FinalizeBookingService {
@@ -17,6 +19,8 @@ export class FinalizeBookingService {
     private readonly creditEarningsService: CreditServiceEarningsService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly commsSessionService: CommsSessionService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
+    private readonly jobPushNotifier: JobPushNotifier,
   ) {}
 
   async finalizeIfAwaitingConfirmation(bookingId: string) {
@@ -53,12 +57,22 @@ export class FinalizeBookingService {
         bookingId,
         BookingStatus.COMPLETED,
       );
+
+      this.jobPushNotifier.notifyCompleted({
+        beauticianUserId: booking.assignedBeauticianUserId,
+        bookingId,
+      });
     }
 
     void this.commsSessionService.closeForBookingSafely(
       bookingId,
       BookingCommsCloseReason.AUTO_FINALIZED,
     );
+
+    this.bookingPushNotifier.notifyCompleted({
+      customerUserId: booking.userId,
+      bookingId,
+    });
 
     this.logger.log(`Auto-finalized booking ${bookingId}`);
     return {

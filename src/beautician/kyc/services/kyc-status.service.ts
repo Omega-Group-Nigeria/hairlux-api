@@ -6,6 +6,7 @@ import {
 import { KycStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
+import { OnboardingPushNotifier } from '../../../notifications/onboarding/onboarding-push.notifier';
 import { serializeBeauticianProfile } from '../../utils/beautician-profile.utils';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class KycStatusService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: BeauticianNotificationService,
+    private readonly onboardingPushNotifier: OnboardingPushNotifier,
   ) {}
 
   async getStatus(userId: string) {
@@ -61,6 +63,10 @@ export class KycStatusService {
     });
 
     await this.notificationService.notifyKycResult(updated.user, 'VERIFIED');
+    this.onboardingPushNotifier.notifyKycResult({
+      beauticianUserId: updated.user.id,
+      outcome: 'VERIFIED',
+    });
 
     return serializeBeauticianProfile(updated);
   }
@@ -86,6 +92,11 @@ export class KycStatusService {
       'REJECTED',
       reason,
     );
+    this.onboardingPushNotifier.notifyKycResult({
+      beauticianUserId: updated.user.id,
+      outcome: 'REJECTED',
+      reason,
+    });
 
     return serializeBeauticianProfile(updated);
   }
@@ -138,14 +149,18 @@ export class KycStatusService {
       mappedStatus === KycStatus.REJECTED ||
       mappedStatus === KycStatus.NEEDS_REVIEW
     ) {
-      await this.notificationService.notifyKycResult(
-        updated.user,
+      const outcome =
         mappedStatus === KycStatus.VERIFIED
           ? 'VERIFIED'
           : mappedStatus === KycStatus.REJECTED
             ? 'REJECTED'
-            : 'NEEDS_REVIEW',
-      );
+            : 'NEEDS_REVIEW';
+
+      await this.notificationService.notifyKycResult(updated.user, outcome);
+      this.onboardingPushNotifier.notifyKycResult({
+        beauticianUserId: updated.user.id,
+        outcome,
+      });
     }
 
     return updated;

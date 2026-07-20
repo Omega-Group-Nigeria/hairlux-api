@@ -10,6 +10,7 @@ import { HomeServiceSettingsService } from '../../services/home-service-settings
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class JobArrivedService {
@@ -21,6 +22,7 @@ export class JobArrivedService {
     private readonly settingsService: HomeServiceSettingsService,
     private readonly notificationService: BeauticianNotificationService,
     private readonly commsRealtime: CommsRealtimeService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   async markArrived(
@@ -100,11 +102,16 @@ export class JobArrivedService {
     // Side effects: do not block the HTTP response.
     void this.notificationService.notifyArrivalVerificationNeeded(
       {
+        id: booking.user.id,
         email: booking.user.email,
         firstName: booking.user.firstName,
       },
       bookingId,
     );
+    this.bookingPushNotifier.notifyArrived({
+      customerUserId: booking.userId,
+      bookingId,
+    });
     void this.commsRealtime.emitBookingStatus(
       bookingId,
       BookingStatus.ARRIVED,

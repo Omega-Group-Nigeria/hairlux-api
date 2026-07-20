@@ -5,6 +5,7 @@ import { formatBookingResponse } from '../../../booking/utils/booking.utils';
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class JobEnRouteService {
@@ -13,6 +14,7 @@ export class JobEnRouteService {
     private readonly participantService: BookingParticipantService,
     private readonly statusService: HomeServiceStatusService,
     private readonly commsRealtime: CommsRealtimeService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   async markEnRoute(bookingId: string, beauticianUserId: string) {
@@ -38,6 +40,11 @@ export class JobEnRouteService {
       bookingId,
       BookingStatus.EN_ROUTE,
     );
+
+    this.bookingPushNotifier.notifyEnRoute({
+      customerUserId: booking.userId,
+      bookingId,
+    });
 
     return { booking: formatBookingResponse(updated) };
   }

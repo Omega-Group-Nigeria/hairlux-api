@@ -3,6 +3,7 @@ import { KycStatus } from '@prisma/client';
 import { KycStatusService } from './kyc-status.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
+import { OnboardingPushNotifier } from '../../../notifications/onboarding/onboarding-push.notifier';
 
 describe('KycStatusService', () => {
   let service: KycStatusService;
@@ -19,6 +20,7 @@ describe('KycStatusService', () => {
   };
 
   const mockNotification = { notifyKycResult: jest.fn() };
+  const mockOnboardingPush = { notifyKycResult: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -28,6 +30,7 @@ describe('KycStatusService', () => {
         KycStatusService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: BeauticianNotificationService, useValue: mockNotification },
+        { provide: OnboardingPushNotifier, useValue: mockOnboardingPush },
       ],
     }).compile();
 
@@ -72,6 +75,10 @@ describe('KycStatusService', () => {
       expect.any(Object),
       'VERIFIED',
     );
+    expect(mockOnboardingPush.notifyKycResult).toHaveBeenCalledWith({
+      beauticianUserId: 'user-1',
+      outcome: 'VERIFIED',
+    });
   });
 
   it('maps QoreID workflow completion payloads to VERIFIED', async () => {
@@ -124,6 +131,10 @@ describe('KycStatusService', () => {
       expect.any(Object),
       'VERIFIED',
     );
+    expect(mockOnboardingPush.notifyKycResult).toHaveBeenCalledWith({
+      beauticianUserId: userId,
+      outcome: 'VERIFIED',
+    });
   });
 
   it('resolves beauticians when QoreID sends userId as customerReference', async () => {
@@ -313,5 +324,6 @@ describe('KycStatusService', () => {
     expect(result).toBeNull();
     expect(mockPrisma.beauticianProfile.update).not.toHaveBeenCalled();
     expect(mockNotification.notifyKycResult).not.toHaveBeenCalled();
+    expect(mockOnboardingPush.notifyKycResult).not.toHaveBeenCalled();
   });
 });

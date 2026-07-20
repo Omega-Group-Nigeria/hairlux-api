@@ -20,6 +20,7 @@ import { TrackingModule } from '../beautician/tracking/tracking.module';
 import { MatchingModule } from '../beautician/matching/matching.module';
 import { BookingMatchingService } from './services/booking-matching.service';
 import { CommsModule } from '../comms/comms.module';
+import { BookingNotificationsModule } from '../notifications/booking/booking-notifications.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { CommsModule } from '../comms/comms.module';
     TrackingModule,
     MatchingModule,
     CommsModule,
+    BookingNotificationsModule,
   ],
   controllers: [BookingController, AdminBookingController],
   providers: [

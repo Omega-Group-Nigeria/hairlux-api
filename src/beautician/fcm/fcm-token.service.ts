@@ -39,4 +39,10 @@ export class FcmTokenService {
       select: { token: true, platform: true },
     });
   }
+
+  async removeToken(userId: string, token: string) {
+    await this.prisma.fcmToken.deleteMany({
+      where: { userId, token },
+    });
+  }
 }

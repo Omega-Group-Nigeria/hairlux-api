@@ -14,6 +14,8 @@ import { BeauticianNotificationService } from '../../notification/services/beaut
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
 import { CreditServiceEarningsService } from '../../payout/services/credit-service-earnings.service';
+import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
 
@@ -29,6 +31,8 @@ export class CustomerCompletionService {
     private readonly creditEarningsService: CreditServiceEarningsService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly commsSessionService: CommsSessionService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
+    private readonly jobPushNotifier: JobPushNotifier,
   ) {}
 
   async confirmCompletion(
@@ -109,6 +113,12 @@ export class CustomerCompletionService {
           input.rating,
         );
       }
+
+      this.jobPushNotifier.notifyCompleted({
+        beauticianUserId: booking.assignedBeauticianUserId,
+        bookingId,
+        rating: input.rating,
+      });
     }
 
     await this.commsRealtime.emitBookingStatus(
@@ -118,6 +128,11 @@ export class CustomerCompletionService {
         customerRating: input.rating,
       },
     );
+
+    this.bookingPushNotifier.notifyCompleted({
+      customerUserId: customerUserId,
+      bookingId,
+    });
 
     void this.commsSessionService.closeForBookingSafely(
       bookingId,

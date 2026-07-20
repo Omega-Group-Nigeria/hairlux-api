@@ -24,6 +24,7 @@ import { MatchingOrchestratorService } from '../../beautician/matching/services/
 import { CommsSessionService } from '../../comms/services/comms-session.service';
 import { CommsPresenterService } from '../../comms/services/comms-presenter.service';
 import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
+import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class BookingCoreService {
@@ -35,6 +36,7 @@ export class BookingCoreService {
     private readonly commsSessionService: CommsSessionService,
     private readonly commsPresenter: CommsPresenterService,
     private readonly commsRealtime: CommsRealtimeService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   async findUserBookings(userId: string, queryDto: QueryBookingsDto) {
@@ -245,6 +247,13 @@ export class BookingCoreService {
         BookingStatus.CANCELLED,
       );
     }
+
+    this.bookingPushNotifier.notifyCancelled({
+      customerUserId: booking.userId,
+      bookingId: id,
+      reservationCode: booking.reservationCode,
+      assignedBeauticianUserId: booking.assignedBeauticianUserId,
+    });
 
     return formatBookingResponse(result);
   }

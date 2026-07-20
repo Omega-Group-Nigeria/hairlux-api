@@ -11,6 +11,7 @@ import { PaymentModule } from '../payment/payment.module';
 import { MailModule } from '../mail/mail.module';
 import { ReferralModule } from '../referral/referral.module';
 import { BookingModule } from '../booking/booking.module';
+import { WalletNotificationsModule } from '../notifications/wallet/wallet-notifications.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { BookingModule } from '../booking/booking.module';
     PaymentModule,
     MailModule,
     ReferralModule,
+    WalletNotificationsModule,
     forwardRef(() => BookingModule),
     BullModule.registerQueue(
       { name: 'paystack-webhooks' },

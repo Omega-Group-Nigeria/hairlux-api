@@ -8,12 +8,14 @@ import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
 import { JobArrivedService } from './job-arrived.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
 
 describe('JobArrivedService', () => {
   let service: JobArrivedService;
 
   const booking = {
     id: 'booking-1',
+    userId: 'customer-1',
     status: BookingStatus.EN_ROUTE,
     services: [],
     assignedBeauticianUserId: 'beautician-1',
@@ -88,6 +90,12 @@ describe('JobArrivedService', () => {
         {
           provide: CommsRealtimeService,
           useValue: mockCommsRealtime,
+        },
+        {
+          provide: BookingPushNotifier,
+          useValue: {
+            notifyArrived: jest.fn(),
+          },
         },
       ],
     }).compile();

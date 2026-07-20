@@ -37,6 +37,7 @@ import { CommsSessionService } from '../../comms/services/comms-session.service'
 import { CommsAdminService } from '../../comms/services/comms-admin.service';
 import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
 import { ReservationService } from './reservation.service';
+import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class BookingAnalyticsService {
@@ -50,6 +51,7 @@ export class BookingAnalyticsService {
     private readonly commsSessionService: CommsSessionService,
     private readonly commsAdminService: CommsAdminService,
     private readonly commsRealtime: CommsRealtimeService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   private isUniqueConstraintError(err: unknown, field: string): boolean {
@@ -419,6 +421,15 @@ export class BookingAnalyticsService {
         id,
         BookingStatus.CANCELLED,
       );
+    }
+
+    if (status === BookingStatus.CANCELLED) {
+      this.bookingPushNotifier.notifyCancelled({
+        customerUserId: booking.userId,
+        bookingId: id,
+        reservationCode: booking.reservationCode,
+        assignedBeauticianUserId: booking.assignedBeauticianUserId,
+      });
     }
 
     return formatBookingResponse(result);

@@ -43,6 +43,14 @@ describe('CustomerCompletionService', () => {
     closeForBookingSafely: jest.fn(),
   };
 
+  const bookingPushNotifier = {
+    notifyCompleted: jest.fn(),
+  };
+
+  const jobPushNotifier = {
+    notifyCompleted: jest.fn(),
+  };
+
   const tx = {
     booking: { update: jest.fn() },
     review: { upsert: jest.fn() },
@@ -89,6 +97,8 @@ describe('CustomerCompletionService', () => {
       creditEarningsService as never,
       commsRealtime as never,
       commsSessionService as never,
+      bookingPushNotifier as never,
+      jobPushNotifier as never,
     );
   });
 

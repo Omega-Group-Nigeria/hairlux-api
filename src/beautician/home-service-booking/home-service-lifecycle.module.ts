@@ -15,6 +15,8 @@ import { FinalizeBookingProcessor } from './processors/finalize-booking.processo
 import { PayoutModule } from '../payout/payout.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { CommsModule } from '../../comms/comms.module';
+import { BookingNotificationsModule } from '../../notifications/booking/booking-notifications.module';
+import { JobNotificationsModule } from '../../notifications/job/job-notifications.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { CommsModule } from '../../comms/comms.module';
     RealtimeModule,
     BullModule.registerQueue({ name: HOME_SERVICE_LIFECYCLE_QUEUE }),
     CommsModule,
+    BookingNotificationsModule,
+    JobNotificationsModule,
   ],
   providers: [
     JobEnRouteService,

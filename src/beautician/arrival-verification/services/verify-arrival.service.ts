@@ -6,13 +6,13 @@ import {
 import { BookingStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { formatBookingResponse } from '../../../booking/utils/booking.utils';
-import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
 import { BookingParticipantService } from '../../home-service-booking/services/booking-participant.service';
 import { HomeServiceStatusService } from '../../home-service-booking/home-service-status.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { ArrivalPinService } from './arrival-pin.service';
 import { ArrivalQrTokenService } from './arrival-qr-token.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 @Injectable()
 export class VerifyArrivalService {
@@ -23,7 +23,7 @@ export class VerifyArrivalService {
     private readonly qrTokenService: ArrivalQrTokenService,
     private readonly statusService: HomeServiceStatusService,
     private readonly settingsService: HomeServiceSettingsService,
-    private readonly notificationService: BeauticianNotificationService,
+    private readonly jobPushNotifier: JobPushNotifier,
     private readonly commsRealtime: CommsRealtimeService,
   ) {}
 
@@ -87,14 +87,11 @@ export class VerifyArrivalService {
       },
     });
 
-    if (booking.assignedBeautician) {
-      void this.notificationService.notifyArrivalVerified(
-        {
-          email: booking.assignedBeautician.email,
-          firstName: booking.assignedBeautician.firstName,
-        },
+    if (booking.assignedBeauticianUserId) {
+      this.jobPushNotifier.notifyArrivalVerified({
+        beauticianUserId: booking.assignedBeauticianUserId,
         bookingId,
-      );
+      });
     }
 
     await this.commsRealtime.emitBookingStatus(

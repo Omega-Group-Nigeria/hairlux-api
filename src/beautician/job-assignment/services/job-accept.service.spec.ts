@@ -32,6 +32,8 @@ import { CommsRealtimeService } from '../../../comms/services/comms-realtime.ser
 import { DispatchStateService } from '../../matching/services/dispatch-state.service';
 import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
+import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 describe('JobAcceptService', () => {
   let service: JobAcceptService;
@@ -138,6 +140,32 @@ describe('JobAcceptService', () => {
             return null;
           }
           return offers.get(where.beauticianUserId) ?? null;
+        },
+      ),
+      findMany: jest.fn(
+        async ({
+          where,
+        }: {
+          where: {
+            bookingId: string;
+            id?: { not: string };
+            status?: JobOfferStatus;
+            expiresAt?: { gt: Date };
+          };
+        }) => {
+          const notId =
+            where.id && typeof where.id === 'object' && 'not' in where.id
+              ? where.id.not
+              : undefined;
+          return Array.from(offers.values())
+            .filter(
+              (offer) =>
+                offer.bookingId === where.bookingId &&
+                offer.status === (where.status ?? JobOfferStatus.OFFERED) &&
+                offer.id !== notId &&
+                offer.expiresAt > new Date(),
+            )
+            .map((offer) => ({ beauticianUserId: offer.beauticianUserId }));
         },
       ),
       update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
@@ -281,6 +309,14 @@ describe('JobAcceptService', () => {
           useValue: {
             openForBookingSafely: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        {
+          provide: BookingPushNotifier,
+          useValue: { notifyBeauticianAssigned: jest.fn() },
+        },
+        {
+          provide: JobPushNotifier,
+          useValue: { notifyOfferTaken: jest.fn() },
         },
       ],
     }).compile();

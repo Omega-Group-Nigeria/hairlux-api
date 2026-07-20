@@ -4,7 +4,6 @@ import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { formatBookingResponse } from '../../../booking/utils/booking.utils';
-import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
 import { BookingParticipantService } from './booking-participant.service';
 import { HomeServiceStatusService } from '../home-service-status.service';
 import {
@@ -12,6 +11,7 @@ import {
   HOME_SERVICE_LIFECYCLE_QUEUE,
 } from '../home-service-lifecycle.constants';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 @Injectable()
 export class ServiceCompletionService {
@@ -19,7 +19,7 @@ export class ServiceCompletionService {
     private readonly prisma: PrismaService,
     private readonly participantService: BookingParticipantService,
     private readonly statusService: HomeServiceStatusService,
-    private readonly notificationService: BeauticianNotificationService,
+    private readonly jobPushNotifier: JobPushNotifier,
     private readonly commsRealtime: CommsRealtimeService,
     @InjectQueue(HOME_SERVICE_LIFECYCLE_QUEUE)
     private readonly lifecycleQueue: Queue,
@@ -78,13 +78,12 @@ export class ServiceCompletionService {
       },
     );
 
-    void this.notificationService.notifyServiceAwaitingConfirmation(
-      {
-        email: booking.user.email,
-        firstName: booking.user.firstName,
-      },
-      bookingId,
-    );
+    if (booking.userId) {
+      this.jobPushNotifier.notifyCompletionRequested({
+        customerUserId: booking.userId,
+        bookingId,
+      });
+    }
 
     await this.commsRealtime.emitBookingStatus(
       bookingId,

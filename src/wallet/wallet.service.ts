@@ -16,6 +16,7 @@ import { AdminWalletStatsDto } from './dto/admin-wallet-stats.dto';
 import { TransactionType, TransactionStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { RedisService } from '../redis/redis.service';
+import { WalletPushNotifier } from '../notifications/wallet/wallet-push.notifier';
 
 const TRANSACTION_GATEWAY = {
   PAYSTACK: 'PAYSTACK',
@@ -34,6 +35,7 @@ export class WalletService {
     private monnifyService: MonnifyService,
     private configService: ConfigService,
     private redis: RedisService,
+    private walletPushNotifier: WalletPushNotifier,
   ) {
     this.MAX_DEPOSITS_PER_MINUTE = this.configService.get<number>(
       'WALLET_MAX_DEPOSITS_PER_MINUTE',
@@ -336,6 +338,11 @@ export class WalletService {
         this.redis.del('wallet:admin-stats'),
         this.redis.delByPattern('analytics:*'),
       ]);
+      void this.notifyDepositPush(
+        userId,
+        Number(transaction.amount),
+        reference,
+      );
       return {
         status: 'success',
         message: 'Deposit successful',
@@ -413,6 +420,12 @@ export class WalletService {
       this.redis.delByPattern('analytics:*'),
     ]);
 
+    void this.notifyDepositPush(
+      userId,
+      Number(transaction.amount),
+      reference,
+    );
+
     return {
       status: 'success',
       message: 'Deposit successful',
@@ -421,6 +434,30 @@ export class WalletService {
         amount: Number(result.amount),
       },
     };
+  }
+
+  /** Push only after a first-time credit (not on already-completed verify). */
+  private async notifyDepositPush(
+    userId: string,
+    amount: number,
+    reference: string,
+  ) {
+    try {
+      const wallet = await this.prisma.wallet.findUnique({
+        where: { userId },
+        select: { balance: true },
+      });
+      this.walletPushNotifier.notifyDepositSuccess({
+        userId,
+        amount,
+        reference,
+        newBalance: wallet ? Number(wallet.balance) : undefined,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Deposit push failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // ─── Admin Methods ──────────────────────────────────────────────────────────

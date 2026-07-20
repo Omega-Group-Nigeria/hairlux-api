@@ -40,6 +40,7 @@ describe('OfferManagerService release after offer', () => {
       { emitJobOffer: jest.fn() } as never,
       mockLocationIndex as never,
       mockMatchingConfig as never,
+      { notifyOffer: jest.fn() } as never,
     );
   });
 

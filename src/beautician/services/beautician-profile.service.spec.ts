@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CloudinaryService } from '../../cloudinary/cloudinary.service';
 import { R2Service } from '../../storage/r2.service';
 import { BeauticianNotificationService } from '../notification/services/beautician-notification.service';
+import { OnboardingPushNotifier } from '../../notifications/onboarding/onboarding-push.notifier';
 import { BeauticianMeCacheService } from './beautician-me-cache.service';
 
 describe('BeauticianProfileService', () => {
@@ -42,6 +43,10 @@ describe('BeauticianProfileService', () => {
     notifyProfileReviewResult: jest.fn(),
   };
 
+  const mockOnboardingPush = {
+    notifyProfileReview: jest.fn(),
+  };
+
   const mockMeCache = {
     invalidate: jest.fn(),
   };
@@ -61,6 +66,7 @@ describe('BeauticianProfileService', () => {
         { provide: BeauticianNotificationService, useValue: mockNotification },
         { provide: BeauticianMeCacheService, useValue: mockMeCache },
         { provide: R2Service, useValue: mockR2 },
+        { provide: OnboardingPushNotifier, useValue: mockOnboardingPush },
       ],
     }).compile();
 
@@ -150,6 +156,11 @@ describe('BeauticianProfileService', () => {
       'REJECTED',
       'Incomplete portfolio',
     );
+    expect(mockOnboardingPush.notifyProfileReview).toHaveBeenCalledWith({
+      beauticianUserId: 'user-1',
+      outcome: 'REJECTED',
+      notes: 'Incomplete portfolio',
+    });
   });
 
   it('VIDEO_ONLY reject sets AWAITING_VIDEO and deletes R2 object', async () => {
@@ -198,6 +209,11 @@ describe('BeauticianProfileService', () => {
       'VIDEO_ONLY',
       'Video too dark',
     );
+    expect(mockOnboardingPush.notifyProfileReview).toHaveBeenCalledWith({
+      beauticianUserId: 'user-1',
+      outcome: 'VIDEO_ONLY',
+      notes: 'Video too dark',
+    });
     expect(mockMeCache.invalidate).toHaveBeenCalledWith('user-1');
   });
 });

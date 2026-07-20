@@ -16,6 +16,7 @@ import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
 import { BookingLinePricingService } from './booking-line-pricing.service';
 import { HomeServiceBookingService } from '../../beautician/home-service-booking/home-service-booking.service';
+import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 
 describe('BookingPaymentService security', () => {
   let service: BookingPaymentService;
@@ -107,6 +108,12 @@ describe('BookingPaymentService security', () => {
             resolveInitialStatus: jest.fn().mockReturnValue('CONFIRMED'),
             getPaymentConfirmationMessage: jest.fn().mockReturnValue('ok'),
             triggerMatching: jest.fn(),
+          },
+        },
+        {
+          provide: BookingPushNotifier,
+          useValue: {
+            notifyConfirmed: jest.fn(),
           },
         },
       ],

@@ -46,6 +46,7 @@ import { ReservationService } from './reservation.service';
 import { BookingLinePricingService } from './booking-line-pricing.service';
 import { HomeServiceBookingService } from '../../beautician/home-service-booking/home-service-booking.service';
 import { bookingNeedsBeauticianAssignment } from '../../beautician/matching/utils/booking-assignment.utils';
+import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class BookingPaymentService {
@@ -59,6 +60,7 @@ export class BookingPaymentService {
     private reservationService: ReservationService,
     private bookingLinePricingService: BookingLinePricingService,
     private homeServiceBookingService: HomeServiceBookingService,
+    private bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   private resolveServiceMode(
@@ -541,6 +543,11 @@ export class BookingPaymentService {
               isHomeService,
             },
           );
+          this.bookingPushNotifier.notifyConfirmed({
+            userId,
+            bookingId: booking.id,
+            reservationCode: booking.reservationCode,
+          });
         }
 
         if (guestEmail && guestName && user) {
@@ -667,6 +674,11 @@ export class BookingPaymentService {
             isHomeService,
           },
         );
+        this.bookingPushNotifier.notifyConfirmed({
+          userId,
+          bookingId: booking.id,
+          reservationCode: booking.reservationCode,
+        });
       }
 
       if (guestEmail && guestName && user) {
@@ -1530,6 +1542,11 @@ export class BookingPaymentService {
         isHomeService,
       },
     );
+    this.bookingPushNotifier.notifyConfirmed({
+      userId,
+      bookingId: result.booking.id,
+      reservationCode: result.reservationCode,
+    });
 
     if (payload.guestEmail && payload.guestName) {
       void this.mailService.sendGuestBookingEmail(

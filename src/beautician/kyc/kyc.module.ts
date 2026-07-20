@@ -14,6 +14,7 @@ import { KycProfilePhotoService } from './services/kyc-profile-photo.service';
 import { KycVideoService } from './services/kyc-video.service';
 import { QoreidProfilePhotoProcessor } from './processors/qoreid-profile-photo.processor';
 import { BeauticianNotificationModule } from '../notification/notification.module';
+import { OnboardingNotificationsModule } from '../../notifications/onboarding/onboarding-notifications.module';
 import { QOREID_PROFILE_PHOTO_QUEUE } from './constants/qoreid-profile-photo.constants';
 import { BeauticianMeCacheService } from '../services/beautician-me-cache.service';
 
@@ -25,6 +26,7 @@ import { BeauticianMeCacheService } from '../services/beautician-me-cache.servic
     CloudinaryModule,
     StorageModule,
     BeauticianNotificationModule,
+    OnboardingNotificationsModule,
     BullModule.registerQueue({ name: QOREID_PROFILE_PHOTO_QUEUE }),
   ],
   controllers: [KycController, QoreidWebhookController],
