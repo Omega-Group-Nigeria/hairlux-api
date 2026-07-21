@@ -18,6 +18,8 @@ import { ScheduleInterviewDto } from './dto/schedule-interview.dto';
 import { ConfigService } from '@nestjs/config';
 import { MailService } from '../mail/mail.service';
 import { AuthService } from 'src/auth/auth.service';
+import { S3Service } from '../storage/s3.service';
+
 
 const TTL = 300;
 
@@ -82,7 +84,9 @@ export class ApplicationService {
     private staffService: StaffService,
     private mailService: MailService,
     private configService: ConfigService,
-    private authService: AuthService
+    private authService: AuthService,
+    private s3Service: S3Service
+    
   ) {}
 
   private get applicationModel(): ApplicationModelDelegate {
@@ -175,7 +179,7 @@ export class ApplicationService {
 
     const dashboardUrl =
       this.configService.get<string>('APPLICANT_DASHBOARD_URL') ||
-      'https://hairlux.com.ng/careers.html';
+      'https://hairlux.com.ng/login.html';
 
     this.mailService.sendApplicationConfirmationEmail(application.email, application.firstName, {
       applicationCode,
@@ -214,7 +218,7 @@ export class ApplicationService {
     otp,
     dashboardUrl:
       this.configService.get<string>('APPLICANT_DASHBOARD_URL') ||
-      'https://hairlux.com.ng/careers.html',
+      'https://hairlux.com.ng/login.html',
   });
 }
 
@@ -281,7 +285,7 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
     ]);
 
     const result = {
-      data: applications.map((a) => this.sanitize(a)),
+      data: await Promise.all(applications.map((a) => this.sanitize(a))),
       meta: {
         total,
         page,
@@ -308,16 +312,24 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
       throw new NotFoundException('Application not found');
     }
 
-    const sanitized = this.sanitize(application);
+    const sanitized = await this.sanitize(application);
     await this.redis.set(cacheKey, sanitized, TTL);
     return sanitized;
   }
 
-  private sanitize(application: ApplicationRecord) {
-    const { otpHash, otpExpiresAt, interviewLocation, ...rest } = application;
+  private async sanitize(application: ApplicationRecord) {
+    const { otpHash, otpExpiresAt, cvUrl, interviewLocation, ...rest } = application;
     void otpHash;
     void otpExpiresAt;
-    return { ...rest, interviewLocationName: interviewLocation?.name ?? null };
+    let cvDownloadUrl: string | null = null;
+    if (cvUrl) {
+      try {
+        cvDownloadUrl = await this.s3Service.getPresignedUrl(cvUrl);
+      } catch {
+        cvDownloadUrl = null;
+      }
+    }
+    return { ...rest, cvDownloadUrl, interviewLocationName: interviewLocation?.name ?? null };
   }
 
   async updateStatus(id: string, dto: UpdateApplicationStatusDto) {

@@ -1,16 +1,22 @@
-import { Body, Controller, Post, UseGuards, Req, Get} from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Post, UseGuards, Req, Get, UseInterceptors, UploadedFile, BadRequestException} from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApplicationService } from './application.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { JwtService } from '@nestjs/jwt';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ApplicantAuthGuard } from './guard/applicant-auth.guard';
+import { S3Service } from 'src/storage/s3.service';
+
+const MAX_CV_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 @ApiTags('applications')
 @Controller('applications')
 export class ApplicationController {
-  constructor(private readonly applicationService: ApplicationService, private readonly jwtService: JwtService) {}
+  constructor(private readonly applicationService: ApplicationService,
+    private readonly s3Service: S3Service,
+     private readonly jwtService: JwtService) {}
 
   @Post()
   @ApiOperation({
@@ -55,5 +61,53 @@ export class ApplicationController {
   async getMe(@Req() req: any) {
     const data = await this.applicationService.findOne(req.applicationId);
     return { success: true, message: 'Application retrieved successfully', data };
+  }
+
+  @Post('upload-cv')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({
+    summary: 'Upload a CV (PDF, max 5MB)',
+    description:
+      'Public endpoint, called from the careers page wizard before final submission. Returns a cvKey to include as `cvUrl` in the POST /applications payload — not a public link. The file is never made public; admins view it via a short-lived signed URL generated on demand.',
+  })
+  @ApiResponse({ status: 201, description: 'File uploaded successfully' })
+  @ApiResponse({ status: 400, description: 'Missing file, wrong file type, or file too large' })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_CV_SIZE_BYTES },
+    }),
+  )
+  async uploadCv(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded. Attach a PDF under the "file" field.');
+    }
+    if (file.mimetype !== 'application/pdf') {
+      throw new BadRequestException('Only PDF files are accepted for CV uploads.');
+    }
+    // Multer's `limits.fileSize` already rejects oversized uploads before
+    // this handler runs, but re-checking here is cheap insurance against
+    // any future refactor of the interceptor config.
+    if (file.size > MAX_CV_SIZE_BYTES) {
+      throw new BadRequestException('CV file must be 5MB or smaller.');
+    }
+ 
+    const key = await this.s3Service.uploadObject(
+      file.buffer,
+      'applications/cv',
+      file.originalname,
+      file.mimetype,
+    );
+ 
+    return {
+      success: true,
+      message: 'CV uploaded successfully',
+      data: { cvKey: key },
+    };
   }
 }

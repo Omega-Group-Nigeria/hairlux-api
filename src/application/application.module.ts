@@ -8,12 +8,14 @@ import { StaffModule } from '../staff/staff.module';
 import { MailModule } from '../mail/mail.module';
 import { AuthModule } from '../auth/auth.module';
 import { ApplicantAuthGuard } from './guard/applicant-auth.guard';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
     StaffModule,
     MailModule,
     AuthModule,
+    StorageModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
