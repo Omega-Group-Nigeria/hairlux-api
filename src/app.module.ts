@@ -29,6 +29,7 @@ import { BeauticianModule } from './beautician/beautician.module';
 import { CommsModule } from './comms/comms.module';
 import { NinModule } from './nin/nin.module';
 import { ApplicationModule } from './application/application.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -93,6 +94,7 @@ import { ApplicationModule } from './application/application.module';
     CommsModule,
     NinModule,
     ApplicationModule,
+    StorageModule,
   ],
   controllers: [AppController],
   providers: [
