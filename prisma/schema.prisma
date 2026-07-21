@@ -14,6 +14,7 @@ enum UserRole {
   ADMIN
   SUPER_ADMIN
   BEAUTICIAN
+  STAFF
 }
 
 enum UserStatus {
@@ -223,6 +224,11 @@ enum StaffEmploymentType {
   TEMPORARY
 }
 
+enum InterviewMode {
+  IN_PERSON
+  VIRTUAL
+}
+
 model User {
   id               String    @id @default(uuid())
   email            String    @unique
@@ -273,11 +279,30 @@ model User {
   payoutsProcessed         PayoutRequest[] @relation("PayoutProcessedBy")
   fcmTokens                FcmToken[]
   beauticianLocationHistory BeauticianLocationHistory[] @relation("BeauticianLocationHistory")
+  roleAssignments           UserRoleAssignment[] @relation("UserRoleAssignments")
+  roleAssignmentsGranted    UserRoleAssignment[] @relation("RoleAssignedBy")
+  staff                     Staff?
+
 
   @@index([role])
   @@index([status])
   @@index([firstName, lastName, dateOfBirth])
   @@map("users")
+}
+
+model UserRoleAssignment {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  role         UserRole
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  assignedById String?   @map("assigned_by_id")
+
+  user       User  @relation("UserRoleAssignments", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy User? @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, role])
+  @@index([userId])
+  @@map("user_role_assignments")
 }
 
 model RefreshToken {
@@ -848,6 +873,7 @@ model JobPosting {
 
 model Staff {
   id                      String                @id @default(uuid())
+  userId                  String?               @unique @map("user_id")
   name                    String
   staffCode               String                @unique @map("staff_code")
   currentRole             String                @map("current_role")
@@ -865,6 +891,8 @@ model Staff {
 
   location  StaffLocation            @relation(fields: [locationId], references: [id])
   histories StaffEmploymentHistory[]
+  user      User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -921,6 +949,8 @@ model StaffLocation {
   staff          Staff[]
   histories      StaffEmploymentHistory[]
   branchServices BranchService[]
+  interviewApplications Application[] @relation("ApplicationInterviewLocation")
+
   bookings       Booking[]
 
   @@map("staff_locations")
@@ -1182,4 +1212,59 @@ model BeauticianLocationHistory {
   @@index([beauticianUserId, recordedAt])
   @@index([bookingId])
   @@map("beautician_location_history")
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  SHORTLISTED
+  INTERVIEW_SCHEDULED
+  INTERVIEW_COMPLETED
+  OFFER_EXTENDED
+  EMPLOYED
+  NOT_SELECTED
+}
+
+model Application {
+  id                      String    @id @default(uuid())
+  applicationCode         String    @unique
+  jobId                   String?
+  appliedRole             String?
+  firstName               String
+  middleName              String?
+  lastName                String
+  nin                     String
+  dateOfBirth             String?
+  gender                  String?
+  phone                   String
+  address                 String
+  email                   String
+  yearsOfExperience       String?
+  previousEmployer        String?
+  previousEmployerAddress String?
+  previousEmployerPhone   String?
+  coverNote               String
+  preferredLocationId     String?
+  preferredBranchText     String?
+  cvUrl                   String?
+  portfolioUrl            String?
+  status                  ApplicationStatus @default(SUBMITTED)
+  interviewScheduledAt    DateTime?
+  interviewMode        InterviewMode?
+  interviewLocationId  String?
+  interviewLocation    StaffLocation?    @relation("ApplicationInterviewLocation", fields: [interviewLocationId], references: [id], onDelete: SetNull)
+  interviewMeetingUrl  String?
+  interviewerName         String?
+  interviewNote           String?
+  notSelectedReason       String?
+  otpHash                 String?
+  otpExpiresAt            DateTime?
+  staffId                 String?
+  employedAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([status])
+  @@index([email])
+  @@index([nin])
 }

@@ -149,6 +149,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.staff;
   }
 
+  get application() {
+    return this.client.application;
+  }
+
   get staffEmploymentHistory() {
     return this.client.staffEmploymentHistory;
   }
@@ -229,7 +233,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.bookingCommsEvent;
   }
 
+  get userRoleAssignment() {
+  return this.client.userRoleAssignment;
+}
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
+  
 }

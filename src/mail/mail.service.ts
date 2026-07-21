@@ -24,9 +24,15 @@ import {
   beauticianDispatchSuspensionTemplate,
   arrivalVerificationNeededTemplate,
   serviceCompletedTemplate,
+  applicationConfirmationTemplate,
+  InterviewScheduledData,
+  interviewScheduledTemplate,
+  ApplicationStatusUpdateData,
+  applicationStatusUpdateTemplate,
 } from './templates';
 import type { ShopOrderConfirmationData } from './templates/shop-order-confirmation.template';
 import type { DispatchSuspensionEmailData } from './templates/beautician-dispatch-suspension.template';
+import type { ApplicationConfirmationData } from './templates/application-confirmation.template';
 
 @Injectable()
 export class MailService {
@@ -515,4 +521,88 @@ export class MailService {
       );
     }
   }
+
+  async sendApplicationConfirmationEmail(
+  email: string,
+  firstName: string,
+  data: ApplicationConfirmationData,) 
+  {try {
+    await this.emailQueue.add(
+      'send',
+      {
+        to: email,
+        subject: `Application Received [${data.applicationCode}] — HairLux`,
+        html: applicationConfirmationTemplate(firstName, data),
+      },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+      },
+    );
+
+    this.logger.log(`Application confirmation email queued for ${email}`);
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    this.logger.error(
+      `Error queuing application confirmation email:`,
+      errorMessage,
+    );
+  }
+}
+async sendApplicationOtpEmail(
+  email: string,
+  firstName: string,
+  data: ApplicationConfirmationData,
+) {
+  try {
+    await this.emailQueue.add(
+      'send',
+      {
+        to: email,
+        subject: `Your Login Code — HairLux Applicant Portal`,
+        html: applicationConfirmationTemplate(firstName, data),
+      },
+      { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+    );
+
+    this.logger.log(`Application OTP email queued for ${email}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Error queuing application OTP email:`, errorMessage);
+  }
+}
+
+async sendApplicationStatusUpdateEmail(
+  email: string,
+  firstName: string,
+  status: 'SHORTLISTED' | 'OFFER_EXTENDED' | 'NOT_SELECTED',
+  data: ApplicationStatusUpdateData,
+) {
+  try {
+    await this.emailQueue.add('send', {
+      to: email,
+      subject: `Application Update [${data.applicationCode}] — HairLux`,
+      html: applicationStatusUpdateTemplate(firstName, status, data),
+    }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+    this.logger.log(`Application status update (${status}) email queued for ${email}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Error queuing application status update email:`, errorMessage);
+  }
+}
+
+async sendInterviewScheduledEmail(email: string, firstName: string, data: InterviewScheduledData) {
+  try {
+    await this.emailQueue.add('send', {
+      to: email,
+      subject: `Interview Scheduled [${data.applicationCode}] — HairLux`,
+      html: interviewScheduledTemplate(firstName, data),
+    }, { attempts: 3, backoff: { type: 'exponential', delay: 2000 } });
+    this.logger.log(`Interview scheduled email queued for ${email}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    this.logger.error(`Error queuing interview scheduled email:`, errorMessage);
+  }
+}
 }

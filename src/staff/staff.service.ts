@@ -193,6 +193,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     await Promise.all([
       this.redis.delByPattern('staff:list:*'),
       this.redis.delByPattern('staff:birthdays:*'),
+      this.redis.delByPattern('staff:byUser:*'),
       ...(staffId ? [this.redis.del(`staff:one:${staffId}`)] : []),
     ]);
   }
@@ -455,6 +456,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
           employmentStatus:
             dto.employmentStatus ?? STAFF_EMPLOYMENT_STATUS.ACTIVE,
+          userId: dto.userId ?? null, 
         },
       });
 
@@ -476,6 +478,30 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     await this.invalidateCache(staff.id);
     return this.findOne(staff.id);
   }
+
+  async findByUserId(userId: string) {
+  const cacheKey = `staff:byUser:${userId}`;
+  const cached = await this.redis.get<StaffWithHistories>(cacheKey);
+  if (cached) return cached;
+
+  const staff = await this.staffModel.findUnique({
+    where: { userId },
+    include: {
+      location: true,
+      histories: {
+        orderBy: { startDate: 'desc' },
+        include: { location: true },
+      },
+    },
+  });
+
+  if (!staff) {
+    throw new NotFoundException('No staff record linked to this account');
+  }
+
+  await this.redis.set(cacheKey, staff, TTL);
+  return staff;
+}
 
   async findAll(queryDto: QueryStaffDto) {
     const cacheKey = `staff:list:${JSON.stringify(queryDto)}`;
@@ -553,7 +579,8 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
 
   async findOne(id: string) {
     const cacheKey = `staff:one:${id}`;
-    const cached = await this.redis.get(cacheKey);
+    // const cached = await this.redis.get(cacheKey);
+    const cached = await this.redis.get<StaffWithHistories>(cacheKey);
     if (cached) return cached;
 
     const staff = await this.staffModel.findUnique({

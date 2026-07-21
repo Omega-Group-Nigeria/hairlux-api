@@ -20,6 +20,7 @@ export type {
   DispatchSuspensionEmailData,
   DispatchSuspensionEmailKind,
 } from './beautician-dispatch-suspension.template';
+export { applicationConfirmationTemplate } from './application-confirmation.template';
 export type { BaseEmailOptions } from './base.template';
 export type { BookingConfirmationData } from './booking-confirmation.template';
 export type { GuestBookingNotificationData } from './guest-booking-notification.template';
@@ -27,3 +28,8 @@ export type { DepositSuccessData } from './deposit-success.template';
 export type { ReferralRewardData } from './referral-reward.template';
 export type { ContactFormSubmissionData } from './contact-form-submission.template';
 export type { ShopOrderConfirmationData } from './shop-order-confirmation.template';
+export type { ApplicationConfirmationData } from './application-confirmation.template';
+export { applicationStatusUpdateTemplate } from './application-status-update.template';
+export type { ApplicationStatusUpdateData } from './application-status-update.template';
+export { interviewScheduledTemplate } from './interview-scheduled.template';
+export type { InterviewScheduledData } from './interview-scheduled.template';
