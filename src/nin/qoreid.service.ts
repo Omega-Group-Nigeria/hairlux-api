@@ -34,8 +34,8 @@ export class QoreidService {
       return this.cachedToken;
     }
 
-    const clientId = this.config.get<string>('QOREID_CLIENT_ID');
-    const secret = this.config.get<string>('QOREID_SECRET');
+    const clientId = this.config.get<string>('QOREID_CLIENT_ID_NIN');
+    const secret = this.config.get<string>('QOREID_SECRET_NIN');
 
     if (!clientId || !secret) {
       throw new Error('QOREID_CLIENT_ID / QOREID_SECRET are not set in the environment');
