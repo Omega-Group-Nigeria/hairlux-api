@@ -172,7 +172,10 @@ export class AuthService {
       registerDto;
 
     const normalizedEmail = email.toLowerCase();
-    const parsedDateOfBirth = this.parseDateOfBirth(dateOfBirth);
+    const parsedDateOfBirth =
+      dateOfBirth instanceof Date
+        ? dateOfBirth
+        : this.parseDateOfBirth(String(dateOfBirth));
 
     await this.assertBeauticianRegistrationAvailable({
       email: normalizedEmail,
