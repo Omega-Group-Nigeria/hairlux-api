@@ -229,6 +229,77 @@ enum InterviewMode {
   VIRTUAL
 }
 
+enum OnboardingItemType {
+  GUARANTOR_VERIFICATION
+  EMERGENCY_CONTACT
+  REFERENCE_CHECK
+  ADDRESS_VERIFICATION
+  PASSPORT_PHOTO
+  POLICY_ACKNOWLEDGMENT
+}
+
+enum OnboardingItemReviewStatus {
+  NOT_STARTED
+  SUBMITTED
+  COMPLETE
+}
+
+model StaffOnboardingItem {
+  id           String                     @id @default(uuid())
+  staffId      String                     @map("staff_id")
+  type         OnboardingItemType
+  isComplete   Boolean                    @default(false) @map("is_complete")
+  reviewStatus OnboardingItemReviewStatus @default(NOT_STARTED) @map("review_status")
+  submittedAt  DateTime?                  @map("submitted_at")
+  completedAt  DateTime?                  @map("completed_at")
+  completedBy  String?                    @map("completed_by") // admin userId
+  notes        String?
+  createdAt    DateTime                   @default(now()) @map("created_at")
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, type])
+  @@map("staff_onboarding_items")
+}
+
+enum CompanyDocumentType {
+  EMPLOYMENT_CONTRACT
+  NDA
+  IT_ACCEPTABLE_USE_POLICY
+  STAFF_HANDBOOK
+  CODE_OF_CONDUCT
+  DATA_PROTECTION_POLICY
+}
+
+model CompanyDocument {
+  id         String              @id @default(uuid())
+  type       CompanyDocumentType
+  version    Int                 @default(1)
+  title      String
+  contentUrl String              @map("content_url")
+  isActive   Boolean             @default(true) @map("is_active")
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  acknowledgments StaffDocumentAcknowledgment[]
+
+  @@map("company_documents")
+}
+
+model StaffDocumentAcknowledgment {
+  id             String   @id @default(uuid())
+  staffId        String   @map("staff_id")
+  documentId     String   @map("document_id")
+  acknowledgedAt DateTime @default(now()) @map("acknowledged_at")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+
+  staff    Staff           @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  document CompanyDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, documentId])
+  @@map("staff_document_acknowledgments")
+}
+
 model User {
   id               String    @id @default(uuid())
   email            String    @unique
@@ -282,6 +353,8 @@ model User {
   roleAssignments           UserRoleAssignment[] @relation("UserRoleAssignments")
   roleAssignmentsGranted    UserRoleAssignment[] @relation("RoleAssignedBy")
   staff                     Staff?
+  createdAnnouncements      Announcement[] @relation("AnnouncementCreatedBy")
+  createdDirectives         Directive[]    @relation("DirectiveCreatedBy")
 
 
   @@index([role])
@@ -893,6 +966,34 @@ model Staff {
   histories StaffEmploymentHistory[]
   user      User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  onboardingItems StaffOnboardingItem[] 
+
+  documentAcknowledgments StaffDocumentAcknowledgment[]
+
+  responsibilities String? @map("responsibilities")
+  reportingToId    String? @map("reporting_to_id")
+  reportingTo      Staff?  @relation("StaffReportingLine", fields: [reportingToId], references: [id], onDelete: SetNull)
+  directReports    Staff[] @relation("StaffReportingLine")
+  receivedAnnouncements Announcement[] @relation("AnnouncementTargetStaff")
+  announcementReads     AnnouncementRead[]
+  directives            Directive[]
+
+  attendanceRecords     AttendanceRecord[]
+  inventoryLogEntries   InventoryLogEntry[]
+
+  passportPhotoUrl        String? @map("passport_photo_url")
+  emergencyContactName    String? @map("emergency_contact_name")
+  emergencyContactPhone   String? @map("emergency_contact_phone")
+  emergencyContactRelation String? @map("emergency_contact_relation")
+  guarantorName           String? @map("guarantor_name")
+  guarantorOccupation     String? @map("guarantor_occupation")
+  guarantorPhone          String? @map("guarantor_phone")
+  guarantorAddress        String? @map("guarantor_address")
+
+  address                 String? @map("address")
+  referenceName           String? @map("reference_name")
+  referencePhone           String? @map("reference_phone")
+  referenceRelationship   String? @map("reference_relationship")
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -941,6 +1042,7 @@ model BranchService {
 model StaffLocation {
   id        String   @id @default(uuid())
   name      String   @unique
+  code      String   @unique
   address   String
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
@@ -952,8 +1054,13 @@ model StaffLocation {
   interviewApplications Application[] @relation("ApplicationInterviewLocation")
 
   bookings       Booking[]
+  targetedAnnouncements Announcement[]
+  attendanceRecords     AttendanceRecord[]
+  inventoryLogEntries   InventoryLogEntry[]
 
   @@map("staff_locations")
+
+  staffSequence Int @default(0) @map("staff_sequence")
 }
 
 model WaitlistEntry {
@@ -964,6 +1071,106 @@ model WaitlistEntry {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("waitlist_entries")
+}
+
+enum AnnouncementTarget {
+  ALL
+  BRANCH
+  INDIVIDUAL
+}
+
+model Announcement {
+  id               String             @id @default(uuid())
+  title            String
+  body             String
+  target           AnnouncementTarget
+  targetLocationId String?            @map("target_location_id")
+  targetStaffId    String?            @map("target_staff_id")
+  createdById      String?            @map("created_by_id")
+  createdAt        DateTime           @default(now()) @map("created_at")
+
+  targetLocation StaffLocation? @relation(fields: [targetLocationId], references: [id], onDelete: Cascade)
+  targetStaff    Staff?         @relation("AnnouncementTargetStaff", fields: [targetStaffId], references: [id], onDelete: Cascade)
+  createdBy      User?          @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reads          AnnouncementRead[]
+
+  @@index([target])
+  @@map("announcements")
+}
+
+model AnnouncementRead {
+  id             String   @id @default(uuid())
+  announcementId String   @map("announcement_id")
+  staffId        String   @map("staff_id")
+  readAt         DateTime @default(now()) @map("read_at")
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  staff        Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, staffId])
+  @@map("announcement_reads")
+}
+
+enum DirectiveStatus {
+  PENDING
+  ACKNOWLEDGED
+  COMPLETED
+}
+
+model Directive {
+  id            String          @id @default(uuid())
+  title         String
+  body          String
+  status        DirectiveStatus @default(PENDING)
+  targetStaffId String          @map("target_staff_id")
+  createdById   String?         @map("created_by_id")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  respondedAt   DateTime?       @map("responded_at")
+
+  targetStaff Staff @relation(fields: [targetStaffId], references: [id], onDelete: Cascade)
+  createdBy   User? @relation("DirectiveCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([targetStaffId, status])
+  @@map("directives")
+}
+
+model AttendanceRecord {
+  id         String    @id @default(uuid())
+  staffId    String    @map("staff_id")
+  locationId String    @map("location_id")
+  date       DateTime  @db.Date
+  checkInAt  DateTime  @map("check_in_at")
+  checkOutAt DateTime? @map("check_out_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  staff    Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  location StaffLocation @relation(fields: [locationId], references: [id])
+
+  @@unique([staffId, date])
+  @@index([locationId, date])
+  @@map("attendance_records")
+}
+
+enum InventoryEntryType {
+  RECEIVED
+  SOLD
+}
+
+model InventoryLogEntry {
+  id          String             @id @default(uuid())
+  locationId  String             @map("location_id")
+  staffId     String             @map("staff_id")
+  productName String             @map("product_name")
+  type        InventoryEntryType
+  quantity    Int
+  note        String?
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  staff    Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  location StaffLocation @relation(fields: [locationId], references: [id])
+
+  @@index([locationId, productName])
+  @@map("inventory_log_entries")
 }
 
 // ─── Beautician Provider App ───────────────────────────────────────────────────

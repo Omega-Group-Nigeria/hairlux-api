@@ -8,9 +8,10 @@ import { BranchService } from './branch.service';
 import { BranchCatalogService } from './services/branch-catalog.service';
 import { BranchLocationService } from './services/branch-location.service';
 import { BranchServiceConfigService } from './services/branch-service-config.service';
+import { StaffModule } from 'src/staff/staff.module';
 
 @Module({
-  imports: [PrismaModule, RedisModule, forwardRef(() => ServiceCatalogModule)],
+  imports: [PrismaModule, RedisModule, StaffModule, forwardRef(() => ServiceCatalogModule)],
   controllers: [BranchController, AdminBranchController],
   providers: [
     BranchService,

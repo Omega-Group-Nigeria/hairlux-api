@@ -53,6 +53,20 @@ export class AdminApplicationController {
     return { success: true, message: 'Applications retrieved successfully', data };
   }
 
+  @Get('report')
+@ApiOperation({
+  summary: 'Basic recruitment report',
+  description: 'Applicants per role, status breakdown, and average time-to-hire.',
+})
+@ApiResponse({ status: 200, description: 'Recruitment report retrieved successfully' })
+@ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
+@ApiResponse({ status: 403, description: 'Forbidden - Missing application:read permission' })
+@Permission(PERMISSIONS.APPLICATION_READ)
+async getRecruitmentReport() {
+  const data = await this.applicationService.getRecruitmentReport();
+  return { success: true, message: 'Recruitment report retrieved successfully', data };
+}
+
   @Get(':id')
   @ApiOperation({ summary: 'Get one application' })
   @ApiParam({ name: 'id', description: 'Application ID' })

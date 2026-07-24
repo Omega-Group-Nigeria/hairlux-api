@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
 } from 'class-validator';
 
@@ -15,6 +16,20 @@ export class UpdateBranchDto {
   @MaxLength(100)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   name?: string;
+
+  @ApiPropertyOptional({
+  example: 'IKY',
+  description:
+    'Short branch code used in staff IDs. 2-5 uppercase letters. Changing ' +
+    'this does NOT retroactively rename existing staff codes at this branch.',
+})
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{2,5}$/, {
+   message: 'code must be 2-5 uppercase letters (e.g. LEK, IFE, ABJ)',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  code?: string;
 
   @ApiPropertyOptional({
     example: '15 Admiralty Way, Lekki Phase 1, Lagos',

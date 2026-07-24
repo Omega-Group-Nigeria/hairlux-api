@@ -237,6 +237,38 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   return this.client.userRoleAssignment;
 }
 
+get staffOnboardingItem() {
+    return this.client.staffOnboardingItem;
+  }
+
+  get companyDocument() {
+    return this.client.companyDocument;
+  }
+
+  get staffDocumentAcknowledgment() {
+    return this.client.staffDocumentAcknowledgment;
+  }
+
+  get announcement() {
+    return this.client.announcement;
+  }
+
+  get announcementRead() {
+    return this.client.announcementRead;
+  }
+
+  get directive() {
+    return this.client.directive;
+  }
+
+  get attendanceRecord() {
+    return this.client.attendanceRecord;
+  }
+
+  get inventoryLogEntry() {
+    return this.client.inventoryLogEntry;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }

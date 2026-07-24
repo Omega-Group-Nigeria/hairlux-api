@@ -6,6 +6,7 @@ import {
   IsDateString,
   IsIn,
   IsUUID,
+  MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
@@ -82,6 +83,13 @@ export class CreateStaffDto {
   @IsOptional()
   @IsDateString()
   dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: '45 Ring Road, Ibadan, Oyo State' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(({ value }) => toTrimmedString(value))
+  address?: string;
 
   @ApiPropertyOptional({
     enum: STAFF_EMPLOYMENT_STATUS_VALUES,

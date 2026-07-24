@@ -59,6 +59,7 @@ export const PERMISSIONS = {
   STAFF_ARCHIVE: 'staff:archive', // Archive / restore staff
   STAFF_MANAGE_STATUS: 'staff:manage_status', // Update employment status
   STAFF_MANAGE_LOCATIONS: 'staff:manage_locations', // Manage staff locations
+  STAFF_MANAGE_DOCUMENTS: 'staff:manage_documents', // Create/version company documents (contracts, NDA, handbook, etc.)
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   SETTINGS_READ: 'settings:read', // View system settings
@@ -233,6 +234,10 @@ export const PERMISSION_GROUPS = [
       {
         key: PERMISSIONS.STAFF_MANAGE_LOCATIONS,
         label: 'Manage staff locations',
+      },
+      {
+        key: PERMISSIONS.STAFF_MANAGE_DOCUMENTS,
+        label: 'Create and version company documents (contracts, NDA, handbook, etc.)',
       },
     ],
   },

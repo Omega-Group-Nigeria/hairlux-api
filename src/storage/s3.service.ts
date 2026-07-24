@@ -69,6 +69,22 @@ export class S3Service {
   }
 
   /**
+ * Downloads an object's raw bytes directly -- for server-side use only
+ * (e.g. embedding a photo into a generated PDF), where round-tripping
+ * through a presigned URL + HTTP fetch would be unnecessary overhead.
+ */
+  async downloadObject(key: string): Promise<Buffer> {
+    const response = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),);
+    const stream = response.Body as NodeJS.ReadableStream;
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+
+  /**
    * Generates a time-limited signed URL for viewing/downloading a private
    * object. Default 1 hour — deliberately longer than the 5-minute
    * Redis cache TTL used elsewhere in this app, so a cached response never

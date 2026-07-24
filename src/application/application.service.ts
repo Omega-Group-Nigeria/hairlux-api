@@ -74,6 +74,17 @@ interface ApplicationModelDelegate {
   count(args?: QueryArgs): Promise<number>;
 }
 
+const ALLOWED_STATUS_TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
+  SUBMITTED: [ApplicationStatus.UNDER_REVIEW, ApplicationStatus.NOT_SELECTED],
+  UNDER_REVIEW: [ApplicationStatus.SHORTLISTED, ApplicationStatus.NOT_SELECTED],
+  SHORTLISTED: [ApplicationStatus.NOT_SELECTED],
+  INTERVIEW_SCHEDULED: [ApplicationStatus.INTERVIEW_COMPLETED, ApplicationStatus.NOT_SELECTED],
+  INTERVIEW_COMPLETED: [ApplicationStatus.OFFER_EXTENDED, ApplicationStatus.NOT_SELECTED],
+  OFFER_EXTENDED: [ApplicationStatus.NOT_SELECTED],
+  EMPLOYED: [],
+  NOT_SELECTED: [],
+};
+
 @Injectable()
 export class ApplicationService {
   private readonly logger = new Logger(ApplicationService.name);
@@ -139,6 +150,23 @@ export class ApplicationService {
 }
 
   async submit(dto: CreateApplicationDto) {
+    if (dto.jobId) {
+      const existing = await this.applicationModel.findFirst({
+        where: {
+          nin: dto.nin,
+          jobId: dto.jobId,
+          status: { not: ApplicationStatus.NOT_SELECTED },
+        },
+        select: { id: true, status: true },
+      });
+
+    if (existing) {
+      throw new ConflictException(
+        existing.status === ApplicationStatus.EMPLOYED
+          ? 'You have already been hired for this role.'
+          : 'You already have an active application for this role. Check your applicant dashboard for its status.',);
+        }
+      }
     const applicationCode = await this.generateApplicationCode();
     const { otp, otpHash, otpExpiresAt } = await this.generateOtp();
 
@@ -240,6 +268,11 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
     throw new BadRequestException('Invalid application code or OTP');
   }
 
+  await this.applicationModel.update({
+    where: { id: application.id },
+    data: { otpHash: null, otpExpiresAt: null },
+  });
+
   return application.id;
 }
 
@@ -317,6 +350,60 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
     return sanitized;
   }
 
+/**
+   * Basic recruitment report per the original brief: applicants per role,
+   * status breakdown, and average time-to-hire. Aggregated in JS rather
+   * than a Prisma groupBy -- application volumes here are small enough
+   * that this is simpler than adding groupBy typing to the model delegate,
+   * and keeps this consistent with the "basic" scope the brief asked for.
+   */
+  async getRecruitmentReport() {
+    const applications = await this.applicationModel.findMany({
+      select: {
+        appliedRole: true,
+        status: true,
+        createdAt: true,
+        employedAt: true,
+      } as unknown as QueryArgs,
+    });
+
+    const byRoleMap = new Map<string, number>();
+    const byStatusMap = new Map<string, number>();
+    const hireDurationsDays: number[] = [];
+
+    for (const app of applications as unknown as Array<{
+      appliedRole: string | null;
+      status: string;
+      createdAt: Date;
+      employedAt: Date | null;
+    }>) {
+      const role = app.appliedRole || 'Unspecified';
+      byRoleMap.set(role, (byRoleMap.get(role) ?? 0) + 1);
+      byStatusMap.set(app.status, (byStatusMap.get(app.status) ?? 0) + 1);
+
+      if (app.status === 'EMPLOYED' && app.employedAt) {
+        const days = (new Date(app.employedAt).getTime() - new Date(app.createdAt).getTime()) / 86400000;
+        if (days >= 0) hireDurationsDays.push(days);
+      }
+    }
+
+    const averageTimeToHireDays = hireDurationsDays.length
+      ? Math.round((hireDurationsDays.reduce((a, b) => a + b, 0) / hireDurationsDays.length) * 10) / 10
+      : null;
+
+    return {
+      totalApplications: applications.length,
+      byRole: Array.from(byRoleMap.entries())
+        .map(([role, count]) => ({ role, count }))
+        .sort((a, b) => b.count - a.count),
+      byStatus: Array.from(byStatusMap.entries())
+        .map(([status, count]) => ({ status, count }))
+        .sort((a, b) => b.count - a.count),
+      averageTimeToHireDays,
+      hiredCount: hireDurationsDays.length,
+    };
+  }
+
   private async sanitize(application: ApplicationRecord) {
     const { otpHash, otpExpiresAt, cvUrl, interviewLocation, ...rest } = application;
     void otpHash;
@@ -337,12 +424,19 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
     if (!existing) {
       throw new NotFoundException('Application not found');
     }
-    if (existing.status === ApplicationStatus.EMPLOYED) {
-      throw new BadRequestException('This application has already been converted to a staff record');
-    }
+
     if (dto.status === ApplicationStatus.EMPLOYED) {
       throw new BadRequestException('Use POST /admin/applications/:id/convert-to-staff to mark an applicant as employed');
     }
+
+    const allowedNext = ALLOWED_STATUS_TRANSITIONS[existing.status] ?? [];
+    if (!allowedNext.includes(dto.status)) {
+      throw new BadRequestException(
+        allowedNext.length
+          ? `Cannot move from ${existing.status} to ${dto.status}. Valid next status(es): ${allowedNext.join(', ')}.`
+          : `${existing.status} is a terminal status — no further transitions are allowed.`,
+        );
+      }
 
     const updated = await this.applicationModel.update({
       where: { id },
@@ -379,29 +473,39 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
   }
 
   async scheduleInterview(id: string, dto: ScheduleInterviewDto) {
-  const existing = await this.applicationModel.findUnique({ where: { id } });
-  if (!existing) {
-    throw new NotFoundException('Application not found');
+    const existing = await this.applicationModel.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Application not found');
+    }
+
+    const canSchedule =
+    existing.status === ApplicationStatus.SHORTLISTED ||
+    existing.status === ApplicationStatus.INTERVIEW_SCHEDULED;
+
+    if (!canSchedule) {
+      throw new BadRequestException(
+        `Cannot schedule an interview from status ${existing.status}. The application must be SHORTLISTED first.`,
+      );
+    }
+
+    const updated = await this.applicationModel.update({
+      where: { id },
+      data: {
+        status: ApplicationStatus.INTERVIEW_SCHEDULED,
+        interviewScheduledAt: new Date(dto.scheduledAt),
+        interviewMode: dto.mode,
+        interviewLocationId: dto.mode === 'IN_PERSON' ? dto.locationId : null,
+        interviewMeetingUrl: dto.mode === 'VIRTUAL' ? dto.meetingUrl : null,
+        interviewerName: dto.interviewerName,
+        interviewNote: this.normalizeNullableString(dto.note),
+      },
+    });
+
+    this.notifyInterviewScheduled(updated, dto);
+
+    await this.invalidateCache(updated.id);
+    return this.findOne(updated.id);
   }
-
-  const updated = await this.applicationModel.update({
-    where: { id },
-    data: {
-      status: ApplicationStatus.INTERVIEW_SCHEDULED,
-      interviewScheduledAt: new Date(dto.scheduledAt),
-      interviewMode: dto.mode,
-      interviewLocationId: dto.mode === 'IN_PERSON' ? dto.locationId : null,
-      interviewMeetingUrl: dto.mode === 'VIRTUAL' ? dto.meetingUrl : null,
-      interviewerName: dto.interviewerName,
-      interviewNote: this.normalizeNullableString(dto.note),
-    },
-  });
-
-  this.notifyInterviewScheduled(updated, dto);
-
-  await this.invalidateCache(updated.id);
-  return this.findOne(updated.id);
-}
 
   private notifyInterviewScheduled(application: ApplicationRecord, dto: ScheduleInterviewDto) {
     const dashboardUrl = this.configService.get<string>('APPLICANT_DASHBOARD_URL')
@@ -439,7 +543,7 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
    * staff codes, opening employment history, and duplicate-email checks all
    * happen exactly the same way as a manually-created staff record.
    */
-  async convertToStaff(id: string, locationId: string, actingAdminId?: string) {
+async convertToStaff(id: string, locationId: string, actingAdminId?: string) {
   const application = await this.applicationModel.findUnique({ where: { id } });
   if (!application) {
     throw new NotFoundException('Application not found');
@@ -448,11 +552,67 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
     throw new ConflictException('This application has already been converted to a staff record');
   }
 
+  // NIN-based duplicate-staff check -- the email/User-based check further
+  // below only catches a match if this applicant's email happens to match
+  // an existing account. It completely misses the same real person applying
+  // under a DIFFERENT email with the SAME NIN. Block if that person already
+  // has an active-ish staff record; just warn (don't block) if the only
+  // match is a former employee who exited, since that's a legitimate
+  // rehire, not a data error, and shouldn't be silently blocked.
+  let rehireWarning: string | undefined;
+  const otherApplicationsWithSameNin = await this.applicationModel.findMany({
+    where: {
+      nin: application.nin,
+      staffId: { not: null },
+      id: { not: application.id },
+    } as unknown as QueryArgs,
+  });
+  for (const other of otherApplicationsWithSameNin as unknown as Array<{ staffId: string | null }>) {
+    if (!other.staffId) continue;
+    const existingStaff = await this.staffService.findOne(other.staffId).catch(() => null);
+    if (!existingStaff) continue;
+    const status = (existingStaff as unknown as { employmentStatus?: string }).employmentStatus;
+    const staffCode = (existingStaff as unknown as { staffCode?: string }).staffCode;
+    if (status && !['EXITED', 'ARCHIVED'].includes(status)) {
+      throw new ConflictException(
+        `This NIN is already linked to an active staff record (${staffCode}). Cannot create a duplicate staff record for the same person.`,
+      );
+    }
+    if (staffCode) {
+      rehireWarning = `This person appears to be a returning employee (previously ${staffCode}, now ${(status ?? 'unknown').toLowerCase()}). A new staff record is being created rather than reactivating the old one -- review manually if this should instead be a rehire.`;
+    }
+  }
+
   const fullName = [application.firstName, application.middleName, application.lastName]
     .filter(Boolean).join(' ');
 
+  // Application.dateOfBirth is a free-text string (sourced from NIN lookup
+  // at application time) -- Staff.dateOfBirth requires a clean ISO date.
+  // Parse defensively: a malformed source string should skip this one
+  // field, not block the entire hire.
+  let staffDateOfBirth: string | undefined;
+  if (application.dateOfBirth) {
+    const parsed = new Date(application.dateOfBirth);
+    if (!Number.isNaN(parsed.getTime())) {
+      staffDateOfBirth = parsed.toISOString().slice(0, 10);
+    } else {
+      this.logger.warn(
+        `convertToStaff: could not parse dateOfBirth "${application.dateOfBirth}" for application ${application.applicationCode} -- left blank on the new Staff record.`,
+      );
+    }
+  }
+
   // ── Resolve or create the User account ──
   let user = await this.prisma.user.findUnique({ where: { email: application.email } });
+
+  if (user) {
+  const existingStaff = await this.prisma.staff.findUnique({ where: { userId: user.id } });
+  if (existingStaff) {
+    throw new ConflictException(
+      `This person is already a staff member (${existingStaff.staffCode}). Cannot create a duplicate staff record.`,
+    );
+  }
+}
 
   if (user) {
     // Existing account (e.g. a customer being hired) — their password and
@@ -499,6 +659,8 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
     locationId,
     email: application.email,
     phone: application.phone,
+    dateOfBirth: staffDateOfBirth,
+    address: application.address,
     employmentStatus: 'ACTIVE',
     employmentNotes: `Converted from application ${application.applicationCode}`,
     userId: user.id,
@@ -512,6 +674,6 @@ async verifyOtp(applicationCode: string, otp: string): Promise<string> {
   await this.authService.initiatePasswordSetup(user.id);
 
   await this.invalidateCache(id);
-  return staff;
+  return rehireWarning ? { ...staff, rehireWarning } : staff;
 }
 }

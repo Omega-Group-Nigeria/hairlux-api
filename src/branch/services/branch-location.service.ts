@@ -8,6 +8,7 @@ import { RedisService } from '../../redis/redis.service';
 import { CreateBranchDto } from '../dto/create-branch.dto';
 import { QueryAdminBranchesDto } from '../dto/query-admin-branches.dto';
 import { UpdateBranchDto } from '../dto/update-branch.dto';
+import { StaffService } from 'src/staff/staff.service';
 
 const ACTIVE_STAFF_STATUSES = ['ACTIVE', 'ON_LEAVE', 'SUSPENDED'] as const;
 
@@ -16,6 +17,7 @@ export class BranchLocationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly staffService: StaffService,
   ) {}
 
   async create(dto: CreateBranchDto) {
@@ -28,9 +30,21 @@ export class BranchLocationService {
       throw new ConflictException('Branch with this name already exists');
     }
 
+    const code = dto.code ?? (await this.staffService.suggestBranchCode(dto.name));
+    const duplicateCode = await this.prisma.staffLocation.findFirst({
+      where: { code },
+      select: { id: true },
+    });
+    if (duplicateCode) {
+      throw new ConflictException(
+        `Branch code "${code}" is already in use — choose a different code`,
+      );
+    }
+
     const branch = await this.prisma.staffLocation.create({
       data: {
         name: dto.name,
+        code,
         address: dto.address,
       },
     });
@@ -82,6 +96,18 @@ export class BranchLocationService {
       }
     }
 
+    if (dto.code) {
+      const duplicateCode = await this.prisma.staffLocation.findFirst({
+        where: { id: { not: id }, code: dto.code },
+        select: { id: true },
+      });
+      if (duplicateCode) {
+        throw new ConflictException(
+          `Branch code "${dto.code}" is already in use — choose a different code`,
+        );
+      }
+    }
+
     if (dto.isActive === false) {
       const activeStaffCount = await this.prisma.staff.count({
         where: {
@@ -101,6 +127,7 @@ export class BranchLocationService {
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.code !== undefined && { code: dto.code }),
         ...(dto.address !== undefined && { address: dto.address }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
       },

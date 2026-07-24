@@ -72,4 +72,23 @@ export class UpdateStaffDto {
   @IsOptional()
   @IsDateString()
   exitDate?: string;
+
+  @ApiPropertyOptional({
+    example: 'Opens the branch, manages front-desk bookings, handles cash reconciliation.',
+    description: "Free-text description of this staff member's current responsibilities",
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => toTrimmedString(value))
+  responsibilities?: string;
+
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    description: "This staff member's direct supervisor/manager (another Staff record's id). Send null to clear.",
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID()
+  reportingToId?: string;
+
 }

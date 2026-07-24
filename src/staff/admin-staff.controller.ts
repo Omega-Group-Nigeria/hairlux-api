@@ -8,8 +8,12 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
+  Res, 
+  StreamableFile,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -25,10 +29,13 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { Permission } from '../auth/decorators/permission.decorator';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { StaffService } from './staff.service';
+import { CompanyDocumentService } from './company-document.service';
+import { StaffCommsService } from './staff-comms.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { QueryStaffDto } from './dto/query-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import { UpdateStaffStatusDto } from './dto/update-staff-status.dto';
+import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
 import { AddEmploymentHistoryDto } from './dto/add-employment-history.dto';
 import { UpdateEmploymentHistoryDto } from './dto/update-employment-history.dto';
 import { QueryUpcomingBirthdaysDto } from './dto/query-upcoming-birthdays.dto';
@@ -43,7 +50,11 @@ import { UpdateStaffLocationDto } from './dto/update-staff-location.dto';
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminStaffController {
-  constructor(private readonly staffService: StaffService) {}
+  constructor(private readonly staffService: StaffService,
+  private readonly documentService: CompanyDocumentService,
+  private readonly commsService: StaffCommsService,
+
+) {}
 
   @Post()
   @ApiOperation({
@@ -138,6 +149,35 @@ export class AdminStaffController {
     return {
       success: true,
       message: 'Upcoming birthdays retrieved successfully',
+      data,
+    };
+  }
+
+  @Get('locations/suggest-code')
+  @ApiOperation({
+    summary: 'Suggest a branch code from a proposed branch name',
+    description:
+      'Returns a suggested 2-3 letter code (e.g. "Lekki Branch" -> "LEK") for the ' +
+      'admin UI to pre-fill on the create-branch form. This does NOT create or ' +
+      'reserve anything — the admin must confirm or edit the code before submitting ' +
+      'POST /admin/staff/locations, since the code is printed on staff ID cards and ' +
+      'is effectively permanent once staff are hired against it.',
+  })
+  @ApiResponse({ status: 200, description: 'Suggested code returned' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:manage_locations permission',
+  })
+  @Permission(PERMISSIONS.STAFF_MANAGE_LOCATIONS)
+  async suggestLocationCode(@Query('name') name: string) {
+    const data = await this.staffService.previewBranchCode(name ?? '');
+    return {
+      success: true,
+      message: 'Branch code suggestion generated successfully',
       data,
     };
   }
@@ -270,6 +310,15 @@ export class AdminStaffController {
       message: 'Staff location deleted successfully',
     };
   }
+
+  @Get('onboarding-summary')
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getOnboardingSummary() {
+    const data = await this.staffService.getOnboardingSummary();
+    return { success: true, message: 'Onboarding summary retrieved successfully', data };
+  }
+
+@Get(':id')
 
   @Get(':id')
   @ApiOperation({ summary: 'Get one staff record with employment history' })
@@ -553,6 +602,139 @@ export class AdminStaffController {
     return {
       success: true,
       message: 'Employment history removed successfully',
+    };
+  }
+
+  @Get(':id/passport-photo')
+  @ApiOperation({ summary: "Get a fresh view URL for a staff member's uploaded passport photo" })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @ApiResponse({ status: 200, description: 'View URL retrieved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:read permission' })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getPassportPhoto(@Param('id', ParseUUIDPipe) id: string) {
+    const viewUrl = await this.staffService.getPassportPhotoViewUrl(id);
+    return { success: true, message: 'View URL retrieved successfully', data: { viewUrl } };
+  }
+
+  @Get(':id/onboarding')
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getOnboardingItems(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.staffService.getOnboardingItems(id);
+    return { success: true, message: 'Onboarding checklist retrieved successfully', data };
+  }
+
+@Patch(':id/onboarding/:itemId')
+@Permission(PERMISSIONS.STAFF_UPDATE)
+async updateOnboardingItem(
+  @Param('id', ParseUUIDPipe) id: string,
+  @Param('itemId', ParseUUIDPipe) itemId: string,
+  @Body() dto: UpdateOnboardingItemDto,
+  @Req() req: any,
+) {
+  const data = await this.staffService.updateOnboardingItem(id, itemId, dto, req.user?.id);
+  return { success: true, message: 'Onboarding item updated successfully', data };
+}
+
+@Get(':id/documents')
+@Permission(PERMISSIONS.STAFF_READ)
+async getStaffDocumentStatus(@Param('id', ParseUUIDPipe) id: string) {
+  const data = await this.documentService.getStaffDocumentStatus(id);
+  return { success: true, message: 'Document status retrieved successfully', data };
+}
+
+@Get(':id/directives')
+@Permission(PERMISSIONS.STAFF_READ)
+async getStaffDirectives(@Param('id', ParseUUIDPipe) id: string) {
+  const data = await this.commsService.getDirectivesForStaff(id);
+  return { success: true, message: 'Directives retrieved successfully', data };
+}
+
+@Get(':id/id-card.pdf')
+@Permission(PERMISSIONS.STAFF_READ)
+async downloadIdCard(
+  @Param('id', ParseUUIDPipe) id: string,
+  @Res({ passthrough: true }) res: Response,
+): Promise<StreamableFile> {
+  const pdfBuffer = await this.staffService.generateIdCardPdf(id);
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `inline; filename="staff-id-${id}.pdf"`,
+  });
+  return new StreamableFile(pdfBuffer);
+}
+
+  @Get('legacy-account-backfill/preview')
+  @ApiOperation({
+    summary: 'Preview legacy staff account backfill (dry run only)',
+    description:
+      'Read-only. Shows what would happen for every staff record that has no ' +
+      'linked user account — resolved login email (existing Staff.email, or a ' +
+      'generated firstname.lastname@hairlux.com.ng), and whether a matching User ' +
+      'already exists (link) or would be created fresh. Creates nothing. Use this ' +
+      'to review the list before manually triggering each one via POST ' +
+      '/admin/staff/:id/link-user-account, after giving that staff member a ' +
+      'heads-up in person — this is intentionally not an auto-fire-all-at-once flow.',
+  })
+  @ApiResponse({ status: 200, description: 'Backfill plan generated successfully' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:read permission',
+  })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async previewLegacyAccountBackfill() {
+    const data = await this.staffService.previewLegacyAccountBackfill();
+    return {
+      success: true,
+      message: 'Legacy account backfill plan generated successfully',
+      data,
+    };
+  }
+
+  @Post(':id/link-user-account')
+  @ApiOperation({
+    summary: 'Create or link a user account for one legacy staff member',
+    description:
+      'Admin-triggered, one staff member at a time — only call this after the ' +
+      'admin has told this specific person in person that their dashboard access ' +
+      'is coming, since it sends the password-setup email immediately. Mirrors ' +
+      'the same resolution logic as converting a job applicant to staff: an ' +
+      'existing User account found by email gets STAFF granted alongside ' +
+      'whatever they already are; no match creates a fresh account with a ' +
+      'random, never-transmitted password, with real credentials set via the ' +
+      'password-setup link.',
+  })
+  @ApiParam({ name: 'id', description: 'Staff record ID' })
+  @ApiResponse({ status: 200, description: 'User account linked successfully' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT missing or invalid',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Missing staff:update permission',
+  })
+  @ApiResponse({ status: 404, description: 'Staff record not found' })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Staff member already has a linked account, or the resolved email is ' +
+      'already linked to a different staff member',
+  })
+  @Permission(PERMISSIONS.STAFF_UPDATE)
+  async linkUserAccountForStaff(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: any,
+  ) {
+    const data = await this.staffService.linkUserAccountForStaff(id, req.user?.id);
+    return {
+      success: true,
+      message: 'Staff account linked successfully — password-setup email sent',
+      data,
     };
   }
 }
