@@ -1,7 +1,7 @@
 import { IsString, IsNotEmpty, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
-export class VerifyOtpDto {
+export class VerifyApplicantOtpDto {
   @ApiProperty({ example: 'HL-APP-2026-004821' })
   @IsString()
   @IsNotEmpty()

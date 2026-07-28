@@ -244,6 +244,47 @@ enum OnboardingItemReviewStatus {
   COMPLETE
 }
 
+enum CompanyDocumentType {
+  EMPLOYMENT_CONTRACT
+  NDA
+  IT_ACCEPTABLE_USE_POLICY
+  STAFF_HANDBOOK
+  CODE_OF_CONDUCT
+  DATA_PROTECTION_POLICY
+}
+
+enum JobPostingStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+  ON_LEAVE
+  APPROVED_PERMISSION
+  PUBLIC_HOLIDAY
+}
+
+enum LeaveRequestType {
+  ANNUAL_LEAVE
+  SICK_LEAVE
+  CASUAL_LEAVE
+  DAY_OFF
+  PERMISSION_LATE_ARRIVAL
+  PERMISSION_EARLY_DEPARTURE
+  OVERTIME_REQUEST
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model StaffOnboardingItem {
   id           String                     @id @default(uuid())
   staffId      String                     @map("staff_id")
@@ -262,15 +303,6 @@ model StaffOnboardingItem {
   @@map("staff_onboarding_items")
 }
 
-enum CompanyDocumentType {
-  EMPLOYMENT_CONTRACT
-  NDA
-  IT_ACCEPTABLE_USE_POLICY
-  STAFF_HANDBOOK
-  CODE_OF_CONDUCT
-  DATA_PROTECTION_POLICY
-}
-
 model CompanyDocument {
   id         String              @id @default(uuid())
   type       CompanyDocumentType
@@ -283,6 +315,31 @@ model CompanyDocument {
   acknowledgments StaffDocumentAcknowledgment[]
 
   @@map("company_documents")
+}
+
+enum InterviewOutcome {
+  PASS
+  FAIL
+  HOLD
+}
+
+enum OfferLetterStatus {
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  SHORTLISTED
+  INTERVIEW_SCHEDULED
+  INTERVIEW_COMPLETED
+  OFFER_EXTENDED
+  EMPLOYED
+  NOT_SELECTED
 }
 
 model StaffDocumentAcknowledgment {
@@ -301,61 +358,63 @@ model StaffDocumentAcknowledgment {
 }
 
 model User {
-  id               String    @id @default(uuid())
-  email            String    @unique
+  id               String     @id @default(uuid())
+  email            String     @unique
   password         String
-  firstName        String    @map("first_name")
-  lastName         String    @map("last_name")
+  firstName        String     @map("first_name")
+  lastName         String     @map("last_name")
   phone            String?
-  dateOfBirth      DateTime? @map("date_of_birth") @db.Date
-  role             UserRole  @default(USER)
+  dateOfBirth      DateTime?  @map("date_of_birth") @db.Date
+  role             UserRole   @default(USER)
   status           UserStatus @default(ACTIVE)
-  emailVerified    Boolean   @default(false) @map("email_verified")
-  otpCode          String?   @map("otp_code")
-  otpExpiry        DateTime? @map("otp_expiry")
-  resetToken       String?   @map("reset_token")
-  resetTokenExpiry DateTime? @map("reset_token_expiry")
-  currentSessionId String?   @map("current_session_id")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  emailVerified    Boolean    @default(false) @map("email_verified")
+  otpCode          String?    @map("otp_code")
+  otpExpiry        DateTime?  @map("otp_expiry")
+  resetToken       String?    @map("reset_token")
+  resetTokenExpiry DateTime?  @map("reset_token_expiry")
+  currentSessionId String?    @map("current_session_id")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
 
   // PIN (transaction / security PIN) - stored hashed
-  pin                String?   @map("pin")
-  pinSetAt           DateTime? @map("pin_set_at")
-  pinFailedAttempts  Int       @default(0) @map("pin_failed_attempts")
-  pinLockedUntil     DateTime? @map("pin_locked_until")
+  pin               String?   @map("pin")
+  pinSetAt          DateTime? @map("pin_set_at")
+  pinFailedAttempts Int       @default(0) @map("pin_failed_attempts")
+  pinLockedUntil    DateTime? @map("pin_locked_until")
 
-  adminRoleId      String?    @map("admin_role_id")
+  adminRoleId String? @map("admin_role_id")
 
   // Relations
-  addresses       Address[]
-  bookings        Booking[]
-  wallet          Wallet?
-  reviews         Review[]
-  refreshTokens   RefreshToken[]
-  referralCode    ReferralCode?
-  referrals       Referral[]     @relation("ReferrerUser")
-  referredBy      Referral?      @relation("ReferredUser")
-  referralCampaignUsages ReferralCampaignCodeUsage[]
-  discountUsages  DiscountUsage[] @relation("UserDiscountUsages")
-  adminRole       AdminRole?     @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
-  influencer      Influencer?
-  shopOrders      ShopOrder[]
-  beauticianProfile        BeauticianProfile?
-  assignedBookings         Booking[] @relation("AssignedBeautician")
-  jobOffers                JobOffer[]
-  beauticianServicesAssigned BeauticianService[] @relation("BeauticianServiceAssignedBy")
-  profileReviewsPerformed  BeauticianProfile[] @relation("ProfileReviewedBy")
-  payoutRequests           PayoutRequest[] @relation("UserPayoutRequests")
-  payoutsProcessed         PayoutRequest[] @relation("PayoutProcessedBy")
-  fcmTokens                FcmToken[]
-  beauticianLocationHistory BeauticianLocationHistory[] @relation("BeauticianLocationHistory")
-  roleAssignments           UserRoleAssignment[] @relation("UserRoleAssignments")
-  roleAssignmentsGranted    UserRoleAssignment[] @relation("RoleAssignedBy")
-  staff                     Staff?
-  createdAnnouncements      Announcement[] @relation("AnnouncementCreatedBy")
-  createdDirectives         Directive[]    @relation("DirectiveCreatedBy")
-
+  addresses                  Address[]
+  bookings                   Booking[]
+  wallet                     Wallet?
+  reviews                    Review[]
+  refreshTokens              RefreshToken[]
+  referralCode               ReferralCode?
+  referrals                  Referral[]                  @relation("ReferrerUser")
+  referredBy                 Referral?                   @relation("ReferredUser")
+  referralCampaignUsages     ReferralCampaignCodeUsage[]
+  discountUsages             DiscountUsage[]             @relation("UserDiscountUsages")
+  adminRole                  AdminRole?                  @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
+  influencer                 Influencer?
+  shopOrders                 ShopOrder[]
+  beauticianProfile          BeauticianProfile?
+  assignedBookings           Booking[]                   @relation("AssignedBeautician")
+  jobOffers                  JobOffer[]
+  offerLettersGenerated      OfferLetter[]               @relation("OfferLetterGeneratedBy")
+  employmentApprovalsGranted EmploymentApproval[]        @relation("EmploymentApprovalApprovedBy")
+  attendanceCorrections      AttendanceRecord[]          @relation("AttendanceAdjustedBy")
+  beauticianServicesAssigned BeauticianService[]         @relation("BeauticianServiceAssignedBy")
+  profileReviewsPerformed    BeauticianProfile[]         @relation("ProfileReviewedBy")
+  payoutRequests             PayoutRequest[]             @relation("UserPayoutRequests")
+  payoutsProcessed           PayoutRequest[]             @relation("PayoutProcessedBy")
+  fcmTokens                  FcmToken[]
+  beauticianLocationHistory  BeauticianLocationHistory[] @relation("BeauticianLocationHistory")
+  roleAssignments            UserRoleAssignment[]        @relation("UserRoleAssignments")
+  roleAssignmentsGranted     UserRoleAssignment[]        @relation("RoleAssignedBy")
+  staff                      Staff?
+  createdAnnouncements       Announcement[]              @relation("AnnouncementCreatedBy")
+  createdDirectives          Directive[]                 @relation("DirectiveCreatedBy")
 
   @@index([role])
   @@index([status])
@@ -364,11 +423,11 @@ model User {
 }
 
 model UserRoleAssignment {
-  id           String    @id @default(uuid())
-  userId       String    @map("user_id")
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
   role         UserRole
-  assignedAt   DateTime  @default(now()) @map("assigned_at")
-  assignedById String?   @map("assigned_by_id")
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+  assignedById String?  @map("assigned_by_id")
 
   user       User  @relation("UserRoleAssignments", fields: [userId], references: [id], onDelete: Cascade)
   assignedBy User? @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
@@ -393,22 +452,22 @@ model RefreshToken {
 }
 
 model Address {
-  id           String   @id @default(uuid())
-  userId       String   @map("user_id")
-  label        String?  // e.g., "Home", "Office"
-  fullAddress  String   @map("full_address")
-  streetAddress String? @map("street_address")
-  city         String?
-  state        String?
-  country      String   @default("Nigeria")
-  placeId      String?  @map("place_id")
-  addressComponents Json? @map("address_components")
-  latitude     Decimal? @db.Decimal(10, 7)
-  longitude    Decimal? @db.Decimal(10, 7)
-  isDefault    Boolean  @default(false) @map("is_default")
-  deletedAt    DateTime? @map("deleted_at")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  label             String? // e.g., "Home", "Office"
+  fullAddress       String    @map("full_address")
+  streetAddress     String?   @map("street_address")
+  city              String?
+  state             String?
+  country           String    @default("Nigeria")
+  placeId           String?   @map("place_id")
+  addressComponents Json?     @map("address_components")
+  latitude          Decimal?  @db.Decimal(10, 7)
+  longitude         Decimal?  @db.Decimal(10, 7)
+  isDefault         Boolean   @default(false) @map("is_default")
+  deletedAt         DateTime? @map("deleted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   // Relations
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -469,7 +528,7 @@ model DeliveryRegion {
   id          String   @id @default(uuid())
   name        String
   state       String   @unique
-  deliveryFee Decimal  @db.Decimal(10, 2) @map("delivery_fee")
+  deliveryFee Decimal  @map("delivery_fee") @db.Decimal(10, 2)
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -485,8 +544,8 @@ model ShopOrder {
   items                   Json
   deliveryAddressSnapshot Json            @map("delivery_address_snapshot")
   subtotal                Decimal         @db.Decimal(10, 2)
-  deliveryFee             Decimal         @db.Decimal(10, 2) @map("delivery_fee")
-  totalAmount             Decimal         @db.Decimal(10, 2) @map("total_amount")
+  deliveryFee             Decimal         @map("delivery_fee") @db.Decimal(10, 2)
+  totalAmount             Decimal         @map("total_amount") @db.Decimal(10, 2)
   status                  ShopOrderStatus @default(CONFIRMED)
   idempotencyKey          String?         @map("idempotency_key")
   notes                   String?
@@ -518,26 +577,26 @@ model ServiceCategory {
 }
 
 model Service {
-  id          String        @id @default(uuid())
-  categoryId  String        @map("category_id")
-  name        String
-  description String?
-  walkInPrice Decimal       @db.Decimal(10, 2) @map("walk_in_price")
-  homeServicePrice Decimal  @db.Decimal(10, 2) @map("home_service_price")
-  isWalkInAvailable Boolean @default(true) @map("is_walk_in_available")
-  isHomeServiceAvailable Boolean @default(true) @map("is_home_service_available")
-  duration    Int           // Duration in minutes
-  imageUrl    String?       @map("image_url")
-  imagePublicId String?     @map("image_public_id")
-  status      ServiceStatus @default(ACTIVE)
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  id                     String        @id @default(uuid())
+  categoryId             String        @map("category_id")
+  name                   String
+  description            String?
+  walkInPrice            Decimal       @map("walk_in_price") @db.Decimal(10, 2)
+  homeServicePrice       Decimal       @map("home_service_price") @db.Decimal(10, 2)
+  isWalkInAvailable      Boolean       @default(true) @map("is_walk_in_available")
+  isHomeServiceAvailable Boolean       @default(true) @map("is_home_service_available")
+  duration               Int // Duration in minutes
+  imageUrl               String?       @map("image_url")
+  imagePublicId          String?       @map("image_public_id")
+  status                 ServiceStatus @default(ACTIVE)
+  createdAt              DateTime      @default(now()) @map("created_at")
+  updatedAt              DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  category            ServiceCategory @relation(fields: [categoryId], references: [id])
-  reviews             Review[]
-  branchServices      BranchService[]
-  beauticianServices  BeauticianService[]
+  category               ServiceCategory        @relation(fields: [categoryId], references: [id])
+  reviews                Review[]
+  branchServices         BranchService[]
+  beauticianServices     BeauticianService[]
   commissionRateOverride ServiceCommissionRate?
 
   @@map("services")
@@ -548,7 +607,7 @@ model Service {
 model ServiceCommissionRate {
   id             String   @id @default(uuid())
   serviceId      String   @unique @map("service_id")
-  commissionRate Decimal  @db.Decimal(5, 4) @map("commission_rate")
+  commissionRate Decimal  @map("commission_rate") @db.Decimal(5, 4)
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
@@ -558,65 +617,65 @@ model ServiceCommissionRate {
 }
 
 model Booking {
-  id               String        @id @default(uuid())
-  userId           String        @map("user_id")
+  id                       String                   @id @default(uuid())
+  userId                   String                   @map("user_id")
   // services is a JSON array: [{serviceId, name, price, quantity, duration, notes?, serviceMode?}]
-  services         Json          @map("services")
-  addressId        String?       @map("address_id")  // null for WALK_IN-only bookings
+  services                 Json                     @map("services")
+  addressId                String?                  @map("address_id") // null for WALK_IN-only bookings
   // Temporary / current-location alternative to a saved addressId (HOME_SERVICE)
-  tempLatitude     Decimal?      @db.Decimal(10, 7) @map("temp_latitude")
-  tempLongitude    Decimal?      @db.Decimal(10, 7) @map("temp_longitude")
-  tempFullAddress  String?       @map("temp_full_address") // human-readable string
-  branchId         String?       @map("branch_id")
-  bookingDate      DateTime      @map("booking_date")
-  bookingTime      String        @map("booking_time") // Format: "HH:mm"
-  bookingType      BookingType   @default(HOME_SERVICE) @map("booking_type")
-  reservationCode  String        @unique @map("reservation_code")
-  reservationUsed  Boolean       @default(false) @map("reservation_used")
-  guestName        String?       @map("guest_name")   // null = booking for self
-  guestPhone       String?       @map("guest_phone")  // null = booking for self
-  guestEmail       String?       @map("guest_email")  // if set, notification email sent to guest
-  idempotencyKey   String?       @map("idempotency_key")
-  status           BookingStatus @default(PENDING)
-  paymentMethod    PaymentMethod @map("payment_method")
-  totalAmount      Decimal       @db.Decimal(10, 2) @map("total_amount")
-  notes            String?
-  cancelReason     String?       @map("cancel_reason")
-  assignedBeauticianUserId String? @map("assigned_beautician_user_id")
-  arrivalVerifiedAt        DateTime? @map("arrival_verified_at")
-  serviceStartedAt         DateTime? @map("service_started_at")
-  serviceCompletedAt       DateTime? @map("service_completed_at")
-  beauticianArrivalLat     Decimal?  @db.Decimal(10, 7) @map("beautician_arrival_lat")
-  beauticianArrivalLng     Decimal?  @db.Decimal(10, 7) @map("beautician_arrival_lng")
-  customerRating           Int?      @map("customer_rating")
-  customerReview           String?   @map("customer_review")
-  matchingAttempt          Int                     @default(1) @map("matching_attempt")
-  matchingStartedAt        DateTime?               @map("matching_started_at")
-  matchingExhaustedAt      DateTime?               @map("matching_exhausted_at")
+  tempLatitude             Decimal?                 @map("temp_latitude") @db.Decimal(10, 7)
+  tempLongitude            Decimal?                 @map("temp_longitude") @db.Decimal(10, 7)
+  tempFullAddress          String?                  @map("temp_full_address") // human-readable string
+  branchId                 String?                  @map("branch_id")
+  bookingDate              DateTime                 @map("booking_date")
+  bookingTime              String                   @map("booking_time") // Format: "HH:mm"
+  bookingType              BookingType              @default(HOME_SERVICE) @map("booking_type")
+  reservationCode          String                   @unique @map("reservation_code")
+  reservationUsed          Boolean                  @default(false) @map("reservation_used")
+  guestName                String?                  @map("guest_name") // null = booking for self
+  guestPhone               String?                  @map("guest_phone") // null = booking for self
+  guestEmail               String?                  @map("guest_email") // if set, notification email sent to guest
+  idempotencyKey           String?                  @map("idempotency_key")
+  status                   BookingStatus            @default(PENDING)
+  paymentMethod            PaymentMethod            @map("payment_method")
+  totalAmount              Decimal                  @map("total_amount") @db.Decimal(10, 2)
+  notes                    String?
+  cancelReason             String?                  @map("cancel_reason")
+  assignedBeauticianUserId String?                  @map("assigned_beautician_user_id")
+  arrivalVerifiedAt        DateTime?                @map("arrival_verified_at")
+  serviceStartedAt         DateTime?                @map("service_started_at")
+  serviceCompletedAt       DateTime?                @map("service_completed_at")
+  beauticianArrivalLat     Decimal?                 @map("beautician_arrival_lat") @db.Decimal(10, 7)
+  beauticianArrivalLng     Decimal?                 @map("beautician_arrival_lng") @db.Decimal(10, 7)
+  customerRating           Int?                     @map("customer_rating")
+  customerReview           String?                  @map("customer_review")
+  matchingAttempt          Int                      @default(1) @map("matching_attempt")
+  matchingStartedAt        DateTime?                @map("matching_started_at")
+  matchingExhaustedAt      DateTime?                @map("matching_exhausted_at")
   matchingExhaustedReason  MatchingExhaustedReason? @map("matching_exhausted_reason")
-  dispatchStatus           DispatchStatus?         @map("dispatch_status")
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
+  dispatchStatus           DispatchStatus?          @map("dispatch_status")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
 
   // Relations
-  user    User     @relation(fields: [userId], references: [id])
-  address Address? @relation(fields: [addressId], references: [id])
-  branch  StaffLocation? @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  assignedBeautician User? @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
-  review  Review?
-  discountUsage DiscountUsage?
-  jobOffers JobOffer[]
-  dispatchEvents DispatchEvent[]
-  locationHistory BeauticianLocationHistory[]
-  commsSession BookingCommsSession?
+  user               User                        @relation(fields: [userId], references: [id])
+  address            Address?                    @relation(fields: [addressId], references: [id])
+  branch             StaffLocation?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedBeautician User?                       @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
+  review             Review?
+  discountUsage      DiscountUsage?
+  jobOffers          JobOffer[]
+  dispatchEvents     DispatchEvent[]
+  locationHistory    BeauticianLocationHistory[]
+  commsSession       BookingCommsSession?
 
+  @@unique([userId, idempotencyKey])
   @@index([reservationCode])
   @@index([userId])
   @@index([status])
   @@index([bookingDate])
   @@index([userId, status])
   @@index([assignedBeauticianUserId])
-  @@unique([userId, idempotencyKey])
   @@map("bookings")
 }
 
@@ -635,23 +694,23 @@ model Wallet {
 }
 
 model Transaction {
-  id                String            @id @default(uuid())
-  walletId          String            @map("wallet_id")
-  type              TransactionType
-  amount            Decimal           @db.Decimal(10, 2)
-  status            TransactionStatus @default(PENDING)
-  paymentMethod     TransactionPaymentMethod @default(WALLET) @map("payment_method")
-  reference         String            @unique // Payment gateway reference or internal ref
-  description       String?
-  metadata          Json?             // Store additional payment details
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
+  id            String                   @id @default(uuid())
+  walletId      String                   @map("wallet_id")
+  type          TransactionType
+  amount        Decimal                  @db.Decimal(10, 2)
+  status        TransactionStatus        @default(PENDING)
+  paymentMethod TransactionPaymentMethod @default(WALLET) @map("payment_method")
+  reference     String                   @unique // Payment gateway reference or internal ref
+  description   String?
+  metadata      Json? // Store additional payment details
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
 
   // Relations
-  wallet           Wallet           @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  influencerReward InfluencerReward?
+  wallet                Wallet                     @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  influencerReward      InfluencerReward?
   referralCampaignUsage ReferralCampaignCodeUsage?
-  payoutRequest    PayoutRequest?
+  payoutRequest         PayoutRequest?
 
   @@index([walletId])
   @@index([walletId, status])
@@ -663,7 +722,7 @@ model Review {
   userId    String       @map("user_id")
   serviceId String       @map("service_id")
   bookingId String       @unique @map("booking_id")
-  rating    Int          // 1-5
+  rating    Int // 1-5
   comment   String?
   status    ReviewStatus @default(PENDING)
   createdAt DateTime     @default(now()) @map("created_at")
@@ -686,9 +745,9 @@ model BusinessSettings {
   email              String
   phone              String
   address            String
-  slotDuration       Int      @default(30) @map("slot_duration")        // Booking slot length in minutes
+  slotDuration       Int      @default(30) @map("slot_duration") // Booking slot length in minutes
   advanceBookingDays Int      @default(30) @map("advance_booking_days") // How many days ahead bookings allowed
-  minNoticeHours     Int      @default(2) @map("min_notice_hours")      // Minimum hours before a booking
+  minNoticeHours     Int      @default(2) @map("min_notice_hours") // Minimum hours before a booking
   maxBookingsPerDay  Int      @default(10) @map("max_bookings_per_day")
   bookingPolicy      String?  @map("booking_policy")
   cancellationPolicy String?  @map("cancellation_policy")
@@ -701,8 +760,8 @@ model BusinessSettings {
 model BusinessHours {
   id        String   @id @default(uuid())
   dayOfWeek Int      @unique @map("day_of_week") // 0=Sunday, 1=Monday ... 6=Saturday
-  openTime  String   @map("open_time")            // Format: "HH:mm"
-  closeTime String   @map("close_time")           // Format: "HH:mm"
+  openTime  String   @map("open_time") // Format: "HH:mm"
+  closeTime String   @map("close_time") // Format: "HH:mm"
   isOpen    Boolean  @default(true) @map("is_open")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -712,11 +771,11 @@ model BusinessHours {
 
 model BusinessException {
   id        String   @id @default(uuid())
-  date      DateTime @unique                      // Specific calendar date
+  date      DateTime @unique // Specific calendar date
   isClosed  Boolean  @default(true) @map("is_closed")
-  openTime  String?  @map("open_time")            // Override open time (only if not closed)
-  closeTime String?  @map("close_time")           // Override close time (only if not closed)
-  reason    String?                               // e.g. "Christmas Holiday"
+  openTime  String?  @map("open_time") // Override open time (only if not closed)
+  closeTime String?  @map("close_time") // Override close time (only if not closed)
+  reason    String? // e.g. "Christmas Holiday"
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -724,38 +783,38 @@ model BusinessException {
 }
 
 model Influencer {
-  id          String    @id @default(uuid())
-  userId      String    @unique @map("user_id")  // linked user account
-  notes       String?   // internal admin notes
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id") // linked user account
+  notes     String? // internal admin notes
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  discountCodes    DiscountCode[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  discountCodes     DiscountCode[]
   influencerRewards InfluencerReward[]
 
   @@map("influencers")
 }
 
 model DiscountCode {
-  id              String       @id @default(uuid())
-  code            String       @unique              // e.g. "SUMMER20" — case-insensitive at app level
-  name            String                            // e.g. "Summer Sale"
-  percentage      Float                             // e.g. 20.0 (represents 20%)
-  type            DiscountType @default(GENERAL) @map("type")
-  influencerId    String?      @map("influencer_id")   // null for GENERAL codes
-  isActive        Boolean      @default(true) @map("is_active")
-  startsAt        DateTime?    @map("starts_at")    // null = active immediately
-  expiresAt       DateTime?    @map("expires_at")   // null = never expires
-  maxUses         Int?         @map("max_uses")     // null = unlimited
-  usedCount       Int          @default(0) @map("used_count")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
+  id           String       @id @default(uuid())
+  code         String       @unique // e.g. "SUMMER20" — case-insensitive at app level
+  name         String // e.g. "Summer Sale"
+  percentage   Float // e.g. 20.0 (represents 20%)
+  type         DiscountType @default(GENERAL) @map("type")
+  influencerId String?      @map("influencer_id") // null for GENERAL codes
+  isActive     Boolean      @default(true) @map("is_active")
+  startsAt     DateTime?    @map("starts_at") // null = active immediately
+  expiresAt    DateTime?    @map("expires_at") // null = never expires
+  maxUses      Int?         @map("max_uses") // null = unlimited
+  usedCount    Int          @default(0) @map("used_count")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
 
   // Relations
-  influencer Influencer?   @relation(fields: [influencerId], references: [id], onDelete: SetNull)
+  influencer Influencer?     @relation(fields: [influencerId], references: [id], onDelete: SetNull)
   usages     DiscountUsage[]
 
   @@index([influencerId])
@@ -767,7 +826,7 @@ model DiscountUsage {
   discountCodeId String   @map("discount_code_id")
   userId         String   @map("user_id")
   bookingId      String   @unique @map("booking_id")
-  discountAmount Decimal  @db.Decimal(10, 2) @map("discount_amount")
+  discountAmount Decimal  @map("discount_amount") @db.Decimal(10, 2)
   createdAt      DateTime @default(now()) @map("created_at")
 
   // Relations
@@ -785,8 +844,8 @@ model InfluencerRewardSettings {
   id                String             @id @default(uuid())
   isActive          Boolean            @default(false) @map("is_active")
   rewardType        ReferralRewardType @default(FIXED) @map("reward_type")
-  rewardValue       Decimal            @default(0) @db.Decimal(10, 2) @map("reward_value")
-  minPurchaseAmount Decimal            @default(0) @db.Decimal(10, 2) @map("min_purchase_amount")
+  rewardValue       Decimal            @default(0) @map("reward_value") @db.Decimal(10, 2)
+  minPurchaseAmount Decimal            @default(0) @map("min_purchase_amount") @db.Decimal(10, 2)
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
 
@@ -798,14 +857,14 @@ model InfluencerReward {
   influencerId        String         @map("influencer_id")
   usageId             String         @unique @map("usage_id")
   walletTransactionId String?        @unique @map("wallet_transaction_id")
-  rewardAmount        Decimal        @db.Decimal(10, 2) @map("reward_amount")
+  rewardAmount        Decimal        @map("reward_amount") @db.Decimal(10, 2)
   status              ReferralStatus @default(REWARDED)
   createdAt           DateTime       @default(now()) @map("created_at")
   updatedAt           DateTime       @updatedAt @map("updated_at")
 
   // Relations
-  influencer       Influencer    @relation(fields: [influencerId], references: [id])
-  usage            DiscountUsage @relation(fields: [usageId], references: [id], onDelete: Cascade)
+  influencer        Influencer    @relation(fields: [influencerId], references: [id])
+  usage             DiscountUsage @relation(fields: [usageId], references: [id], onDelete: Cascade)
   walletTransaction Transaction?  @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
 
   @@index([influencerId])
@@ -818,8 +877,8 @@ model ReferralSettings {
   id               String             @id @default(uuid())
   isActive         Boolean            @default(false) @map("is_active")
   rewardType       ReferralRewardType @default(FIXED) @map("reward_type")
-  rewardValue      Decimal            @db.Decimal(10, 2) @map("reward_value")
-  minDepositAmount Decimal            @default(0) @db.Decimal(10, 2) @map("min_deposit_amount")
+  rewardValue      Decimal            @map("reward_value") @db.Decimal(10, 2)
+  minDepositAmount Decimal            @default(0) @map("min_deposit_amount") @db.Decimal(10, 2)
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
@@ -831,7 +890,7 @@ model ReferralCode {
   userId      String   @unique @map("user_id")
   code        String   @unique
   totalUses   Int      @default(0) @map("total_uses")
-  totalEarned Decimal  @default(0) @db.Decimal(10, 2) @map("total_earned")
+  totalEarned Decimal  @default(0) @map("total_earned") @db.Decimal(10, 2)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -848,7 +907,7 @@ model Referral {
   referredId   String         @unique @map("referred_id") // one referral per user
   code         String
   status       ReferralStatus @default(PENDING)
-  rewardAmount Decimal?       @db.Decimal(10, 2) @map("reward_amount")
+  rewardAmount Decimal?       @map("reward_amount") @db.Decimal(10, 2)
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
@@ -863,18 +922,18 @@ model Referral {
 }
 
 model ReferralCampaignCode {
-  id                String   @id @default(uuid())
-  code              String   @unique
+  id                String    @id @default(uuid())
+  code              String    @unique
   name              String
   description       String?
-  signupBonusAmount Decimal  @db.Decimal(10, 2) @map("signup_bonus_amount")
-  isActive          Boolean  @default(true) @map("is_active")
+  signupBonusAmount Decimal   @map("signup_bonus_amount") @db.Decimal(10, 2)
+  isActive          Boolean   @default(true) @map("is_active")
   startsAt          DateTime? @map("starts_at")
   expiresAt         DateTime? @map("expires_at")
-  maxUses           Int?     @map("max_uses")
-  usedCount         Int      @default(0) @map("used_count")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  maxUses           Int?      @map("max_uses")
+  usedCount         Int       @default(0) @map("used_count")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   // Relations
   usages ReferralCampaignCodeUsage[]
@@ -888,7 +947,7 @@ model ReferralCampaignCodeUsage {
   campaignCodeId String   @map("campaign_code_id")
   userId         String   @unique @map("user_id")
   transactionId  String?  @unique @map("transaction_id")
-  bonusAmount    Decimal  @db.Decimal(10, 2) @map("bonus_amount")
+  bonusAmount    Decimal  @map("bonus_amount") @db.Decimal(10, 2)
   createdAt      DateTime @default(now()) @map("created_at")
 
   // Relations
@@ -917,8 +976,8 @@ model AdminRole {
 }
 
 model AdminRolePermission {
-  id          String    @id @default(uuid())
-  adminRoleId String    @map("admin_role_id")
+  id          String @id @default(uuid())
+  adminRoleId String @map("admin_role_id")
   permission  String
 
   adminRole AdminRole @relation(fields: [adminRoleId], references: [id], onDelete: Cascade)
@@ -930,17 +989,29 @@ model AdminRolePermission {
 // ─── Job Postings ─────────────────────────────────────────────────────────────
 
 model JobPosting {
-  id               String    @id @default(uuid())
+  id               String           @id @default(uuid())
   title            String
   type             JobType
-  location         String
-  description      String    @db.Text
-  responsibilities Json                       // string[] — array of bullet points
-  isActive         Boolean   @default(false) @map("is_active")
-  closingDate      DateTime? @map("closing_date")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  location         String // display-only text (e.g. "Lagos, Nigeria") — separate from branchId
+  branchId         String?          @map("branch_id") // nullable = open to any/all branches
+  department       String?
+  description      String           @db.Text
+  responsibilities Json
+  status           JobPostingStatus @default(DRAFT)
+  closingDate      DateTime?        @map("closing_date")
+  closedReason     String?          @map("closed_reason") // required when closing with active candidates (override case)
+  salaryMin        Decimal?         @map("salary_min") @db.Decimal(10, 2)
+  salaryMax        Decimal?         @map("salary_max") @db.Decimal(10, 2)
+  salaryNote       String?          @map("salary_note") // e.g. "negotiable", "+ commission"
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
+  branch       StaffLocation? @relation("JobPostingBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  applications Application[]  @relation("ApplicationJobPosting")
+  offerLetters OfferLetter[]
+
+  @@index([status])
+  @@index([branchId])
   @@map("job_postings")
 }
 
@@ -958,7 +1029,7 @@ model Staff {
   reasonForExit           String?               @map("reason_for_exit")
   exitDate                DateTime?             @map("exit_date")
   archivedAt              DateTime?             @map("archived_at")
-  birthdayLastEmailedYear Int?                 @map("birthday_last_emailed_year")
+  birthdayLastEmailedYear Int?                  @map("birthday_last_emailed_year")
   createdAt               DateTime              @default(now()) @map("created_at")
   updatedAt               DateTime              @updatedAt @map("updated_at")
 
@@ -966,34 +1037,38 @@ model Staff {
   histories StaffEmploymentHistory[]
   user      User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  onboardingItems StaffOnboardingItem[] 
+  onboardingItems StaffOnboardingItem[]
 
   documentAcknowledgments StaffDocumentAcknowledgment[]
 
-  responsibilities String? @map("responsibilities")
-  reportingToId    String? @map("reporting_to_id")
-  reportingTo      Staff?  @relation("StaffReportingLine", fields: [reportingToId], references: [id], onDelete: SetNull)
-  directReports    Staff[] @relation("StaffReportingLine")
-  receivedAnnouncements Announcement[] @relation("AnnouncementTargetStaff")
+  responsibilities      String?            @map("responsibilities")
+  reportingToId         String?            @map("reporting_to_id")
+  reportingTo           Staff?             @relation("StaffReportingLine", fields: [reportingToId], references: [id], onDelete: SetNull)
+  directReports         Staff[]            @relation("StaffReportingLine")
+  receivedAnnouncements Announcement[]     @relation("AnnouncementTargetStaff")
   announcementReads     AnnouncementRead[]
   directives            Directive[]
 
-  attendanceRecords     AttendanceRecord[]
-  inventoryLogEntries   InventoryLogEntry[]
+  attendanceRecords       AttendanceRecord[]
+  lateGracePeriodOverride Int?                @map("late_grace_period_override")
+  leaveRequests           LeaveRequest[]
+  leaveRequestsToApprove  LeaveRequest[]      @relation("LeaveRequestApprover")
+  inventoryLogEntries     InventoryLogEntry[]
+  interviewsConducted     Application[]       @relation("ApplicationInterviewer")
 
-  passportPhotoUrl        String? @map("passport_photo_url")
-  emergencyContactName    String? @map("emergency_contact_name")
-  emergencyContactPhone   String? @map("emergency_contact_phone")
+  passportPhotoUrl         String? @map("passport_photo_url")
+  emergencyContactName     String? @map("emergency_contact_name")
+  emergencyContactPhone    String? @map("emergency_contact_phone")
   emergencyContactRelation String? @map("emergency_contact_relation")
-  guarantorName           String? @map("guarantor_name")
-  guarantorOccupation     String? @map("guarantor_occupation")
-  guarantorPhone          String? @map("guarantor_phone")
-  guarantorAddress        String? @map("guarantor_address")
+  guarantorName            String? @map("guarantor_name")
+  guarantorOccupation      String? @map("guarantor_occupation")
+  guarantorPhone           String? @map("guarantor_phone")
+  guarantorAddress         String? @map("guarantor_address")
 
-  address                 String? @map("address")
-  referenceName           String? @map("reference_name")
-  referencePhone           String? @map("reference_phone")
-  referenceRelationship   String? @map("reference_relationship")
+  address               String? @map("address")
+  referenceName         String? @map("reference_name")
+  referencePhone        String? @map("reference_phone")
+  referenceRelationship String? @map("reference_relationship")
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -1001,17 +1076,17 @@ model Staff {
 }
 
 model StaffEmploymentHistory {
-  id               String              @id @default(uuid())
-  staffId          String              @map("staff_id")
-  roleTitle        String              @map("role_title")
-  locationId       String              @map("location_id")
-  employmentType   StaffEmploymentType @default(FULL_TIME) @map("employment_type")
-  startDate        DateTime            @map("start_date")
-  endDate          DateTime?           @map("end_date")
-  reasonForChange  String?             @map("reason_for_change")
-  notes            String?
-  createdAt        DateTime            @default(now()) @map("created_at")
-  updatedAt        DateTime            @updatedAt @map("updated_at")
+  id              String              @id @default(uuid())
+  staffId         String              @map("staff_id")
+  roleTitle       String              @map("role_title")
+  locationId      String              @map("location_id")
+  employmentType  StaffEmploymentType @default(FULL_TIME) @map("employment_type")
+  startDate       DateTime            @map("start_date")
+  endDate         DateTime?           @map("end_date")
+  reasonForChange String?             @map("reason_for_change")
+  notes           String?
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
 
   staff    Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
   location StaffLocation @relation(fields: [locationId], references: [id])
@@ -1026,7 +1101,7 @@ model BranchService {
   branchId    String   @map("branch_id")
   serviceId   String   @map("service_id")
   isAvailable Boolean  @default(true) @map("is_available")
-  walkInPrice Decimal? @db.Decimal(10, 2) @map("walk_in_price")
+  walkInPrice Decimal? @map("walk_in_price") @db.Decimal(10, 2)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -1048,19 +1123,53 @@ model StaffLocation {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  staff          Staff[]
-  histories      StaffEmploymentHistory[]
-  branchServices BranchService[]
-  interviewApplications Application[] @relation("ApplicationInterviewLocation")
+  // GPS fields for Attendance clock-in/out validation (bundled in ahead of the Attendance build)
+  gpsLat               Decimal? @map("gps_lat") @db.Decimal(10, 7)
+  gpsLng               Decimal? @map("gps_lng") @db.Decimal(10, 7)
+  approvedRadiusMeters Int?     @map("approved_radius_meters")
 
-  bookings       Booking[]
+  // on StaffLocation, alongside the GPS fields:
+  lateGracePeriodMinutes Int @default(10) @map("late_grace_period_minutes")
+
+  staff                 Staff[]
+  histories             StaffEmploymentHistory[]
+  branchServices        BranchService[]
+  interviewApplications Application[]            @relation("ApplicationInterviewLocation")
+  jobPostings           JobPosting[]             @relation("JobPostingBranch")
+  offerLetters          OfferLetter[]            @relation("OfferLetterBranch")
+
+  bookings              Booking[]
   targetedAnnouncements Announcement[]
   attendanceRecords     AttendanceRecord[]
   inventoryLogEntries   InventoryLogEntry[]
 
-  @@map("staff_locations")
-
   staffSequence Int @default(0) @map("staff_sequence")
+
+  @@map("staff_locations")
+}
+
+model LeaveRequest {
+  id              String             @id @default(uuid())
+  staffId         String             @map("staff_id")
+  type            LeaveRequestType
+  startDate       DateTime           @map("start_date") @db.Date
+  endDate         DateTime           @map("end_date") @db.Date
+  startTime       String?            @map("start_time")
+  endTime         String?            @map("end_time")
+  reason          String
+  status          LeaveRequestStatus @default(PENDING)
+  approverId      String?            @map("approver_id")
+  approvedAt      DateTime?          @map("approved_at")
+  rejectionReason String?            @map("rejection_reason")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  staff    Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  approver Staff? @relation("LeaveRequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+
+  @@index([staffId, status])
+  @@index([approverId, status])
+  @@map("leave_requests")
 }
 
 model WaitlistEntry {
@@ -1089,9 +1198,9 @@ model Announcement {
   createdById      String?            @map("created_by_id")
   createdAt        DateTime           @default(now()) @map("created_at")
 
-  targetLocation StaffLocation? @relation(fields: [targetLocationId], references: [id], onDelete: Cascade)
-  targetStaff    Staff?         @relation("AnnouncementTargetStaff", fields: [targetStaffId], references: [id], onDelete: Cascade)
-  createdBy      User?          @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  targetLocation StaffLocation?     @relation(fields: [targetLocationId], references: [id], onDelete: Cascade)
+  targetStaff    Staff?             @relation("AnnouncementTargetStaff", fields: [targetStaffId], references: [id], onDelete: Cascade)
+  createdBy      User?              @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   reads          AnnouncementRead[]
 
   @@index([target])
@@ -1141,10 +1250,25 @@ model AttendanceRecord {
   date       DateTime  @db.Date
   checkInAt  DateTime  @map("check_in_at")
   checkOutAt DateTime? @map("check_out_at")
-  createdAt  DateTime  @default(now()) @map("created_at")
 
-  staff    Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  location StaffLocation @relation(fields: [locationId], references: [id])
+  checkInLat  Decimal? @map("check_in_lat") @db.Decimal(10, 7)
+  checkInLng  Decimal? @map("check_in_lng") @db.Decimal(10, 7)
+  checkOutLat Decimal? @map("check_out_lat") @db.Decimal(10, 7)
+  checkOutLng Decimal? @map("check_out_lng") @db.Decimal(10, 7)
+
+  status          AttendanceStatus @default(PRESENT)
+  lateMinutes     Int?             @map("late_minutes")
+  overtimeMinutes Int?             @map("overtime_minutes")
+
+  isManuallyAdjusted Boolean @default(false) @map("is_manually_adjusted")
+  adjustmentReason   String? @map("adjustment_reason")
+  adjustedById       String? @map("adjusted_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  staff      Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  location   StaffLocation @relation(fields: [locationId], references: [id])
+  adjustedBy User?         @relation("AttendanceAdjustedBy", fields: [adjustedById], references: [id], onDelete: SetNull)
 
   @@unique([staffId, date])
   @@index([locationId, date])
@@ -1176,49 +1300,49 @@ model InventoryLogEntry {
 // ─── Beautician Provider App ───────────────────────────────────────────────────
 
 model BeauticianProfile {
-  id                    String               @id @default(uuid())
-  userId                String               @unique @map("user_id")
-  bio                   String?
-  profilePhotoUrl       String?              @map("profile_photo_url")
+  id                       String              @id @default(uuid())
+  userId                   String              @unique @map("user_id")
+  bio                      String?
+  profilePhotoUrl          String?             @map("profile_photo_url")
   /// Public portfolio / work showcase URL collected at KYC initiate (https only).
-  portfolioUrl          String?              @map("portfolio_url")
-  specialties           String[]             @default([])
-  yearsOfExperience     Int?                 @map("years_of_experience")
-  certifications        String[]             @default([])
-  currentLat            Decimal?             @db.Decimal(10, 7) @map("current_lat")
-  currentLng            Decimal?             @db.Decimal(10, 7) @map("current_lng")
-  lastLocationUpdate    DateTime?            @map("last_location_update")
-  maxTravelRadiusKm     Decimal?             @db.Decimal(6, 2) @map("max_travel_radius_km")
-  availabilityStatus    AvailabilityStatus   @default(OFFLINE) @map("availability_status")
-  kycStatus             KycStatus            @default(PENDING) @map("kyc_status")
-  kycVerifiedAt         DateTime?            @map("kyc_verified_at")
-  qoreIdCustomerId      String?              @map("qore_id_customer_id")
-  qoreIdSessionId       String?              @map("qore_id_session_id")
-  profileStatus         ProfileReviewStatus  @default(NOT_SUBMITTED) @map("profile_status")
-  profileSubmittedAt    DateTime?            @map("profile_submitted_at")
-  profileReviewedAt     DateTime?            @map("profile_reviewed_at")
-  profileReviewedById   String?              @map("profile_reviewed_by_id")
-  reviewNotes           String?              @map("review_notes")
+  portfolioUrl             String?             @map("portfolio_url")
+  specialties              String[]            @default([])
+  yearsOfExperience        Int?                @map("years_of_experience")
+  certifications           String[]            @default([])
+  currentLat               Decimal?            @map("current_lat") @db.Decimal(10, 7)
+  currentLng               Decimal?            @map("current_lng") @db.Decimal(10, 7)
+  lastLocationUpdate       DateTime?           @map("last_location_update")
+  maxTravelRadiusKm        Decimal?            @map("max_travel_radius_km") @db.Decimal(6, 2)
+  availabilityStatus       AvailabilityStatus  @default(OFFLINE) @map("availability_status")
+  kycStatus                KycStatus           @default(PENDING) @map("kyc_status")
+  kycVerifiedAt            DateTime?           @map("kyc_verified_at")
+  qoreIdCustomerId         String?             @map("qore_id_customer_id")
+  qoreIdSessionId          String?             @map("qore_id_session_id")
+  profileStatus            ProfileReviewStatus @default(NOT_SUBMITTED) @map("profile_status")
+  profileSubmittedAt       DateTime?           @map("profile_submitted_at")
+  profileReviewedAt        DateTime?           @map("profile_reviewed_at")
+  profileReviewedById      String?             @map("profile_reviewed_by_id")
+  reviewNotes              String?             @map("review_notes")
   /// Cloudflare R2 object key for the KYC intro video (1 min, highly compressed).
   /// Content-Type and size live on the R2 object; submission time ≈ profile updatedAt after confirm.
-  kycVideoKey           String?              @map("kyc_video_key")
-  ratingAverage         Decimal              @default(0) @db.Decimal(3, 2) @map("rating_average")
-  totalJobsCompleted    Int                  @default(0) @map("total_jobs_completed")
-  totalEarnings         Decimal              @default(0) @db.Decimal(12, 2) @map("total_earnings")
-  commissionRateOverride Decimal?            @db.Decimal(5, 4) @map("commission_rate_override")
-  payoutBankCode         String?              @map("payout_bank_code")
-  payoutAccountNumber    String?              @map("payout_account_number")
-  payoutAccountName      String?              @map("payout_account_name")
-  paystackRecipientCode  String?              @map("paystack_recipient_code")
-  payoutBankVerifiedAt   DateTime?            @map("payout_bank_verified_at")
-  isActive              Boolean              @default(true) @map("is_active")
-  dispatchSuspended     Boolean              @default(false) @map("dispatch_suspended")
+  kycVideoKey              String?             @map("kyc_video_key")
+  ratingAverage            Decimal             @default(0) @map("rating_average") @db.Decimal(3, 2)
+  totalJobsCompleted       Int                 @default(0) @map("total_jobs_completed")
+  totalEarnings            Decimal             @default(0) @map("total_earnings") @db.Decimal(12, 2)
+  commissionRateOverride   Decimal?            @map("commission_rate_override") @db.Decimal(5, 4)
+  payoutBankCode           String?             @map("payout_bank_code")
+  payoutAccountNumber      String?             @map("payout_account_number")
+  payoutAccountName        String?             @map("payout_account_name")
+  paystackRecipientCode    String?             @map("paystack_recipient_code")
+  payoutBankVerifiedAt     DateTime?           @map("payout_bank_verified_at")
+  isActive                 Boolean             @default(true) @map("is_active")
+  dispatchSuspended        Boolean             @default(false) @map("dispatch_suspended")
   /// When set with dispatchSuspended, auto-lift at this time (timed probation).
-  dispatchSuspendedUntil DateTime?           @map("dispatch_suspended_until")
+  dispatchSuspendedUntil   DateTime?           @map("dispatch_suspended_until")
   /// Admin-facing reason shared in beautician suspension email.
-  dispatchSuspensionReason String?           @map("dispatch_suspension_reason")
-  createdAt             DateTime             @default(now()) @map("created_at")
-  updatedAt             DateTime             @updatedAt @map("updated_at")
+  dispatchSuspensionReason String?             @map("dispatch_suspension_reason")
+  createdAt                DateTime            @default(now()) @map("created_at")
+  updatedAt                DateTime            @updatedAt @map("updated_at")
 
   user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   profileReviewedBy User?               @relation("ProfileReviewedBy", fields: [profileReviewedById], references: [id], onDelete: SetNull)
@@ -1258,8 +1382,8 @@ model JobOffer {
   offeredAt          DateTime       @default(now()) @map("offered_at")
   respondedAt        DateTime?      @map("responded_at")
   expiresAt          DateTime       @map("expires_at")
-  distanceKmAtOffer  Decimal?       @db.Decimal(8, 2) @map("distance_km_at_offer")
-  estEarningsAtOffer Decimal?       @db.Decimal(10, 2) @map("est_earnings_at_offer")
+  distanceKmAtOffer  Decimal?       @map("distance_km_at_offer") @db.Decimal(8, 2)
+  estEarningsAtOffer Decimal?       @map("est_earnings_at_offer") @db.Decimal(10, 2)
   tier               Int?           @db.SmallInt
   scoreSnapshot      Json?          @map("score_snapshot")
   declineReason      String?        @map("decline_reason")
@@ -1288,7 +1412,7 @@ model BookingCommsSession {
   createdAt        DateTime                  @default(now()) @map("created_at")
   updatedAt        DateTime                  @updatedAt @map("updated_at")
 
-  booking Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   events  BookingCommsEvent[]
 
   @@index([customerUserId])
@@ -1300,13 +1424,13 @@ model BookingCommsSession {
 }
 
 model BookingCommsEvent {
-  id             String               @id @default(uuid())
-  sessionId      String               @map("session_id")
-  eventType      BookingCommsEventType @map("event_type")
-  actorUserId    String?              @map("actor_user_id")
-  streamEventId  String               @unique @map("stream_event_id")
-  payload        Json?
-  createdAt      DateTime             @default(now()) @map("created_at")
+  id            String                @id @default(uuid())
+  sessionId     String                @map("session_id")
+  eventType     BookingCommsEventType @map("event_type")
+  actorUserId   String?               @map("actor_user_id")
+  streamEventId String                @unique @map("stream_event_id")
+  payload       Json?
+  createdAt     DateTime              @default(now()) @map("created_at")
 
   session BookingCommsSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
@@ -1316,12 +1440,12 @@ model BookingCommsEvent {
 }
 
 model DispatchEvent {
-  id              String   @id @default(uuid())
-  bookingId       String   @map("booking_id")
-  eventType       String   @map("event_type")
-  payload         Json?
-  idempotencyKey  String?  @map("idempotency_key")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id             String   @id @default(uuid())
+  bookingId      String   @map("booking_id")
+  eventType      String   @map("event_type")
+  payload        Json?
+  idempotencyKey String?  @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
@@ -1343,40 +1467,40 @@ model DispatchConfig {
 }
 
 model HomeServiceSettings {
-  id                              String     @id @default(uuid())
-  commissionRate                    Decimal    @default(0.70) @db.Decimal(5, 4) @map("commission_rate")
-  kycAutoApprove                  Boolean    @default(true) @map("kyc_auto_approve")
-  arrivalVerificationExpiryMinutes Int       @default(15) @map("arrival_verification_expiry_minutes")
-  serviceCompletionBufferMinutes  Int        @default(60) @map("service_completion_buffer_minutes")
-  payoutMode                      PayoutMode @default(MANUAL) @map("payout_mode")
+  id                               String     @id @default(uuid())
+  commissionRate                   Decimal    @default(0.70) @map("commission_rate") @db.Decimal(5, 4)
+  kycAutoApprove                   Boolean    @default(true) @map("kyc_auto_approve")
+  arrivalVerificationExpiryMinutes Int        @default(15) @map("arrival_verification_expiry_minutes")
+  serviceCompletionBufferMinutes   Int        @default(60) @map("service_completion_buffer_minutes")
+  payoutMode                       PayoutMode @default(MANUAL) @map("payout_mode")
   /// Platform-wide max total payout amount per calendar day (Africa/Lagos). Null = unlimited.
-  dailyPayoutLimit                Decimal?   @db.Decimal(14, 2) @map("daily_payout_limit")
-  arrivalGeoFenceMeters           Int        @default(250) @map("arrival_geo_fence_meters")
-  noShowPenaltyEnabled            Boolean    @default(true) @map("no_show_penalty_enabled")
-  noShowSuspendThreshold          Int        @default(3) @map("no_show_suspend_threshold")
-  noShowWindowDays                Int        @default(30) @map("no_show_window_days")
-  createdAt                       DateTime   @default(now()) @map("created_at")
-  updatedAt                       DateTime   @updatedAt @map("updated_at")
+  dailyPayoutLimit                 Decimal?   @map("daily_payout_limit") @db.Decimal(14, 2)
+  arrivalGeoFenceMeters            Int        @default(250) @map("arrival_geo_fence_meters")
+  noShowPenaltyEnabled             Boolean    @default(true) @map("no_show_penalty_enabled")
+  noShowSuspendThreshold           Int        @default(3) @map("no_show_suspend_threshold")
+  noShowWindowDays                 Int        @default(30) @map("no_show_window_days")
+  createdAt                        DateTime   @default(now()) @map("created_at")
+  updatedAt                        DateTime   @updatedAt @map("updated_at")
 
   @@map("home_service_settings")
 }
 
 model PayoutRequest {
-  id              String              @id @default(uuid())
-  userId          String              @map("user_id")
-  amount          Decimal             @db.Decimal(10, 2)
-  status          PayoutRequestStatus @default(PENDING)
-  bankCode        String              @map("bank_code")
-  accountNumber   String              @map("account_number")
-  accountName     String?             @map("account_name")
-  processedById   String?             @map("processed_by_id")
-  processedAt     DateTime?           @map("processed_at")
-  rejectionReason String?             @map("rejection_reason")
-  transactionId   String?             @unique @map("transaction_id")
-  paystackTransferReference String?     @unique @map("paystack_transfer_reference")
-  paystackTransferCode      String?     @map("paystack_transfer_code")
-  createdAt       DateTime            @default(now()) @map("created_at")
-  updatedAt       DateTime            @updatedAt @map("updated_at")
+  id                        String              @id @default(uuid())
+  userId                    String              @map("user_id")
+  amount                    Decimal             @db.Decimal(10, 2)
+  status                    PayoutRequestStatus @default(PENDING)
+  bankCode                  String              @map("bank_code")
+  accountNumber             String              @map("account_number")
+  accountName               String?             @map("account_name")
+  processedById             String?             @map("processed_by_id")
+  processedAt               DateTime?           @map("processed_at")
+  rejectionReason           String?             @map("rejection_reason")
+  transactionId             String?             @unique @map("transaction_id")
+  paystackTransferReference String?             @unique @map("paystack_transfer_reference")
+  paystackTransferCode      String?             @map("paystack_transfer_code")
+  createdAt                 DateTime            @default(now()) @map("created_at")
+  updatedAt                 DateTime            @updatedAt @map("updated_at")
 
   user        User         @relation("UserPayoutRequests", fields: [userId], references: [id], onDelete: Cascade)
   processedBy User?        @relation("PayoutProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
@@ -1421,21 +1545,11 @@ model BeauticianLocationHistory {
   @@map("beautician_location_history")
 }
 
-enum ApplicationStatus {
-  SUBMITTED
-  UNDER_REVIEW
-  SHORTLISTED
-  INTERVIEW_SCHEDULED
-  INTERVIEW_COMPLETED
-  OFFER_EXTENDED
-  EMPLOYED
-  NOT_SELECTED
-}
-
 model Application {
-  id                      String    @id @default(uuid())
-  applicationCode         String    @unique
-  jobId                   String?
+  id                      String              @id @default(uuid())
+  applicationCode         String              @unique
+  jobId                   String?             @map("job_id")
+  job                     JobPosting?         @relation("ApplicationJobPosting", fields: [jobId], references: [id], onDelete: SetNull)
   appliedRole             String?
   firstName               String
   middleName              String?
@@ -1455,23 +1569,70 @@ model Application {
   preferredBranchText     String?
   cvUrl                   String?
   portfolioUrl            String?
-  status                  ApplicationStatus @default(SUBMITTED)
+  status                  ApplicationStatus   @default(SUBMITTED)
   interviewScheduledAt    DateTime?
-  interviewMode        InterviewMode?
-  interviewLocationId  String?
-  interviewLocation    StaffLocation?    @relation("ApplicationInterviewLocation", fields: [interviewLocationId], references: [id], onDelete: SetNull)
-  interviewMeetingUrl  String?
+  interviewMode           InterviewMode?
+  interviewLocationId     String?
+  interviewLocation       StaffLocation?      @relation("ApplicationInterviewLocation", fields: [interviewLocationId], references: [id], onDelete: SetNull)
+  interviewMeetingUrl     String?
   interviewerName         String?
   interviewNote           String?
+  interviewOutcome        InterviewOutcome?
+  interviewerId           String?
+  interviewer             Staff?              @relation("ApplicationInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
+  offerLetter             OfferLetter?
+  employmentApproval      EmploymentApproval?
   notSelectedReason       String?
   otpHash                 String?
   otpExpiresAt            DateTime?
   staffId                 String?
   employedAt              DateTime?
-  createdAt               DateTime  @default(now())
-  updatedAt               DateTime  @updatedAt
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
 
   @@index([status])
   @@index([email])
   @@index([nin])
+}
+
+model OfferLetter {
+  id            String  @id @default(uuid())
+  applicationId String  @unique @map("application_id")
+  jobPostingId  String? @map("job_posting_id")
+  role          String
+  branchId      String? @map("branch_id")
+
+  baseSalary       Decimal  @map("base_salary") @db.Decimal(10, 2)
+  allowances       Decimal? @db.Decimal(10, 2)
+  compensationNote String?  @map("compensation_note")
+  effectiveDate    DateTime @map("effective_date")
+
+  templateUsed  String?           @map("template_used")
+  status        OfferLetterStatus @default(SENT)
+  generatedById String            @map("generated_by_id")
+  generatedAt   DateTime          @default(now()) @map("generated_at")
+  sentAt        DateTime?         @map("sent_at")
+  respondedAt   DateTime?         @map("responded_at")
+  declineReason String?           @map("decline_reason")
+
+  application Application    @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  jobPosting  JobPosting?    @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
+  branch      StaffLocation? @relation("OfferLetterBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  generatedBy User           @relation("OfferLetterGeneratedBy", fields: [generatedById], references: [id])
+
+  @@index([status])
+  @@map("offer_letters")
+}
+
+model EmploymentApproval {
+  id            String   @id @default(uuid())
+  applicationId String   @unique @map("application_id")
+  approvedById  String   @map("approved_by_id")
+  approvedAt    DateTime @default(now()) @map("approved_at")
+  notes         String?
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  approvedBy  User        @relation("EmploymentApprovalApprovedBy", fields: [approvedById], references: [id])
+
+  @@map("employment_approvals")
 }

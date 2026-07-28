@@ -1,32 +1,33 @@
 import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Delete,
   Body,
-  Param,
-  Query,
+  Controller,
+  Delete,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
+  Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
-  ApiTags,
+  ApiBearerAuth,
   ApiOperation,
-  ApiResponse,
   ApiParam,
   ApiQuery,
-  ApiBearerAuth,
+  ApiResponse,
+  ApiTags,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
-import { JobsService } from './jobs.service';
-import { CreateJobDto } from './dto/create-job.dto';
-import { UpdateJobDto } from './dto/update-job.dto';
-import { QueryJobsDto } from './dto/query-jobs.dto';
+import { JobPostingStatus, UserRole } from '@prisma/client';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
+import { CloseJobPostingDto } from './dto/close-job-posting.dto';
+import { CreateJobDto } from './dto/create-job.dto';
+import { QueryJobsDto } from './dto/query-jobs.dto';
+import { UpdateJobDto } from './dto/update-job.dto';
+import { JobsService } from './jobs.service';
 
 @ApiTags('Admin - Jobs')
 @ApiBearerAuth('JWT-auth')
@@ -34,13 +35,13 @@ import { Roles } from '../auth/decorators/roles.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminJobsController {
-  constructor(private readonly jobsService: JobsService) {}
+  constructor(private readonly jobsService: JobsService) { }
 
   @Post()
   @ApiOperation({
     summary: 'Create a job posting',
     description:
-      'Creates a new job posting. Set `isActive: true` to publish immediately, or omit to save as draft.',
+        'Creates a new job posting. keep as-is if`status` stays the DTO\'s external input name(recommended, per the earlier note — don\'t break existing callers), since the description is describing the DTO field, not the DB field',
   })
   @ApiResponse({
     status: 201,
@@ -59,7 +60,7 @@ export class AdminJobsController {
             'Perform hair styling services',
             'Maintain a clean workstation',
           ],
-          isActive: false,
+          status: 'DRAFT',
           closingDate: null,
           createdAt: '2026-03-02T10:00:00.000Z',
           updatedAt: '2026-03-02T10:00:00.000Z',
@@ -145,6 +146,25 @@ export class AdminJobsController {
     };
   }
 
+  @Patch(':id/close')
+  @ApiOperation({
+    summary: 'Close a job posting',
+    description:
+      'Blocks if candidates remain active on this listing, unless override is set with a reason. Also unpublishes the listing (isActive: false).',
+  })
+  @ApiParam({ name: 'id', description: 'Job posting ID' })
+  @ApiResponse({ status: 200, description: 'Job posting closed successfully' })
+  @ApiResponse({ status: 400, description: 'Active candidates remain and override was not set, or already closed/archived' })
+  @ApiResponse({ status: 404, description: 'Job posting not found' })
+  async close(@Param('id') id: string, @Body() dto: CloseJobPostingDto) {
+    const data = await this.jobsService.close(id, dto);
+    return {
+      success: true,
+      message: 'Job posting closed successfully',
+      data,
+    };
+  }
+
   @Patch(':id/toggle')
   @ApiOperation({
     summary: 'Toggle publish/unpublish',
@@ -167,11 +187,12 @@ export class AdminJobsController {
     },
   })
   @ApiResponse({ status: 404, description: 'Job posting not found' })
+  // in AdminJobsController.toggle()
   async toggle(@Param('id') id: string) {
     const data = await this.jobsService.toggle(id);
     return {
       success: true,
-      message: data.isActive
+      message: data.status === JobPostingStatus.PUBLISHED
         ? 'Job posting published'
         : 'Job posting unpublished',
       data,

@@ -33,3 +33,5 @@ export { applicationStatusUpdateTemplate } from './application-status-update.tem
 export type { ApplicationStatusUpdateData } from './application-status-update.template';
 export { interviewScheduledTemplate } from './interview-scheduled.template';
 export type { InterviewScheduledData } from './interview-scheduled.template';
+export { offerDeclinedTemplate } from './offer-declined.template';
+export type { OfferDeclinedData } from './offer-declined.template';

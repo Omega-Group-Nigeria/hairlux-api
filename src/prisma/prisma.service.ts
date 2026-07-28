@@ -1,8 +1,8 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
 
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
@@ -234,10 +234,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   get userRoleAssignment() {
-  return this.client.userRoleAssignment;
-}
+    return this.client.userRoleAssignment;
+  }
 
-get staffOnboardingItem() {
+  get staffOnboardingItem() {
     return this.client.staffOnboardingItem;
   }
 
@@ -269,8 +269,20 @@ get staffOnboardingItem() {
     return this.client.inventoryLogEntry;
   }
 
+  get employmentApproval() {
+    return this.client.employmentApproval;
+  }
+
+  get offerLetter() {
+    return this.client.offerLetter;
+  }
+
+  get leaveRequest() {
+    return this.client.leaveRequest;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
-  
+
 }

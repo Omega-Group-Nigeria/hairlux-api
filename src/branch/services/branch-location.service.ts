@@ -3,12 +3,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { StaffService } from 'src/staff/staff.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { CreateBranchDto } from '../dto/create-branch.dto';
 import { QueryAdminBranchesDto } from '../dto/query-admin-branches.dto';
 import { UpdateBranchDto } from '../dto/update-branch.dto';
-import { StaffService } from 'src/staff/staff.service';
 
 const ACTIVE_STAFF_STATUSES = ['ACTIVE', 'ON_LEAVE', 'SUSPENDED'] as const;
 
@@ -18,7 +18,7 @@ export class BranchLocationService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly staffService: StaffService,
-  ) {}
+  ) { }
 
   async create(dto: CreateBranchDto) {
     const existing = await this.prisma.staffLocation.findFirst({
@@ -46,6 +46,10 @@ export class BranchLocationService {
         name: dto.name,
         code,
         address: dto.address,
+        gpsLat: dto.gpsLat,
+        gpsLng: dto.gpsLng,
+        approvedRadiusMeters: dto.approvedRadiusMeters,
+        ...(dto.lateGracePeriodMinutes !== undefined && { lateGracePeriodMinutes: dto.lateGracePeriodMinutes }),
       },
     });
 
@@ -130,6 +134,10 @@ export class BranchLocationService {
         ...(dto.code !== undefined && { code: dto.code }),
         ...(dto.address !== undefined && { address: dto.address }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.gpsLat !== undefined && { gpsLat: dto.gpsLat }),
+        ...(dto.gpsLng !== undefined && { gpsLng: dto.gpsLng }),
+        ...(dto.approvedRadiusMeters !== undefined && { approvedRadiusMeters: dto.approvedRadiusMeters }),
+        ...(dto.lateGracePeriodMinutes !== undefined && { lateGracePeriodMinutes: dto.lateGracePeriodMinutes }),
       },
     });
 
