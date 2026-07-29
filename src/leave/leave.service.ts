@@ -4,14 +4,13 @@ import {
     LeaveRequestType,
     LeaveRequestStatus,
     AttendanceStatus,
-    UserRole,
     Prisma,
 } from '@prisma/client';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
 import { RejectLeaveRequestDto } from './dto/leave-request-action.dto';
 import { QueryLeaveRequestDto } from './dto/query-leave-request.dto';
 
-const NON_ATTENDANCE_TYPES: LeaveRequestType[] = [LeaveRequestType.OVERTIME_REQUEST]; // approval-only, no Attendance side effect
+const NON_ATTENDANCE_TYPES: LeaveRequestType[] = [LeaveRequestType.OVERTIME_REQUEST];
 const LEAVE_DAY_TYPES: LeaveRequestType[] = [
     LeaveRequestType.ANNUAL_LEAVE,
     LeaveRequestType.SICK_LEAVE,
@@ -31,7 +30,6 @@ export class LeaveService {
             throw new BadRequestException('endDate cannot be before startDate');
         }
 
-        // Overlap check against this staff member's own pending/approved requests
         const overlapping = await this.prisma.leaveRequest.findFirst({
             where: {
                 staffId,
@@ -64,10 +62,9 @@ export class LeaveService {
         const staff = await this.prisma.staff.findUnique({ where: { id: staffId } });
         if (staff?.reportingToId) return staff.reportingToId;
 
-        // Fallback: any Admin/Super Admin's linked Staff record
         const fallbackAdminStaff = await this.prisma.staff.findFirst({
             where: {
-                user: { adminRole: { isNot: null } }, // has some admin role assigned
+                user: { adminRole: { isNot: null } },
             },
         });
         return fallbackAdminStaff?.id ?? null;
@@ -122,9 +119,6 @@ export class LeaveService {
         if (LEAVE_DAY_TYPES.includes(request.type)) {
             await this.createAttendanceRecordsForLeave(request);
         }
-        // PERMISSION_* types don't create records ahead of time — clockIn/clockOut
-        // check for an approved permission covering today at the moment of the
-        // actual clock action instead (see attendance.service.ts changes).
 
         return updated;
     }
@@ -169,7 +163,7 @@ export class LeaveService {
                     staffId: request.staffId,
                     locationId: staff.locationId,
                     date,
-                    checkInAt: date, // placeholder — no real clock action occurred
+                    checkInAt: date,
                     status: AttendanceStatus.ON_LEAVE,
                     isManuallyAdjusted: true,
                     adjustmentReason: `Approved ${request.type}`,
@@ -185,7 +179,6 @@ export class LeaveService {
         }
     }
 
-    /** Called by attendance.service.ts at clock-in/out time. */
     async findApprovedPermissionForToday(staffId: string, type: LeaveRequestType, today: Date) {
         return this.prisma.leaveRequest.findFirst({
             where: {

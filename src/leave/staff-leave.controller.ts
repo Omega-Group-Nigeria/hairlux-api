@@ -1,12 +1,12 @@
-import { Controller, Post, Get, Body, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from '@prisma/client';
-import { LeaveService } from './leave.service';
 import { StaffService } from '../staff/staff.service';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
+import { LeaveService } from './leave.service';
 
 @ApiTags('Staff - Leave')
 @ApiBearerAuth('JWT-auth')

@@ -32,6 +32,7 @@ import { ApplicationModule } from './application/application.module';
 import { StorageModule } from './storage/storage.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LeaveModule } from './leave/leave.module';
+import { InventoryModule } from './inventory/inventory.module';
 
 @Module({
   imports: [
@@ -99,6 +100,7 @@ import { LeaveModule } from './leave/leave.module';
     StorageModule,
     AttendanceModule,
     LeaveModule,
+    InventoryModule,
   ],
   controllers: [AppController],
   providers: [

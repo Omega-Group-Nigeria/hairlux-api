@@ -22,16 +22,19 @@ import {
   depositSuccessTemplate,
   guestBookingNotificationTemplate,
   InterviewScheduledData,
-  interviewScheduledTemplate, // ← add
+  interviewScheduledTemplate,
   OfferDeclinedData,
   offerDeclinedTemplate,
+  OfferExtendedData,
+  offerExtendedTemplate,
+  lowStockAlertTemplate,
+  LowStockAlertData,
   otpTemplate,
   referralRewardTemplate,
   resetPasswordTemplate,
   serviceCompletedTemplate,
   shopOrderConfirmationTemplate,
   staffBirthdayTemplate
-  
 } from './templates';
 import type { ApplicationConfirmationData } from './templates/application-confirmation.template';
 import type { DispatchSuspensionEmailData } from './templates/beautician-dispatch-suspension.template';
@@ -603,6 +606,29 @@ export class MailService {
     }
   }
 
+  async sendOfferExtendedEmail(
+    email: string,
+    firstName: string,
+    data: OfferExtendedData,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: `You Have an Offer — ${data.applicationCode} — HairLux`,
+          html: offerExtendedTemplate(firstName, data),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+
+      this.logger.log(`Offer-extended email queued for ${email}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing offer-extended email:`, errorMessage);
+    }
+  }
+
   async sendOfferDeclinedEmail(
     email: string,
     firstName: string,
@@ -623,6 +649,28 @@ export class MailService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.logger.error(`Error queuing offer-declined email:`, errorMessage);
+    }
+  }
+
+  async sendLowStockAlertEmail(
+    email: string,
+    firstName: string,
+    data: LowStockAlertData,
+  ) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        {
+          to: email,
+          subject: `Low Stock Alert [${data.stage}] — ${data.itemName} — HairLux`,
+          html: lowStockAlertTemplate(firstName, data),
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+      this.logger.log(`Low-stock alert email queued for ${email}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing low-stock alert email:`, errorMessage);
     }
   }
 }

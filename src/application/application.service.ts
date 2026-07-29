@@ -73,7 +73,7 @@ type ApplicationRecord = {
     baseSalary: unknown; // Decimal
     respondedAt: Date | null;
     declineReason: string | null;
-    generatedById: string; 
+    generatedById: string;
   } | null;
 };
 
@@ -237,23 +237,33 @@ export class ApplicationService {
   }
 
   async requestOtp(applicationCode: string, email: string) {
+    console.log('[trace][requestOtp] called with', { applicationCode, email });
+
     const application = await this.applicationModel.findFirst({
       where: { applicationCode },
     });
+
+    console.log('[trace][requestOtp] lookup result:', application
+      ? { id: application.id, storedEmail: application.email }
+      : 'NO APPLICATION FOUND for that applicationCode');
 
     // Same response whether the code doesn't exist or the email doesn't
     // match — don't let this endpoint be used to probe which application
     // codes are real or confirm an applicant's email address.
     if (!application || application.email.toLowerCase() !== email.toLowerCase()) {
+      console.log('[trace][requestOtp] SILENTLY RETURNING — no match. application exists:', !!application,
+        application ? `stored email "${application.email}" vs supplied "${email}"` : '');
       return; // controller returns a generic success message regardless
     }
 
     const { otp, otpHash, otpExpiresAt } = await this.generateOtp();
+    console.log('[trace][requestOtp] OTP generated, expires at', otpExpiresAt);
 
     await this.applicationModel.update({
       where: { id: application.id },
       data: { otpHash, otpExpiresAt },
     });
+    console.log('[trace][requestOtp] otpHash saved to application record');
 
     await this.mailService.sendApplicationOtpEmail(application.email, application.firstName, {
       applicationCode: application.applicationCode,
@@ -262,6 +272,7 @@ export class ApplicationService {
         this.configService.get<string>('APPLICANT_DASHBOARD_URL') ||
         'https://hairlux.com.ng/login.html',
     });
+    console.log('[trace][requestOtp] sendApplicationOtpEmail call completed (queued — check mail queue/processor logs for actual delivery)');
   }
 
   async verifyOtp(applicationCode: string, otp: string): Promise<string> {
@@ -355,6 +366,7 @@ export class ApplicationService {
       include: {
         interviewLocation: { select: { id: true, name: true } },
         offerLetter: true,
+        employmentApproval: true,
       },
     });
 
@@ -633,13 +645,17 @@ export class ApplicationService {
       throw new BadRequestException('Employment approval already recorded for this candidate');
     }
 
-    return this.prisma.employmentApproval.create({
+    const approval = await this.prisma.employmentApproval.create({
       data: {
         applicationId,
         approvedById,
         notes: dto.notes,
       },
     });
+
+    await this.invalidateCache(applicationId);
+
+    return approval;
   }
 
   async generateOfferLetter(
@@ -696,6 +712,25 @@ export class ApplicationService {
       }),
     ]);
 
+    await this.invalidateCache(applicationId);
+
+    const dashboardUrl =
+      this.configService.get<string>('APPLICANT_DASHBOARD_URL') ||
+      'https://hairlux.com.ng/login.html';
+
+    this.mailService
+      .sendOfferExtendedEmail(application.email, application.firstName, {
+        applicationCode: application.applicationCode,
+        role: offerLetter.role,
+        baseSalary: Number(offerLetter.baseSalary),
+        allowances: offerLetter.allowances ? Number(offerLetter.allowances) : undefined,
+        effectiveDate: offerLetter.effectiveDate,
+        dashboardUrl,
+      })
+      .catch((err) => {
+        this.logger.error(`Failed to queue offer-extended email for ${application.email}: ${err instanceof Error ? err.message : String(err)}`);
+      });
+
     return offerLetter;
   }
 
@@ -739,8 +774,7 @@ export class ApplicationService {
         : []),
     ]);
 
-    await this.redis.delByPattern(`application:one:${applicationId}`);
-
+    await this.invalidateCache(applicationId);
     if (isDecline) {
       this.notifyOfferDeclined(application.id, application.offerLetter.generatedById, application.jobId);
     }

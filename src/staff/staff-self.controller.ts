@@ -1,38 +1,38 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
-  Post,
-  Patch,
   Param,
   ParseUUIDPipe,
-  Body,
-  UseGuards,
-  UseInterceptors,
-  UploadedFile,
+  Patch,
+  Post,
   Req,
   Res,
   StreamableFile,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import type { Response } from 'express';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { UserRole } from '@prisma/client';
-import { StaffService } from './staff.service';
 import { CompanyDocumentService } from './company-document.service';
-import { StaffCommsService } from './staff-comms.service';
-import { StaffOperationsService } from './staff-operations.service';
-import { UpdateDirectiveStatusDto } from './dto/update-directive-status.dto';
 import { CreateInventoryLogEntryDto } from './dto/create-inventory-log-entry.dto';
 import {
-  SubmitGuarantorDto,
-  SubmitEmergencyContactDto,
   SubmitAddressDto,
+  SubmitEmergencyContactDto,
+  SubmitGuarantorDto,
   SubmitReferenceDto,
 } from './dto/submit-onboarding-info.dto';
+import { UpdateDirectiveStatusDto } from './dto/update-directive-status.dto';
+import { StaffCommsService } from './staff-comms.service';
+import { StaffOperationsService } from './staff-operations.service';
+import { StaffService } from './staff.service';
 
 const MAX_PHOTO_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -47,7 +47,7 @@ export class StaffSelfController {
     private readonly documentService: CompanyDocumentService,
     private readonly commsService: StaffCommsService,
     private readonly operationsService: StaffOperationsService,
-  ) {}
+  ) { }
 
   @Get('me')
   @ApiOperation({ summary: "Get the logged-in staff member's own record" })
@@ -211,42 +211,6 @@ export class StaffSelfController {
     return { success: true, message: 'Directive status updated successfully', data };
   }
 
-  @Post('me/attendance/check-in')
-  @ApiOperation({ summary: 'Check in for today' })
-  @ApiResponse({ status: 201, description: 'Checked in successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - account has no STAFF role' })
-  @ApiResponse({ status: 409, description: 'Already checked in (or checked out) today' })
-  async checkIn(@Req() req: any) {
-    const staff = await this.staffService.findByUserId(req.user.id);
-    const data = await this.operationsService.checkIn((staff as unknown as { id: string }).id);
-    return { success: true, message: 'Checked in successfully', data };
-  }
-
-  @Post('me/attendance/check-out')
-  @ApiOperation({ summary: 'Check out for today' })
-  @ApiResponse({ status: 200, description: 'Checked out successfully' })
-  @ApiResponse({ status: 400, description: 'Have not checked in today' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - account has no STAFF role' })
-  @ApiResponse({ status: 409, description: 'Already checked out today' })
-  async checkOut(@Req() req: any) {
-    const staff = await this.staffService.findByUserId(req.user.id);
-    const data = await this.operationsService.checkOut((staff as unknown as { id: string }).id);
-    return { success: true, message: 'Checked out successfully', data };
-  }
-
-  @Get('me/attendance')
-  @ApiOperation({ summary: "Get the logged-in staff member's own attendance history" })
-  @ApiResponse({ status: 200, description: 'Attendance history retrieved successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
-  @ApiResponse({ status: 403, description: 'Forbidden - account has no STAFF role' })
-  async getMyAttendance(@Req() req: any) {
-    const staff = await this.staffService.findByUserId(req.user.id);
-    const data = await this.operationsService.getMyAttendance((staff as unknown as { id: string }).id);
-    return { success: true, message: 'Attendance history retrieved successfully', data };
-  }
-
   @Post('me/inventory')
   @ApiOperation({
     summary: 'Log a product received or sold at your branch',
@@ -382,5 +346,17 @@ export class StaffSelfController {
     const staff = await this.staffService.findByUserId(req.user.id);
     const viewUrl = await this.staffService.getPassportPhotoViewUrl((staff as unknown as { id: string }).id);
     return { success: true, message: 'View URL retrieved successfully', data: { viewUrl } };
+  }
+
+  @Get('me/compensation')
+  @ApiOperation({
+    summary: "Get the logged-in staff member's base salary/allowances",
+    description: 'Sourced from their original Offer Letter. Returns null if no offer letter exists (e.g. legacy/seeded staff not hired through Recruitment).',
+  })
+  @ApiResponse({ status: 200, description: 'Compensation data retrieved successfully' })
+  async getMyCompensation(@Req() req: any) {
+    const staff = await this.staffService.findByUserId(req.user.id) as unknown as { id: string };
+    const data = await this.staffService.getCompensation(staff.id);
+    return { success: true, message: 'Compensation retrieved successfully', data };
   }
 }

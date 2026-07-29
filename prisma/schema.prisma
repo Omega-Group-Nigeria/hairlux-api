@@ -342,6 +342,34 @@ enum ApplicationStatus {
   NOT_SELECTED
 }
 
+enum InventoryCategory {
+  FOR_SALE
+  INTERNAL_USE
+  STORAGE
+}
+
+enum StockMovementType {
+  RECEIVED // goods received into stock
+  SOLD // deducted via a sale
+  CONSUMED // reserved for Service Material Consumption, once that module exists
+  ADJUSTMENT // manual correction — requires a reason
+  TRANSFER_OUT // moved to another branch
+  TRANSFER_IN // received from another branch
+}
+
+enum StockTransferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum LowStockAlertStage {
+  SUPERVISOR
+  OPERATIONS
+  MANAGEMENT
+}
+
 model StaffDocumentAcknowledgment {
   id             String   @id @default(uuid())
   staffId        String   @map("staff_id")
@@ -1070,6 +1098,11 @@ model Staff {
   referencePhone        String? @map("reference_phone")
   referenceRelationship String? @map("reference_relationship")
 
+  inventoryMovements     StockMovement[]
+  lowStockAlertsResolved LowStockAlert[]
+  transfersRequested     StockTransfer[] @relation("TransferRequestedBy")
+  transfersApproved      StockTransfer[] @relation("TransferApprovedBy")
+
   @@index([employmentStatus])
   @@index([locationId])
   @@map("staff")
@@ -1143,7 +1176,11 @@ model StaffLocation {
   attendanceRecords     AttendanceRecord[]
   inventoryLogEntries   InventoryLogEntry[]
 
-  staffSequence Int @default(0) @map("staff_sequence")
+  staffSequence  Int             @default(0) @map("staff_sequence")
+  inventoryItems InventoryItem[]
+  // stockTransfers StockTransfer[]
+
+  incomingTransfers StockTransfer[]
 
   @@map("staff_locations")
 }
@@ -1256,9 +1293,10 @@ model AttendanceRecord {
   checkOutLat Decimal? @map("check_out_lat") @db.Decimal(10, 7)
   checkOutLng Decimal? @map("check_out_lng") @db.Decimal(10, 7)
 
-  status          AttendanceStatus @default(PRESENT)
-  lateMinutes     Int?             @map("late_minutes")
-  overtimeMinutes Int?             @map("overtime_minutes")
+  status                AttendanceStatus @default(PRESENT)
+  lateMinutes           Int?             @map("late_minutes")
+  overtimeMinutes       Int?             @map("overtime_minutes")
+  earlyDepartureMinutes Int?             @map("early_departure_minutes")
 
   isManuallyAdjusted Boolean @default(false) @map("is_manually_adjusted")
   adjustmentReason   String? @map("adjustment_reason")
@@ -1635,4 +1673,81 @@ model EmploymentApproval {
   approvedBy  User        @relation("EmploymentApprovalApprovedBy", fields: [approvedById], references: [id])
 
   @@map("employment_approvals")
+}
+
+model InventoryItem {
+  id                String            @id @default(uuid())
+  name              String
+  category          InventoryCategory
+  branchId          String            @map("branch_id")
+  unit              String? // e.g. "pcs", "bottle", "ml"
+  currentQuantity   Int               @default(0) @map("current_quantity")
+  lowStockThreshold Int               @default(5) @map("low_stock_threshold")
+  expiryDate        DateTime?         @map("expiry_date") @db.Date
+  isActive          Boolean           @default(true) @map("is_active")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  branch         StaffLocation   @relation(fields: [branchId], references: [id])
+  movements      StockMovement[]
+  lowStockAlerts LowStockAlert[]
+  transfersOut   StockTransfer[] @relation("TransferFromItem")
+
+  @@unique([branchId, name, category])
+  @@index([branchId, category])
+  @@map("inventory_items")
+}
+
+model StockMovement {
+  id            String            @id @default(uuid())
+  itemId        String            @map("item_id")
+  type          StockMovementType
+  quantityDelta Int               @map("quantity_delta") // positive or negative
+  referenceId   String?           @map("reference_id") // links to a Sale, Transfer, or AdjustmentRequest
+  performedById String            @map("performed_by_id")
+  reason        String? // required for ADJUSTMENT
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  performedBy Staff         @relation(fields: [performedById], references: [id])
+
+  @@index([itemId, createdAt])
+  @@map("stock_movements")
+}
+
+model LowStockAlert {
+  id           String             @id @default(uuid())
+  itemId       String             @map("item_id")
+  triggeredAt  DateTime           @default(now()) @map("triggered_at")
+  currentStage LowStockAlertStage @default(SUPERVISOR) @map("current_stage")
+  escalatedAt  DateTime?          @map("escalated_at")
+  resolvedAt   DateTime?          @map("resolved_at")
+  resolvedById String?            @map("resolved_by_id")
+
+  item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  resolvedBy Staff?        @relation(fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([itemId, resolvedAt])
+  @@map("low_stock_alerts")
+}
+
+model StockTransfer {
+  id              String              @id @default(uuid())
+  fromItemId      String              @map("from_item_id")
+  toBranchId      String              @map("to_branch_id")
+  quantity        Int
+  status          StockTransferStatus @default(PENDING)
+  requestedById   String              @map("requested_by_id")
+  approvedById    String?             @map("approved_by_id")
+  approvedAt      DateTime?           @map("approved_at")
+  completedAt     DateTime?           @map("completed_at")
+  rejectionReason String?             @map("rejection_reason")
+  createdAt       DateTime            @default(now()) @map("created_at")
+
+  fromItem    InventoryItem @relation("TransferFromItem", fields: [fromItemId], references: [id])
+  toBranch    StaffLocation @relation(fields: [toBranchId], references: [id])
+  requestedBy Staff         @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  approvedBy  Staff?        @relation("TransferApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@map("stock_transfers")
 }

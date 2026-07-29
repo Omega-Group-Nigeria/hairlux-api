@@ -8,6 +8,13 @@ import { ClockOutDto } from './dto/clock-out.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
 
+function formatDistance(meters: number): string {
+    if (meters >= 1000) {
+        return (meters / 1000).toFixed(1) + 'km';
+    }
+    return Math.round(meters) + 'm';
+}
+
 @Injectable()
 export class AttendanceService {
     constructor(private prisma: PrismaService,
@@ -40,7 +47,7 @@ export class AttendanceService {
 
         if (distanceMeters > (staff.location.approvedRadiusMeters ?? 100)) {
             throw new BadRequestException(
-                `You are ${Math.round(distanceMeters)}m from ${staff.location.name} — clock-in requires you to be on-site`,
+                `You are ${formatDistance(distanceMeters)} from ${staff.location.name} — clock-in requires you to be on-site`,
             );
         }
 
@@ -126,7 +133,7 @@ export class AttendanceService {
             );
             if (distanceMeters > (staffLocation.approvedRadiusMeters ?? 100)) {
                 throw new BadRequestException(
-                    `You are ${Math.round(distanceMeters)}m from ${staffLocation.name} — clock-out requires you to be on-site`,
+                    `You are ${formatDistance(distanceMeters)} from ${staffLocation.name} — clock-out requires you to be on-site`,
                 );
             }
         }
@@ -144,12 +151,41 @@ export class AttendanceService {
         const dayIsOpen = holidayException ? !holidayException.isClosed : (businessHours?.isOpen ?? true);
 
         let overtimeMinutes: number | null = null;
+        let earlyDepartureMinutes: number | null = null;
+
         if (dayIsOpen && closeTime) {
             const [closeHour, closeMin] = closeTime.split(':').map(Number);
             const scheduledEnd = new Date(now);
             scheduledEnd.setHours(closeHour, closeMin, 0, 0);
 
-            if (now > scheduledEnd) {
+            if (now < scheduledEnd) {
+                // Checking out before closing time — only allowed with an approved
+                // early-departure permission covering today, and only from that
+                // permission's approved start time onward.
+                const approvedPermission = await this.leaveService.findApprovedPermissionForToday(
+                    staffId, LeaveRequestType.PERMISSION_EARLY_DEPARTURE, new Date(todayStr),
+                );
+
+                if (!approvedPermission) {
+                    throw new BadRequestException(
+                        `Checkout is not allowed before closing time (${closeTime}) without an approved early departure permission for today`,
+                    );
+                }
+
+                if (approvedPermission.startTime) {
+                    const [permHour, permMin] = approvedPermission.startTime.split(':').map(Number);
+                    const permittedFrom = new Date(now);
+                    permittedFrom.setHours(permHour, permMin, 0, 0);
+
+                    if (now < permittedFrom) {
+                        throw new BadRequestException(
+                            `Your approved early departure is not until ${approvedPermission.startTime}`,
+                        );
+                    }
+                }
+
+                earlyDepartureMinutes = Math.round((scheduledEnd.getTime() - now.getTime()) / 60000);
+            } else if (now > scheduledEnd) {
                 overtimeMinutes = Math.round((now.getTime() - scheduledEnd.getTime()) / 60000);
             }
         }
@@ -161,6 +197,7 @@ export class AttendanceService {
                 checkOutLat: dto.lat,
                 checkOutLng: dto.lng,
                 overtimeMinutes,
+                earlyDepartureMinutes,
             },
         });
     }
