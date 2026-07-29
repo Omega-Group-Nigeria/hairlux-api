@@ -1,38 +1,38 @@
 import {
-  Injectable,
-  NotFoundException,
-  ConflictException,
   BadRequestException,
+  ConflictException,
+  Injectable,
   Logger,
+  NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import * as crypto from 'crypto';
 import * as argon2 from 'argon2';
+import * as crypto from 'crypto';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as QRCode from 'qrcode';
+import { AuthService } from 'src/auth/auth.service';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { MailService } from '../mail/mail.service';
-import { AuthService } from 'src/auth/auth.service';
 import { S3Service } from '../storage/s3.service';
+import { AddEmploymentHistoryDto } from './dto/add-employment-history.dto';
+import { CreateStaffLocationDto } from './dto/create-staff-location.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
-import { UpdateStaffDto } from './dto/update-staff.dto';
+import { QueryStaffLocationsDto } from './dto/query-staff-locations.dto';
 import { QueryStaffDto } from './dto/query-staff.dto';
-import { UpdateStaffStatusDto } from './dto/update-staff-status.dto';
-import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
+import { QueryUpcomingBirthdaysDto } from './dto/query-upcoming-birthdays.dto';
 import {
-  SubmitGuarantorDto,
-  SubmitEmergencyContactDto,
   SubmitAddressDto,
+  SubmitEmergencyContactDto,
+  SubmitGuarantorDto,
   SubmitReferenceDto,
 } from './dto/submit-onboarding-info.dto';
-import { AddEmploymentHistoryDto } from './dto/add-employment-history.dto';
 import { UpdateEmploymentHistoryDto } from './dto/update-employment-history.dto';
-import { QueryUpcomingBirthdaysDto } from './dto/query-upcoming-birthdays.dto';
-import { CreateStaffLocationDto } from './dto/create-staff-location.dto';
-import { QueryStaffLocationsDto } from './dto/query-staff-locations.dto';
+import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
 import { UpdateStaffLocationDto } from './dto/update-staff-location.dto';
+import { UpdateStaffStatusDto } from './dto/update-staff-status.dto';
+import { UpdateStaffDto } from './dto/update-staff.dto';
 
 const TTL = 300;
 
@@ -181,7 +181,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     private mailService: MailService,
     private authService: AuthService,
     private s3Service: S3Service,
-  ) {}
+  ) { }
 
   private get staffModel(): StaffModelDelegate {
     return (this.prisma as unknown as { staff: StaffModelDelegate }).staff;
@@ -390,7 +390,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
           0,
           0,
         ).getTime()) /
-        (1000 * 60 * 60 * 24),
+      (1000 * 60 * 60 * 24),
     );
 
     return { nextBirthday: next, daysUntil };
@@ -566,9 +566,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
   async create(dto: CreateStaffDto) {
     const duplicate = dto.email
       ? await this.staffModel.findFirst({
-          where: { email: dto.email.toLowerCase() },
-          select: { id: true },
-        })
+        where: { email: dto.email.toLowerCase() },
+        select: { id: true },
+      })
       : null;
 
     if (duplicate) {
@@ -607,7 +607,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
           address: this.normalizeNullableString(dto.address),
           employmentStatus:
             dto.employmentStatus ?? STAFF_EMPLOYMENT_STATUS.ACTIVE,
-          userId: dto.userId ?? null, 
+          userId: dto.userId ?? null,
         } as QueryArgs,
       });
 
@@ -642,29 +642,29 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
   }
 
   async findByUserId(userId: string) {
-  const cacheKey = `staff:byUser:${userId}`;
-  const cached = await this.redis.get<StaffWithHistories>(cacheKey);
-  if (cached) return this.attachApprovedPhotoUrl(cached as unknown as { id: string; passportPhotoUrl?: string | null });
+    const cacheKey = `staff:byUser:${userId}`;
+    const cached = await this.redis.get<StaffWithHistories>(cacheKey);
+    if (cached) return this.attachApprovedPhotoUrl(cached as unknown as { id: string; passportPhotoUrl?: string | null });
 
-  const staff = await this.staffModel.findUnique({
-    where: { userId },
-    include: {
-      location: true,
-      histories: {
-        orderBy: { startDate: 'desc' },
-        include: { location: true },
-      },
-      reportingTo: { select: { id: true, name: true, currentRole: true } },
-    } as unknown as QueryArgs,
-  });
+    const staff = await this.staffModel.findUnique({
+      where: { userId },
+      include: {
+        location: true,
+        histories: {
+          orderBy: { startDate: 'desc' },
+          include: { location: true },
+        },
+        reportingTo: { select: { id: true, name: true, currentRole: true } },
+      } as unknown as QueryArgs,
+    });
 
-  if (!staff) {
-    throw new NotFoundException('No staff record linked to this account');
+    if (!staff) {
+      throw new NotFoundException('No staff record linked to this account');
+    }
+
+    await this.redis.set(cacheKey, staff, TTL);
+    return this.attachApprovedPhotoUrl(staff as unknown as { id: string; passportPhotoUrl?: string | null });
   }
-
-  await this.redis.set(cacheKey, staff, TTL);
-  return this.attachApprovedPhotoUrl(staff as unknown as { id: string; passportPhotoUrl?: string | null });
-}
 
   async findAll(queryDto: QueryStaffDto) {
     const cacheKey = `staff:list:${JSON.stringify(queryDto)}`;
@@ -897,12 +897,12 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
           employmentStatus: status,
           reasonForExit:
             status === STAFF_EMPLOYMENT_STATUS.EXITED ||
-            status === STAFF_EMPLOYMENT_STATUS.ARCHIVED
+              status === STAFF_EMPLOYMENT_STATUS.ARCHIVED
               ? this.normalizeNullableString(dto.reasonForExit)
               : null,
           exitDate:
             status === STAFF_EMPLOYMENT_STATUS.EXITED ||
-            status === STAFF_EMPLOYMENT_STATUS.ARCHIVED
+              status === STAFF_EMPLOYMENT_STATUS.ARCHIVED
               ? exitDate
               : null,
           archivedAt: status === STAFF_EMPLOYMENT_STATUS.ARCHIVED ? now : null,
@@ -1466,14 +1466,14 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         ...(includeFormer
           ? {}
           : {
-              employmentStatus: {
-                in: [
-                  STAFF_EMPLOYMENT_STATUS.ACTIVE,
-                  STAFF_EMPLOYMENT_STATUS.ON_LEAVE,
-                  STAFF_EMPLOYMENT_STATUS.SUSPENDED,
-                ],
-              },
-            }),
+            employmentStatus: {
+              in: [
+                STAFF_EMPLOYMENT_STATUS.ACTIVE,
+                STAFF_EMPLOYMENT_STATUS.ON_LEAVE,
+                STAFF_EMPLOYMENT_STATUS.SUSPENDED,
+              ],
+            },
+          }),
       },
       select: {
         id: true,
@@ -1573,10 +1573,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
             });
 
             this.logger.error(
-              `Birthday email queue failed for staff ${staff.id}; marker rollback ${rolledBack.count > 0 ? 'succeeded' : 'did not apply'}: ${
-                queueError instanceof Error
-                  ? queueError.message
-                  : String(queueError)
+              `Birthday email queue failed for staff ${staff.id}; marker rollback ${rolledBack.count > 0 ? 'succeeded' : 'did not apply'}: ${queueError instanceof Error
+                ? queueError.message
+                : String(queueError)
               }`,
             );
           }
@@ -1792,5 +1791,26 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     await this.invalidateCache(staffId);
 
     return { staffId, email, userId: user.id, wasExistingUser };
+  }
+
+  async getCompensation(staffId: string) {
+    const application = await this.prisma.application.findFirst({
+      where: { staffId },
+      include: { offerLetter: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!application?.offerLetter) {
+      return null; // no offer-letter record exists for this staff member (e.g. seeded/legacy staff, not hired through Recruitment)
+    }
+
+    const { baseSalary, allowances, compensationNote, effectiveDate, role } = application.offerLetter;
+    return {
+      role,
+      baseSalary: Number(baseSalary),
+      allowances: allowances ? Number(allowances) : null,
+      compensationNote,
+      effectiveDate,
+    };
   }
 }

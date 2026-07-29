@@ -1,19 +1,19 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import {
-  ApiTags,
   ApiOperation,
-  ApiResponse,
-  ApiQuery,
   ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
 } from '@nestjs/swagger';
-import { JobsService } from './jobs.service';
-import { QueryJobsDto } from './dto/query-jobs.dto';
 import { Public } from '../auth/decorators/public.decorator';
+import { QueryJobsDto } from './dto/query-jobs.dto';
+import { JobsService } from './jobs.service';
 
 @ApiTags('Jobs')
 @Controller('jobs')
 export class JobsController {
-  constructor(private readonly jobsService: JobsService) {}
+  constructor(private readonly jobsService: JobsService) { }
 
   @Get()
   @Public()
@@ -59,7 +59,7 @@ export class JobsController {
                 'Perform hair styling services for clients',
                 'Maintain a clean workstation',
               ],
-              isActive: true,
+              status: 'PUBLISHED',
               closingDate: '2026-04-30T23:59:59.000Z',
               createdAt: '2026-03-01T10:00:00.000Z',
               updatedAt: '2026-03-01T10:00:00.000Z',
@@ -108,7 +108,7 @@ export class JobsController {
             'Perform hair styling services for clients',
             'Maintain a clean workstation',
           ],
-          isActive: true,
+          status: 'PUBLISHED',
           closingDate: '2026-04-30T23:59:59.000Z',
           createdAt: '2026-03-01T10:00:00.000Z',
           updatedAt: '2026-03-01T10:00:00.000Z',

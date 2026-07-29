@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { JobType } from '@prisma/client';
-import { IsEnum, IsInt, IsOptional, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class QueryJobsDto {
@@ -34,4 +34,9 @@ export class QueryJobsDto {
   @IsInt()
   @Min(1)
   limit?: number = 10;
+
+  @ApiPropertyOptional({ description: 'Filter by branch (StaffLocation ID)' })
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 }

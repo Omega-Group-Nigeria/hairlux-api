@@ -1,13 +1,14 @@
-import { Body, Controller, Post, UseGuards, Req, Get, UseInterceptors, UploadedFile, BadRequestException} from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Get, Post, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { S3Service } from 'src/storage/s3.service';
 import { ApplicationService } from './application.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
-import { JwtService } from '@nestjs/jwt';
 import { RequestOtpDto } from './dto/request-otp.dto';
-import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { RespondToOfferDto } from './dto/respond-to-offer.dto';
+import { VerifyApplicantOtpDto } from './dto/verify-otp.dto';
 import { ApplicantAuthGuard } from './guard/applicant-auth.guard';
-import { S3Service } from 'src/storage/s3.service';
 
 const MAX_CV_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -16,7 +17,7 @@ const MAX_CV_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 export class ApplicationController {
   constructor(private readonly applicationService: ApplicationService,
     private readonly s3Service: S3Service,
-     private readonly jwtService: JwtService) {}
+    private readonly jwtService: JwtService) { }
 
   @Post()
   @ApiOperation({
@@ -47,7 +48,7 @@ export class ApplicationController {
 
   @Post('verify-otp')
   @ApiOperation({ summary: 'Exchange application code + OTP for a dashboard access token' })
-  async verifyOtp(@Body() dto: VerifyOtpDto) {
+  async verifyOtp(@Body() dto: VerifyApplicantOtpDto) {
     const applicationId = await this.applicationService.verifyOtp(dto.applicationCode, dto.otp);
     const accessToken = await this.jwtService.signAsync(
       { applicationId, purpose: 'applicant' },
@@ -61,6 +62,18 @@ export class ApplicationController {
   async getMe(@Req() req: any) {
     const data = await this.applicationService.findOne(req.applicationId);
     return { success: true, message: 'Application retrieved successfully', data };
+  }
+
+
+  @Post('offer/respond')
+  @UseGuards(ApplicantAuthGuard)
+  @ApiOperation({ summary: 'Accept or decline your offer letter' })
+  @ApiResponse({ status: 200, description: 'Offer response recorded successfully' })
+  @ApiResponse({ status: 400, description: 'Offer already responded to' })
+  @ApiResponse({ status: 404, description: 'No offer letter found' })
+  async respondToOffer(@Req() req: any, @Body() dto: RespondToOfferDto) {
+    const data = await this.applicationService.respondToOffer(req.applicationId, dto);
+    return { success: true, message: 'Offer response recorded successfully', data };
   }
 
   @Post('upload-cv')
@@ -96,14 +109,14 @@ export class ApplicationController {
     if (file.size > MAX_CV_SIZE_BYTES) {
       throw new BadRequestException('CV file must be 5MB or smaller.');
     }
- 
+
     const key = await this.s3Service.uploadObject(
       file.buffer,
       'applications/cv',
       file.originalname,
       file.mimetype,
     );
- 
+
     return {
       success: true,
       message: 'CV uploaded successfully',

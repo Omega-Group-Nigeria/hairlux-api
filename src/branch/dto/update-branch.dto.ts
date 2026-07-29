@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform,Type } from 'class-transformer';
 import {
   IsBoolean,
   IsNotEmpty,
@@ -7,6 +7,10 @@ import {
   IsString,
   Matches,
   MaxLength,
+  IsNumber,
+  Min,
+  Max,
+  IsInt
 } from 'class-validator';
 
 export class UpdateBranchDto {
@@ -18,15 +22,15 @@ export class UpdateBranchDto {
   name?: string;
 
   @ApiPropertyOptional({
-  example: 'IKY',
-  description:
-    'Short branch code used in staff IDs. 2-5 uppercase letters. Changing ' +
-    'this does NOT retroactively rename existing staff codes at this branch.',
-})
+    example: 'IKY',
+    description:
+      'Short branch code used in staff IDs. 2-5 uppercase letters. Changing ' +
+      'this does NOT retroactively rename existing staff codes at this branch.',
+  })
   @IsOptional()
   @IsString()
   @Matches(/^[A-Z]{2,5}$/, {
-   message: 'code must be 2-5 uppercase letters (e.g. LEK, IFE, ABJ)',
+    message: 'code must be 2-5 uppercase letters (e.g. LEK, IFE, ABJ)',
   })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
   code?: string;
@@ -54,4 +58,35 @@ export class UpdateBranchDto {
   })
   @IsBoolean()
   isActive?: boolean;
+
+
+  @ApiPropertyOptional({ example: 6.4531 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  gpsLat?: number;
+
+  @ApiPropertyOptional({ example: 3.4692 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  gpsLng?: number;
+
+  @ApiPropertyOptional({ example: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(10)
+  approvedRadiusMeters?: number;
+
+  @ApiPropertyOptional({ example: 10 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  lateGracePeriodMinutes?: number;
 }

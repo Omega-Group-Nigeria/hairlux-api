@@ -7,8 +7,12 @@ import {
   IsBoolean,
   IsOptional,
   IsDateString,
+  IsUUID,
+  IsNumber,
+  Min,
   MinLength,
   ArrayMinSize,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateJobDto {
@@ -30,10 +34,25 @@ export class CreateJobDto {
 
   @ApiProperty({
     example: 'Lagos, Nigeria',
-    description: 'Job location (city, state or "Remote")',
+    description: 'Job location (city, state or "Remote") — kept for display; prefer branchId when the role is tied to a specific branch.',
   })
   @IsString()
   location: string;
+
+  @ApiPropertyOptional({
+    description: 'StaffLocation ID this posting is tied to. Omit for postings open across branches or not yet branch-specific.',
+  })
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
+
+  @ApiPropertyOptional({
+    example: 'Hair Styling',
+    description: 'Department name (free text, matching Staff.currentRole convention)',
+  })
+  @IsOptional()
+  @IsString()
+  department?: string;
 
   @ApiProperty({
     description:
@@ -75,4 +94,22 @@ export class CreateJobDto {
   @IsOptional()
   @IsDateString()
   closingDate?: string;
+
+  @ApiPropertyOptional({ example: 80000, description: 'Advertised salary floor (NGN)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salaryMin?: number;
+
+  @ApiPropertyOptional({ example: 150000, description: 'Advertised salary ceiling (NGN)' })
+  @ValidateIf((o) => o.salaryMin !== undefined)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  salaryMax?: number;
+
+  @ApiPropertyOptional({ example: 'Negotiable based on experience, plus commission', description: 'Free-text salary qualifier' })
+  @IsOptional()
+  @IsString()
+  salaryNote?: string;
 }
