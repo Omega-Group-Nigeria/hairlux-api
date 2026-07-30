@@ -10,7 +10,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   STAFF_EMPLOYMENT_STATUS_VALUES,
+  DISCIPLINARY_ACTION_TYPE_VALUES,
   type StaffEmploymentStatusValue,
+  type DisciplinaryActionTypeValue,
 } from './create-staff.dto';
 
 const toTrimmedString = (value: unknown): unknown =>
@@ -38,4 +40,23 @@ export class UpdateStaffStatusDto {
   @IsOptional()
   @IsDateString()
   exitDate?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'When set, this status change is also logged as a structured disciplinary record (e.g. a Suspension). Omit for non-disciplinary changes like ON_LEAVE or reactivating to ACTIVE.',
+    enum: DISCIPLINARY_ACTION_TYPE_VALUES,
+  })
+  @IsOptional()
+  @IsIn(DISCIPLINARY_ACTION_TYPE_VALUES)
+  disciplinaryType?: DisciplinaryActionTypeValue;
+
+  @ApiPropertyOptional({
+    description: 'Required when disciplinaryType is set',
+    example: 'Repeated unexcused lateness despite prior verbal warning',
+  })
+  @ValidateIf((o) => !!o.disciplinaryType)
+  @IsNotEmpty()
+  @IsString()
+  @Transform(({ value }) => toTrimmedString(value))
+  disciplinaryReason?: string;
 }

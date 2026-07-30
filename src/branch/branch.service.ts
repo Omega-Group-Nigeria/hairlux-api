@@ -45,6 +45,14 @@ export class BranchService {
     return this.branchLocationService.remove(id);
   }
 
+  setBranchManager(branchId: string, staffId: string) {
+    return this.branchLocationService.setManager(branchId, staffId);
+  }
+
+  removeBranchManager(branchId: string) {
+    return this.branchLocationService.removeManager(branchId);
+  }
+
   getAdminServiceMatrix(branchId: string) {
     return this.branchServiceConfigService.getAdminMatrix(branchId);
   }

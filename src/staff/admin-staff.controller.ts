@@ -10,7 +10,7 @@ import {
   Query,
   Req,
   UseGuards,
-  Res, 
+  Res,
   StreamableFile,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -51,10 +51,10 @@ import { UpdateStaffLocationDto } from './dto/update-staff-location.dto';
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminStaffController {
   constructor(private readonly staffService: StaffService,
-  private readonly documentService: CompanyDocumentService,
-  private readonly commsService: StaffCommsService,
+    private readonly documentService: CompanyDocumentService,
+    private readonly commsService: StaffCommsService,
 
-) {}
+  ) { }
 
   @Post()
   @ApiOperation({
@@ -318,7 +318,7 @@ export class AdminStaffController {
     return { success: true, message: 'Onboarding summary retrieved successfully', data };
   }
 
-@Get(':id')
+  @Get(':id')
 
   @Get(':id')
   @ApiOperation({ summary: 'Get one staff record with employment history' })
@@ -414,13 +414,24 @@ export class AdminStaffController {
   async updateStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStaffStatusDto,
+    @Req() req: any,
+
   ) {
-    const data = await this.staffService.updateStatus(id, dto);
+    const data = await this.staffService.updateStatus(id, dto, req.user.id);
     return {
       success: true,
       message: 'Staff status updated successfully',
       data,
     };
+  }
+
+  @Get(':id/disciplinary-actions')
+  @ApiOperation({ summary: "Get a staff member's disciplinary action history" })
+  @ApiParam({ name: 'id' })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getDisciplinaryActions(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.staffService.getDisciplinaryActions(id);
+    return { success: true, message: 'Disciplinary actions retrieved successfully', data };
   }
 
   @Post(':id/archive')
@@ -624,45 +635,45 @@ export class AdminStaffController {
     return { success: true, message: 'Onboarding checklist retrieved successfully', data };
   }
 
-@Patch(':id/onboarding/:itemId')
-@Permission(PERMISSIONS.STAFF_UPDATE)
-async updateOnboardingItem(
-  @Param('id', ParseUUIDPipe) id: string,
-  @Param('itemId', ParseUUIDPipe) itemId: string,
-  @Body() dto: UpdateOnboardingItemDto,
-  @Req() req: any,
-) {
-  const data = await this.staffService.updateOnboardingItem(id, itemId, dto, req.user?.id);
-  return { success: true, message: 'Onboarding item updated successfully', data };
-}
+  @Patch(':id/onboarding/:itemId')
+  @Permission(PERMISSIONS.STAFF_UPDATE)
+  async updateOnboardingItem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: UpdateOnboardingItemDto,
+    @Req() req: any,
+  ) {
+    const data = await this.staffService.updateOnboardingItem(id, itemId, dto, req.user?.id);
+    return { success: true, message: 'Onboarding item updated successfully', data };
+  }
 
-@Get(':id/documents')
-@Permission(PERMISSIONS.STAFF_READ)
-async getStaffDocumentStatus(@Param('id', ParseUUIDPipe) id: string) {
-  const data = await this.documentService.getStaffDocumentStatus(id);
-  return { success: true, message: 'Document status retrieved successfully', data };
-}
+  @Get(':id/documents')
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getStaffDocumentStatus(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.documentService.getStaffDocumentStatus(id);
+    return { success: true, message: 'Document status retrieved successfully', data };
+  }
 
-@Get(':id/directives')
-@Permission(PERMISSIONS.STAFF_READ)
-async getStaffDirectives(@Param('id', ParseUUIDPipe) id: string) {
-  const data = await this.commsService.getDirectivesForStaff(id);
-  return { success: true, message: 'Directives retrieved successfully', data };
-}
+  @Get(':id/directives')
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getStaffDirectives(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.commsService.getDirectivesForStaff(id);
+    return { success: true, message: 'Directives retrieved successfully', data };
+  }
 
-@Get(':id/id-card.pdf')
-@Permission(PERMISSIONS.STAFF_READ)
-async downloadIdCard(
-  @Param('id', ParseUUIDPipe) id: string,
-  @Res({ passthrough: true }) res: Response,
-): Promise<StreamableFile> {
-  const pdfBuffer = await this.staffService.generateIdCardPdf(id);
-  res.set({
-    'Content-Type': 'application/pdf',
-    'Content-Disposition': `inline; filename="staff-id-${id}.pdf"`,
-  });
-  return new StreamableFile(pdfBuffer);
-}
+  @Get(':id/id-card.pdf')
+  @Permission(PERMISSIONS.STAFF_READ)
+  async downloadIdCard(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const pdfBuffer = await this.staffService.generateIdCardPdf(id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="staff-id-${id}.pdf"`,
+    });
+    return new StreamableFile(pdfBuffer);
+  }
 
   @Get('legacy-account-backfill/preview')
   @ApiOperation({

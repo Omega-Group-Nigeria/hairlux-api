@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
+    ApprovalRequestType,
     LowStockAlertStage,
     Prisma,
     StockMovementType,
@@ -8,6 +9,7 @@ import {
 } from '@prisma/client';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ApprovalService } from '../approval/approval.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { QueryInventoryDto } from './dto/query-inventory.dto';
@@ -29,6 +31,7 @@ export class InventoryService {
     constructor(
         private prisma: PrismaService,
         private mailService: MailService,
+        private approvalService: ApprovalService,
     ) { }
 
     async createItem(dto: CreateInventoryItemDto, branchId: string) {
@@ -114,9 +117,10 @@ export class InventoryService {
         return updated;
     }
 
-    async adjustStock(itemId: string, dto: AdjustStockDto, staffId: string) {
+    /** The actual stock mutation — only ever called once an adjustment is approved (or by an elevated Admin submitting one, which auto-approves). */
+    private async applyAdjustment(itemId: string, quantityDelta: number, reason: string, staffId: string) {
         const item = await this.findOne(itemId);
-        const newQuantity = item.currentQuantity + dto.quantityDelta;
+        const newQuantity = item.currentQuantity + quantityDelta;
 
         if (newQuantity < 0) {
             throw new BadRequestException('Adjustment would result in negative stock — not permitted');
@@ -131,18 +135,110 @@ export class InventoryService {
                 data: {
                     itemId,
                     type: StockMovementType.ADJUSTMENT,
-                    quantityDelta: dto.quantityDelta,
+                    quantityDelta,
                     performedById: staffId,
-                    reason: dto.reason,
+                    reason,
                 },
             }),
         ]);
 
-        if (dto.quantityDelta < 0) {
+        if (quantityDelta < 0) {
             await this.checkAndTriggerLowStockAlert(itemId);
         }
 
         return updated;
+    }
+
+    /**
+     * Submit a stock adjustment for approval — does NOT touch inventory yet.
+     * `isElevated` (Admin/Super Admin submitting) auto-approves and applies
+     * immediately, still going through the same ApprovalRequest/Action audit
+     * trail as a regular request, just pre-approved by the same actor.
+     */
+    async requestStockAdjustment(itemId: string, dto: AdjustStockDto, staffId: string, isElevated: boolean) {
+        const item = await this.findOne(itemId);
+
+        const approvalRequest = await this.approvalService.create({
+            requestType: ApprovalRequestType.INVENTORY_ADJUSTMENT,
+            branchId: item.branchId,
+            submittedById: staffId,
+        });
+
+        const adjustmentRequest = await this.prisma.stockAdjustmentRequest.create({
+            data: {
+                itemId,
+                quantityDelta: dto.quantityDelta,
+                reason: dto.reason,
+                requestedById: staffId,
+                approvalRequestId: approvalRequest.id,
+            },
+        });
+
+        if (isElevated) {
+            return this.approveStockAdjustment(adjustmentRequest.id, staffId, true);
+        }
+
+        return adjustmentRequest;
+    }
+
+    async approveStockAdjustment(requestId: string, actorId: string, isElevated: boolean) {
+        const request = await this.prisma.stockAdjustmentRequest.findUnique({ where: { id: requestId } });
+        if (!request) throw new NotFoundException('Stock adjustment request not found');
+        if (request.status !== 'PENDING') {
+            throw new BadRequestException(`Cannot approve — request is already ${request.status}`);
+        }
+
+        await this.approvalService.approve(request.approvalRequestId, actorId, isElevated);
+
+        // Re-validate at execution time, not just at request time — stock may
+        // have moved since this was submitted (sale, another adjustment, etc.).
+        await this.applyAdjustment(request.itemId, request.quantityDelta, request.reason, actorId);
+
+        return this.prisma.stockAdjustmentRequest.update({
+            where: { id: requestId },
+            data: { status: 'APPROVED', appliedAt: new Date() },
+        });
+    }
+
+    async rejectStockAdjustment(requestId: string, actorId: string, isElevated: boolean, reason: string) {
+        const request = await this.prisma.stockAdjustmentRequest.findUnique({ where: { id: requestId } });
+        if (!request) throw new NotFoundException('Stock adjustment request not found');
+        if (request.status !== 'PENDING') {
+            throw new BadRequestException(`Cannot reject — request is already ${request.status}`);
+        }
+
+        await this.approvalService.reject(request.approvalRequestId, actorId, isElevated, reason);
+
+        return this.prisma.stockAdjustmentRequest.update({
+            where: { id: requestId },
+            data: { status: 'REJECTED' },
+        });
+    }
+
+    async reassignStockAdjustment(requestId: string, actorId: string, isElevated: boolean, toApproverId: string, reason: string) {
+        const request = await this.prisma.stockAdjustmentRequest.findUnique({ where: { id: requestId } });
+        if (!request) throw new NotFoundException('Stock adjustment request not found');
+        if (request.status !== 'PENDING') {
+            throw new BadRequestException(`Cannot reassign — request is already ${request.status}`);
+        }
+
+        await this.approvalService.reassign(request.approvalRequestId, actorId, isElevated, toApproverId, reason);
+        return request;
+    }
+
+    async findAdjustmentRequests(branchId?: string, status?: string) {
+        return this.prisma.stockAdjustmentRequest.findMany({
+            where: {
+                ...(status && { status: status as any }),
+                ...(branchId && { item: { branchId } }),
+            },
+            include: {
+                item: { select: { name: true, branchId: true, branch: { select: { name: true } } } },
+                requestedBy: { select: { id: true, name: true, staffCode: true } },
+                approvalRequest: { select: { currentApproverId: true, status: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+        });
     }
 
     /**
@@ -278,6 +374,8 @@ export class InventoryService {
 
     // ── Stock Transfers ──────────────────────────────────────────────
 
+    // ── Stock Transfers ──────────────────────────────────────────────
+
     async requestTransfer(dto: RequestTransferDto, requestedById: string) {
         const fromItem = await this.findOne(dto.fromItemId);
 
@@ -290,17 +388,24 @@ export class InventoryService {
             );
         }
 
+        const approvalRequest = await this.approvalService.create({
+            requestType: ApprovalRequestType.STOCK_TRANSFER,
+            branchId: fromItem.branchId,
+            submittedById: requestedById,
+        });
+
         return this.prisma.stockTransfer.create({
             data: {
                 fromItemId: dto.fromItemId,
                 toBranchId: dto.toBranchId,
                 quantity: dto.quantity,
                 requestedById,
+                approvalRequestId: approvalRequest.id,
             },
         });
     }
 
-    async approveTransfer(transferId: string, approvedById: string) {
+    async approveTransfer(transferId: string, actorId: string, isElevated: boolean) {
         const transfer = await this.prisma.stockTransfer.findUnique({
             where: { id: transferId },
             include: { fromItem: true },
@@ -308,6 +413,10 @@ export class InventoryService {
         if (!transfer) throw new NotFoundException('Transfer not found');
         if (transfer.status !== StockTransferStatus.PENDING) {
             throw new BadRequestException(`Cannot approve — transfer is already ${transfer.status}`);
+        }
+
+        if (transfer.approvalRequestId) {
+            await this.approvalService.approve(transfer.approvalRequestId, actorId, isElevated);
         }
 
         // Re-validate stock at execution time, not just at request time — it may have changed.
@@ -357,14 +466,14 @@ export class InventoryService {
                         type: StockMovementType.TRANSFER_OUT,
                         quantityDelta: -transfer.quantity,
                         referenceId: transfer.id,
-                        performedById: approvedById,
+                        performedById: actorId,
                     },
                     {
                         itemId: toItem.id,
                         type: StockMovementType.TRANSFER_IN,
                         quantityDelta: transfer.quantity,
                         referenceId: transfer.id,
-                        performedById: approvedById,
+                        performedById: actorId,
                     },
                 ],
             });
@@ -373,7 +482,7 @@ export class InventoryService {
                 where: { id: transferId },
                 data: {
                     status: StockTransferStatus.COMPLETED,
-                    approvedById,
+                    approvedById: actorId,
                     approvedAt: now,
                     completedAt: now,
                 },
@@ -385,17 +494,35 @@ export class InventoryService {
         return this.prisma.stockTransfer.findUnique({ where: { id: transferId } });
     }
 
-    async rejectTransfer(transferId: string, dto: RejectTransferDto) {
+    async rejectTransfer(transferId: string, actorId: string, isElevated: boolean, dto: RejectTransferDto) {
         const transfer = await this.prisma.stockTransfer.findUnique({ where: { id: transferId } });
         if (!transfer) throw new NotFoundException('Transfer not found');
         if (transfer.status !== StockTransferStatus.PENDING) {
             throw new BadRequestException(`Cannot reject — transfer is already ${transfer.status}`);
         }
 
+        if (transfer.approvalRequestId) {
+            await this.approvalService.reject(transfer.approvalRequestId, actorId, isElevated, dto.reason);
+        }
+
         return this.prisma.stockTransfer.update({
             where: { id: transferId },
             data: { status: StockTransferStatus.REJECTED, rejectionReason: dto.reason },
         });
+    }
+
+    async reassignTransfer(transferId: string, actorId: string, isElevated: boolean, toApproverId: string, reason: string) {
+        const transfer = await this.prisma.stockTransfer.findUnique({ where: { id: transferId } });
+        if (!transfer) throw new NotFoundException('Transfer not found');
+        if (transfer.status !== StockTransferStatus.PENDING) {
+            throw new BadRequestException(`Cannot reassign — transfer is already ${transfer.status}`);
+        }
+        if (!transfer.approvalRequestId) {
+            throw new BadRequestException('This transfer has no approval chain to reassign (legacy record)');
+        }
+
+        await this.approvalService.reassign(transfer.approvalRequestId, actorId, isElevated, toApproverId, reason);
+        return transfer;
     }
 
     async findTransfers(branchId?: string) {
