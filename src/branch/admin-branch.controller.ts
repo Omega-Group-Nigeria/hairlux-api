@@ -31,6 +31,7 @@ import { BranchService } from './branch.service';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { PatchBranchServicesDto } from './dto/patch-branch-services.dto';
 import { QueryAdminBranchesDto } from './dto/query-admin-branches.dto';
+import { SetBranchManagerDto } from './dto/set-branch-manager.dto';
 import { SetBranchServicesDto } from './dto/set-branch-services.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 
@@ -99,6 +100,32 @@ export class AdminBranchController {
   ) {
     const data = await this.branchService.updateBranch(id, dto);
     return { success: true, message: 'Branch updated successfully', data };
+  }
+
+  @Patch(':id/manager')
+  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @ApiOperation({
+    summary: 'Appoint the branch manager',
+    description:
+      'Max one manager per branch (enforced by a unique constraint). The staff member must already be assigned to this branch, and cannot already manage a different branch.',
+  })
+  @ApiParam({ name: 'id', description: 'Branch ID' })
+  async setManager(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetBranchManagerDto,
+  ) {
+    const data = await this.branchService.setBranchManager(id, dto.staffId);
+    return { success: true, message: 'Branch manager appointed successfully', data };
+  }
+
+  @Delete(':id/manager')
+  @HttpCode(HttpStatus.OK)
+  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @ApiOperation({ summary: 'Remove the branch manager appointment (branch reverts to unmanaged)' })
+  @ApiParam({ name: 'id', description: 'Branch ID' })
+  async removeManager(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.branchService.removeBranchManager(id);
+    return { success: true, message: 'Branch manager removed successfully', data };
   }
 
   @Delete(':id')

@@ -9,9 +9,13 @@
 --   - ALTER TABLE ... ADD COLUMN IF NOT EXISTS (additive, nullable/defaulted)
 -- Nothing here drops, renames, or alters an existing column, constraint,
 -- or index on any table. BACK UP FIRST regardless (you already have).
+--
+-- NOTE: no BEGIN/COMMIT here — Prisma's migrate engine (migrate dev/deploy)
+-- already wraps every migration file in its own transaction. If you ever
+-- need to run this file by hand via psql instead, add
+-- `-1` / `--single-transaction` on the psql command line rather than
+-- putting BEGIN/COMMIT back in the file itself.
 -- ============================================================================
-
-BEGIN;
 
 -- ── New enum types ──────────────────────────────────────────────────────────
 
@@ -371,5 +375,3 @@ DO $$ BEGIN
     ADD CONSTRAINT "stock_transfers_approved_by_id_fkey"
     FOREIGN KEY ("approved_by_id") REFERENCES "staff"("id") ON DELETE SET NULL;
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-COMMIT;

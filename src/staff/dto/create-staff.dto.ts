@@ -33,14 +33,23 @@ export const STAFF_EMPLOYMENT_TYPE_VALUES = [
   'TEMPORARY',
 ] as const;
 
+export const DISCIPLINARY_ACTION_TYPE_VALUES = [
+  'VERBAL_WARNING',
+  'WRITTEN_WARNING',
+  'SUSPENSION',
+  'TERMINATION',
+] as const;
+
 export type StaffEmploymentStatusValue =
   (typeof STAFF_EMPLOYMENT_STATUS_VALUES)[number];
 export type StaffEmploymentTypeValue =
   (typeof STAFF_EMPLOYMENT_TYPE_VALUES)[number];
+export type DisciplinaryActionTypeValue =
+  (typeof DISCIPLINARY_ACTION_TYPE_VALUES)[number];
 
 export class CreateStaffDto {
 
-  @ApiPropertyOptional({description: 'Link to an existing User account — set automatically by convertToStaff(), not typically provided directly',})
+  @ApiPropertyOptional({ description: 'Link to an existing User account — set automatically by convertToStaff(), not typically provided directly', })
   @IsOptional()
   @IsUUID()
   userId?: string;

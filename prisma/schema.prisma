@@ -370,6 +370,33 @@ enum LowStockAlertStage {
   MANAGEMENT
 }
 
+// ─── Shared Approval Chain (reusable across Leave, Inventory, Payroll, etc.) ───
+
+enum ApprovalRequestType {
+  LEAVE_REQUEST
+  INVENTORY_ADJUSTMENT
+  STOCK_TRANSFER
+  PAYROLL_ADJUSTMENT
+  COMMISSION_ADJUSTMENT
+  DISCIPLINARY_ACTION
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  MORE_INFO_REQUESTED
+}
+
+enum ApprovalActionType {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REASSIGNED
+  MORE_INFO_REQUESTED
+  INFO_PROVIDED
+}
+
 model StaffDocumentAcknowledgment {
   id             String   @id @default(uuid())
   staffId        String   @map("staff_id")
@@ -413,36 +440,38 @@ model User {
   adminRoleId String? @map("admin_role_id")
 
   // Relations
-  addresses                  Address[]
-  bookings                   Booking[]
-  wallet                     Wallet?
-  reviews                    Review[]
-  refreshTokens              RefreshToken[]
-  referralCode               ReferralCode?
-  referrals                  Referral[]                  @relation("ReferrerUser")
-  referredBy                 Referral?                   @relation("ReferredUser")
-  referralCampaignUsages     ReferralCampaignCodeUsage[]
-  discountUsages             DiscountUsage[]             @relation("UserDiscountUsages")
-  adminRole                  AdminRole?                  @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
-  influencer                 Influencer?
-  shopOrders                 ShopOrder[]
-  beauticianProfile          BeauticianProfile?
-  assignedBookings           Booking[]                   @relation("AssignedBeautician")
-  jobOffers                  JobOffer[]
-  offerLettersGenerated      OfferLetter[]               @relation("OfferLetterGeneratedBy")
-  employmentApprovalsGranted EmploymentApproval[]        @relation("EmploymentApprovalApprovedBy")
-  attendanceCorrections      AttendanceRecord[]          @relation("AttendanceAdjustedBy")
-  beauticianServicesAssigned BeauticianService[]         @relation("BeauticianServiceAssignedBy")
-  profileReviewsPerformed    BeauticianProfile[]         @relation("ProfileReviewedBy")
-  payoutRequests             PayoutRequest[]             @relation("UserPayoutRequests")
-  payoutsProcessed           PayoutRequest[]             @relation("PayoutProcessedBy")
-  fcmTokens                  FcmToken[]
-  beauticianLocationHistory  BeauticianLocationHistory[] @relation("BeauticianLocationHistory")
-  roleAssignments            UserRoleAssignment[]        @relation("UserRoleAssignments")
-  roleAssignmentsGranted     UserRoleAssignment[]        @relation("RoleAssignedBy")
-  staff                      Staff?
-  createdAnnouncements       Announcement[]              @relation("AnnouncementCreatedBy")
-  createdDirectives          Directive[]                 @relation("DirectiveCreatedBy")
+  addresses                   Address[]
+  bookings                    Booking[]
+  wallet                      Wallet?
+  reviews                     Review[]
+  refreshTokens               RefreshToken[]
+  referralCode                ReferralCode?
+  referrals                   Referral[]                  @relation("ReferrerUser")
+  referredBy                  Referral?                   @relation("ReferredUser")
+  referralCampaignUsages      ReferralCampaignCodeUsage[]
+  discountUsages              DiscountUsage[]             @relation("UserDiscountUsages")
+  adminRole                   AdminRole?                  @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
+  influencer                  Influencer?
+  shopOrders                  ShopOrder[]
+  beauticianProfile           BeauticianProfile?
+  assignedBookings            Booking[]                   @relation("AssignedBeautician")
+  jobOffers                   JobOffer[]
+  offerLettersGenerated       OfferLetter[]               @relation("OfferLetterGeneratedBy")
+  employmentApprovalsGranted  EmploymentApproval[]        @relation("EmploymentApprovalApprovedBy")
+  attendanceCorrections       AttendanceRecord[]          @relation("AttendanceAdjustedBy")
+  disciplinaryActionsIssued   DisciplinaryAction[]        @relation("DisciplinaryActionIssuedBy")
+  disciplinaryActionsResolved DisciplinaryAction[]        @relation("DisciplinaryActionResolvedBy")
+  beauticianServicesAssigned  BeauticianService[]         @relation("BeauticianServiceAssignedBy")
+  profileReviewsPerformed     BeauticianProfile[]         @relation("ProfileReviewedBy")
+  payoutRequests              PayoutRequest[]             @relation("UserPayoutRequests")
+  payoutsProcessed            PayoutRequest[]             @relation("PayoutProcessedBy")
+  fcmTokens                   FcmToken[]
+  beauticianLocationHistory   BeauticianLocationHistory[] @relation("BeauticianLocationHistory")
+  roleAssignments             UserRoleAssignment[]        @relation("UserRoleAssignments")
+  roleAssignmentsGranted      UserRoleAssignment[]        @relation("RoleAssignedBy")
+  staff                       Staff?
+  createdAnnouncements        Announcement[]              @relation("AnnouncementCreatedBy")
+  createdDirectives           Directive[]                 @relation("DirectiveCreatedBy")
 
   @@index([role])
   @@index([status])
@@ -1061,9 +1090,10 @@ model Staff {
   createdAt               DateTime              @default(now()) @map("created_at")
   updatedAt               DateTime              @updatedAt @map("updated_at")
 
-  location  StaffLocation            @relation(fields: [locationId], references: [id])
-  histories StaffEmploymentHistory[]
-  user      User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  location      StaffLocation            @relation(fields: [locationId], references: [id])
+  managedBranch StaffLocation?           @relation("BranchManager")
+  histories     StaffEmploymentHistory[]
+  user          User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   onboardingItems StaffOnboardingItem[]
 
@@ -1077,12 +1107,17 @@ model Staff {
   announcementReads     AnnouncementRead[]
   directives            Directive[]
 
-  attendanceRecords       AttendanceRecord[]
-  lateGracePeriodOverride Int?                @map("late_grace_period_override")
-  leaveRequests           LeaveRequest[]
-  leaveRequestsToApprove  LeaveRequest[]      @relation("LeaveRequestApprover")
-  inventoryLogEntries     InventoryLogEntry[]
-  interviewsConducted     Application[]       @relation("ApplicationInterviewer")
+  attendanceRecords         AttendanceRecord[]
+  lateGracePeriodOverride   Int?                     @map("late_grace_period_override")
+  leaveRequests             LeaveRequest[]
+  leaveRequestsToApprove    LeaveRequest[]           @relation("LeaveRequestApprover")
+  approvalRequestsSubmitted ApprovalRequest[]        @relation("ApprovalSubmittedBy")
+  approvalRequestsToAction  ApprovalRequest[]        @relation("ApprovalCurrentApprover")
+  approvalActionsTaken      ApprovalAction[]         @relation("ApprovalActionActor")
+  inventoryLogEntries       InventoryLogEntry[]
+  stockAdjustmentRequests   StockAdjustmentRequest[]
+  disciplinaryActions       DisciplinaryAction[]
+  interviewsConducted       Application[]            @relation("ApplicationInterviewer")
 
   passportPhotoUrl         String? @map("passport_photo_url")
   emergencyContactName     String? @map("emergency_contact_name")
@@ -1161,8 +1196,13 @@ model StaffLocation {
   gpsLng               Decimal? @map("gps_lng") @db.Decimal(10, 7)
   approvedRadiusMeters Int?     @map("approved_radius_meters")
 
-  // on StaffLocation, alongside the GPS fields:
   lateGracePeriodMinutes Int @default(10) @map("late_grace_period_minutes")
+
+  // Branch Manager — max one active manager per branch, enforced by the unique
+  // constraint below (a staff member can only be the designated manager of one
+  // branch at a time; unset before reassigning them elsewhere).
+  managerId String? @unique @map("manager_id")
+  manager   Staff?  @relation("BranchManager", fields: [managerId], references: [id], onDelete: SetNull)
 
   staff                 Staff[]
   histories             StaffEmploymentHistory[]
@@ -1175,6 +1215,7 @@ model StaffLocation {
   targetedAnnouncements Announcement[]
   attendanceRecords     AttendanceRecord[]
   inventoryLogEntries   InventoryLogEntry[]
+  approvalRequests      ApprovalRequest[]
 
   staffSequence  Int             @default(0) @map("staff_sequence")
   inventoryItems InventoryItem[]
@@ -1185,28 +1226,96 @@ model StaffLocation {
   @@map("staff_locations")
 }
 
-model LeaveRequest {
-  id              String             @id @default(uuid())
-  staffId         String             @map("staff_id")
-  type            LeaveRequestType
-  startDate       DateTime           @map("start_date") @db.Date
-  endDate         DateTime           @map("end_date") @db.Date
-  startTime       String?            @map("start_time")
-  endTime         String?            @map("end_time")
-  reason          String
-  status          LeaveRequestStatus @default(PENDING)
-  approverId      String?            @map("approver_id")
-  approvedAt      DateTime?          @map("approved_at")
-  rejectionReason String?            @map("rejection_reason")
-  createdAt       DateTime           @default(now()) @map("created_at")
-  updatedAt       DateTime           @updatedAt @map("updated_at")
+// One row per thing awaiting approval, regardless of what kind of thing it is —
+// requestType tells you which domain table (LeaveRequest, future
+// InventoryAdjustment, etc.) owns the business data; this table owns the
+// approval workflow itself: who it's currently sitting with, and its status.
+model ApprovalRequest {
+  id                String              @id @default(uuid())
+  requestType       ApprovalRequestType
+  branchId          String?             @map("branch_id")
+  submittedById     String              @map("submitted_by_id")
+  currentApproverId String?             @map("current_approver_id")
+  status            ApprovalStatus      @default(PENDING)
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
 
-  staff    Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  approver Staff? @relation("LeaveRequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  branch          StaffLocation? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  submittedBy     Staff          @relation("ApprovalSubmittedBy", fields: [submittedById], references: [id])
+  currentApprover Staff?         @relation("ApprovalCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+
+  actions                ApprovalAction[]
+  leaveRequest           LeaveRequest?
+  stockAdjustmentRequest StockAdjustmentRequest?
+  stockTransfer          StockTransfer?
+
+  @@index([currentApproverId, status])
+  @@index([requestType, status])
+  @@map("approval_requests")
+}
+
+// Full stage-by-stage history for an ApprovalRequest — every submit, approve,
+// reject, reassignment, and info-request is a row here, so "who saw this and
+// when" is always answerable, never just the current state.
+model ApprovalAction {
+  id                String             @id @default(uuid())
+  approvalRequestId String             @map("approval_request_id")
+  actorId           String?            @map("actor_id") // null = system-initiated
+  action            ApprovalActionType
+  fromApproverId    String?            @map("from_approver_id")
+  toApproverId      String?            @map("to_approver_id")
+  comment           String?
+  actedAt           DateTime           @default(now()) @map("acted_at")
+
+  approvalRequest ApprovalRequest @relation(fields: [approvalRequestId], references: [id], onDelete: Cascade)
+  actor           Staff?          @relation("ApprovalActionActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([approvalRequestId])
+  @@map("approval_actions")
+}
+
+model LeaveRequest {
+  id                String             @id @default(uuid())
+  staffId           String             @map("staff_id")
+  type              LeaveRequestType
+  startDate         DateTime           @map("start_date") @db.Date
+  endDate           DateTime           @map("end_date") @db.Date
+  startTime         String?            @map("start_time")
+  endTime           String?            @map("end_time")
+  reason            String
+  status            LeaveRequestStatus @default(PENDING)
+  approverId        String?            @map("approver_id")
+  approvedAt        DateTime?          @map("approved_at")
+  rejectionReason   String?            @map("rejection_reason")
+  approvalRequestId String?            @unique @map("approval_request_id")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  staff           Staff            @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  approver        Staff?           @relation("LeaveRequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  approvalRequest ApprovalRequest? @relation(fields: [approvalRequestId], references: [id], onDelete: SetNull)
 
   @@index([staffId, status])
   @@index([approverId, status])
   @@map("leave_requests")
+}
+
+model DisciplinaryAction {
+  id           String    @id @default(uuid())
+  staffId      String    @map("staff_id")
+  reason       String
+  notes        String?
+  issuedById   String    @map("issued_by_id")
+  issuedAt     DateTime  @default(now()) @map("issued_at")
+  resolvedAt   DateTime? @map("resolved_at")
+  resolvedById String?   @map("resolved_by_id")
+
+  staff      Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  issuedBy   User  @relation("DisciplinaryActionIssuedBy", fields: [issuedById], references: [id])
+  resolvedBy User? @relation("DisciplinaryActionResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([staffId, issuedAt])
+  @@map("disciplinary_actions")
 }
 
 model WaitlistEntry {
@@ -1688,14 +1797,39 @@ model InventoryItem {
   createdAt         DateTime          @default(now()) @map("created_at")
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
-  branch         StaffLocation   @relation(fields: [branchId], references: [id])
-  movements      StockMovement[]
-  lowStockAlerts LowStockAlert[]
-  transfersOut   StockTransfer[] @relation("TransferFromItem")
+  branch             StaffLocation            @relation(fields: [branchId], references: [id])
+  movements          StockMovement[]
+  lowStockAlerts     LowStockAlert[]
+  transfersOut       StockTransfer[]          @relation("TransferFromItem")
+  adjustmentRequests StockAdjustmentRequest[]
 
   @@unique([branchId, name, category])
   @@index([branchId, category])
   @@map("inventory_items")
+}
+
+// A stock adjustment awaiting approval — the actual InventoryItem.currentQuantity
+// mutation only happens once the linked ApprovalRequest reaches APPROVED (see
+// InventoryService.approveStockAdjustment), not at request time. `status`
+// mirrors the ApprovalRequest's status for fast filtering without a join.
+model StockAdjustmentRequest {
+  id                String         @id @default(uuid())
+  itemId            String         @map("item_id")
+  quantityDelta     Int            @map("quantity_delta")
+  reason            String
+  requestedById     String         @map("requested_by_id")
+  approvalRequestId String         @unique @map("approval_request_id")
+  status            ApprovalStatus @default(PENDING)
+  appliedAt         DateTime?      @map("applied_at")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  item            InventoryItem   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  requestedBy     Staff           @relation(fields: [requestedById], references: [id])
+  approvalRequest ApprovalRequest @relation(fields: [approvalRequestId], references: [id], onDelete: Cascade)
+
+  @@index([itemId, status])
+  @@map("stock_adjustment_requests")
 }
 
 model StockMovement {
@@ -1732,22 +1866,24 @@ model LowStockAlert {
 }
 
 model StockTransfer {
-  id              String              @id @default(uuid())
-  fromItemId      String              @map("from_item_id")
-  toBranchId      String              @map("to_branch_id")
-  quantity        Int
-  status          StockTransferStatus @default(PENDING)
-  requestedById   String              @map("requested_by_id")
-  approvedById    String?             @map("approved_by_id")
-  approvedAt      DateTime?           @map("approved_at")
-  completedAt     DateTime?           @map("completed_at")
-  rejectionReason String?             @map("rejection_reason")
-  createdAt       DateTime            @default(now()) @map("created_at")
+  id                String              @id @default(uuid())
+  fromItemId        String              @map("from_item_id")
+  toBranchId        String              @map("to_branch_id")
+  quantity          Int
+  status            StockTransferStatus @default(PENDING)
+  requestedById     String              @map("requested_by_id")
+  approvedById      String?             @map("approved_by_id")
+  approvedAt        DateTime?           @map("approved_at")
+  completedAt       DateTime?           @map("completed_at")
+  rejectionReason   String?             @map("rejection_reason")
+  approvalRequestId String?             @unique @map("approval_request_id")
+  createdAt         DateTime            @default(now()) @map("created_at")
 
-  fromItem    InventoryItem @relation("TransferFromItem", fields: [fromItemId], references: [id])
-  toBranch    StaffLocation @relation(fields: [toBranchId], references: [id])
-  requestedBy Staff         @relation("TransferRequestedBy", fields: [requestedById], references: [id])
-  approvedBy  Staff?        @relation("TransferApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  fromItem        InventoryItem    @relation("TransferFromItem", fields: [fromItemId], references: [id])
+  toBranch        StaffLocation    @relation(fields: [toBranchId], references: [id])
+  requestedBy     Staff            @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  approvedBy      Staff?           @relation("TransferApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvalRequest ApprovalRequest? @relation(fields: [approvalRequestId], references: [id], onDelete: SetNull)
 
   @@map("stock_transfers")
 }

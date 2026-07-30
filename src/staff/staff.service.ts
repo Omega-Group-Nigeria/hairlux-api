@@ -126,6 +126,17 @@ type StaffWithHistories = StaffRecord & {
   histories: StaffEmploymentHistoryRecord[];
 };
 
+type DisciplinaryActionRecord = {
+  id: string;
+  staffId: string;
+  actorId: string | null;
+  type: string;
+  reason: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 type QueryArgs = Record<string, unknown>;
 
 interface StaffModelDelegate {
@@ -143,6 +154,11 @@ interface StaffHistoryModelDelegate {
   create(args: QueryArgs): Promise<StaffEmploymentHistoryRecord>;
   update(args: QueryArgs): Promise<StaffEmploymentHistoryRecord>;
   delete(args: QueryArgs): Promise<StaffEmploymentHistoryRecord>;
+}
+
+interface DisciplinaryActionModelDelegate {
+  create(args: QueryArgs): Promise<DisciplinaryActionRecord>;
+  findMany(args: QueryArgs): Promise<DisciplinaryActionRecord[]>;
 }
 
 interface StaffLocationModelDelegate {
@@ -168,6 +184,7 @@ type StaffTransactionClient = {
   staffEmploymentHistory: StaffHistoryModelDelegate;
   staffLocation: StaffLocationModelDelegate;
   staffOnboardingItem: OnboardingItemModelDelegate;
+  disciplinaryAction: DisciplinaryActionModelDelegate;
 };
 
 @Injectable()
@@ -193,6 +210,14 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         staffEmploymentHistory: StaffHistoryModelDelegate;
       }
     ).staffEmploymentHistory;
+  }
+
+  private get disciplinaryActionModel(): DisciplinaryActionModelDelegate {
+    return (
+      this.prisma as unknown as {
+        disciplinaryAction: DisciplinaryActionModelDelegate;
+      }
+    ).disciplinaryAction;
   }
 
   private get staffLocationModel(): StaffLocationModelDelegate {
@@ -864,7 +889,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     return this.findOne(updated.id);
   }
 
-  async updateStatus(id: string, dto: UpdateStaffStatusDto) {
+  async updateStatus(id: string, dto: UpdateStaffStatusDto, actorId?: string) {
     await this.findOne(id);
     const now = new Date();
     const exitDate = dto.exitDate ? new Date(dto.exitDate) : now;
@@ -891,6 +916,17 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      if (dto.disciplinaryType) {
+        await txClient.disciplinaryAction.create({
+          data: {
+            staffId: id,
+            actorId: actorId ?? null,
+            type: dto.disciplinaryType,
+            reason: dto.disciplinaryReason,
+          },
+        });
+      }
+
       return txClient.staff.update({
         where: { id },
         data: {
@@ -912,6 +948,15 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
 
     await this.invalidateCache(result.id);
     return this.findOne(result.id);
+  }
+
+  async getDisciplinaryActions(staffId: string) {
+    await this.findOne(staffId);
+    return this.disciplinaryActionModel.findMany({
+      where: { staffId },
+      orderBy: { createdAt: 'desc' },
+      include: { actor: { select: { id: true, name: true, staffCode: true } } },
+    });
   }
 
   async archive(id: string, reasonForExit?: string, exitDate?: string) {

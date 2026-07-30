@@ -4,9 +4,10 @@ import { StaffInventoryController } from './staff-inventory.controller';
 import { AdminInventoryController } from './admin-inventory.controller';
 import { StaffModule } from '../staff/staff.module';
 import { MailModule } from '../mail/mail.module';
+import { ApprovalModule } from '../approval/approval.module';
 
 @Module({
-    imports: [StaffModule, MailModule],
+    imports: [StaffModule, MailModule, ApprovalModule],
     controllers: [StaffInventoryController, AdminInventoryController],
     providers: [InventoryService],
     exports: [InventoryService],
