@@ -292,9 +292,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   get disciplinaryAction() {
     return this.client.disciplinaryAction;
   }
-
   get stockAdjustmentRequest() {
     return this.client.stockAdjustmentRequest;
+  }
+
+  get salonBooking() {
+    return this.client.salonBooking;
+  }
+
+  get salonBookingService() {
+    return this.client.salonBookingService;
+  }
+
+  get salonBookingInventoryItem() {
+    return this.client.salonBookingInventoryItem;
+  }
+
+  get salonBookingCommission() {
+    return this.client.salonBookingCommission;
   }
 
   get $transaction() {

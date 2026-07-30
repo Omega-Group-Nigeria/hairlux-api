@@ -882,9 +882,12 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         ...(dto.reportingToId !== undefined && {
           reportingToId: dto.reportingToId,
         }),
+        ...(dto.commissionRate !== undefined && {
+          commissionRate: dto.commissionRate,
+        }),
       },
     });
-
+    
     await this.invalidateCache(updated.id);
     return this.findOne(updated.id);
   }

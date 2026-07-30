@@ -33,6 +33,7 @@ import { StorageModule } from './storage/storage.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LeaveModule } from './leave/leave.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { SalonBookingModule } from './salon-booking/salon-booking.module';
 
 @Module({
   imports: [
@@ -101,6 +102,8 @@ import { InventoryModule } from './inventory/inventory.module';
     AttendanceModule,
     LeaveModule,
     InventoryModule,
+    SalonBookingModule,
+    
   ],
   controllers: [AppController],
   providers: [

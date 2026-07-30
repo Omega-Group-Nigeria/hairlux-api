@@ -7,15 +7,16 @@ import {
     StockMovementType,
     StockTransferStatus
 } from '@prisma/client';
+import { ApprovalService } from '../approval/approval.service';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { ApprovalService } from '../approval/approval.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { QueryInventoryDto } from './dto/query-inventory.dto';
 import { ReceiveGoodsDto } from './dto/receive-goods.dto';
 import { RejectTransferDto } from './dto/reject-transfer.dto';
 import { RequestTransferDto } from './dto/request-transfer.dto';
+import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
 
 const ESCALATION_WINDOW_HOURS = 6;
 const STAGE_ORDER: LowStockAlertStage[] = [
@@ -41,6 +42,9 @@ export class InventoryService {
         if (existing) {
             throw new BadRequestException('An item with this name and category already exists at this branch');
         }
+        if (dto.category === 'FOR_SALE' && (dto.price === undefined || dto.price === null)) {
+            throw new BadRequestException('A price is required for items in the "For Sale" category');
+        }
 
         return this.prisma.inventoryItem.create({
             data: {
@@ -51,6 +55,29 @@ export class InventoryService {
                 lowStockThreshold: dto.lowStockThreshold ?? 5,
                 currentQuantity: dto.initialQuantity ?? 0,
                 expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
+                price: dto.category === 'FOR_SALE' ? dto.price : (dto.price ?? undefined),
+            },
+        });
+    }
+
+    async updateItem(id: string, dto: UpdateInventoryItemDto) {
+        const item = await this.findOne(id);
+        const nextCategory = dto.category ?? item.category;
+        const nextPrice = dto.price !== undefined ? dto.price : Number(item.price ?? 0) || undefined;
+
+        if (nextCategory === 'FOR_SALE' && !nextPrice) {
+            throw new BadRequestException('A price is required for items in the "For Sale" category');
+        }
+
+        return this.prisma.inventoryItem.update({
+            where: { id },
+            data: {
+                name: dto.name,
+                category: dto.category,
+                unit: dto.unit,
+                lowStockThreshold: dto.lowStockThreshold,
+                expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
+                price: dto.price !== undefined ? dto.price : undefined,
             },
         });
     }
@@ -275,7 +302,7 @@ export class InventoryService {
         return updated;
     }
 
-    private async checkAndTriggerLowStockAlert(itemId: string) {
+    async checkAndTriggerLowStockAlert(itemId: string) {
         const item = await this.prisma.inventoryItem.findUnique({ where: { id: itemId } });
         if (!item || item.currentQuantity > item.lowStockThreshold) return;
 
