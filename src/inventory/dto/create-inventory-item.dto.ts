@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsEnum, IsOptional, IsInt, Min, IsDateString } from 'class-validator';
+import { IsString, IsNotEmpty, IsEnum, IsOptional, IsInt, Min, IsDateString, ValidateIf, IsNumber } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { InventoryCategory } from '@prisma/client';
 
@@ -8,7 +8,7 @@ export class CreateInventoryItemDto {
     @IsNotEmpty()
     name: string;
 
-    @ApiProperty({ enum: InventoryCategory })
+    @ApiProperty({ enum: InventoryCategory, description: 'FOR_SALE items are sellable to customers and require a price; INTERNAL_USE and STORAGE items are not sellable.' })
     @IsEnum(InventoryCategory)
     category: InventoryCategory;
 
@@ -33,4 +33,10 @@ export class CreateInventoryItemDto {
     @IsOptional()
     @IsDateString()
     expiryDate?: string;
+
+    @ApiPropertyOptional({ example: 3500, description: 'Required when category is FOR_SALE — the price charged to a customer for this item.' })
+    @ValidateIf((o) => o.category === 'FOR_SALE')
+    @IsNumber()
+    @Min(0)
+    price?: number;
 }

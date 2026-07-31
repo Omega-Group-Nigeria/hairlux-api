@@ -5,6 +5,9 @@ import {
   IsDateString,
   IsIn,
   IsUUID,
+  IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
@@ -90,5 +93,16 @@ export class UpdateStaffDto {
   @IsOptional()
   @IsUUID()
   reportingToId?: string;
+
+  @ApiPropertyOptional({
+    example: 0.15,
+    description: 'Commission rate for this staff member as a decimal (0.15 = 15%). Overrides any service-level default when calculating salon booking commission. Send null to clear the override.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  commissionRate?: number;
 
 }

@@ -1,17 +1,18 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, Req, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { ReassignApprovalDto } from '../approval/dto/reassign-approval.dto';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { InventoryService } from './inventory.service';
 import { StaffService } from '../staff/staff.service';
-import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
-import { RejectTransferDto } from './dto/reject-transfer.dto';
-import { RejectStockAdjustmentDto } from './dto/reject-stock-adjustment.dto';
+import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
+import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto'; 
 import { QueryInventoryDto } from './dto/query-inventory.dto';
-import { ReassignApprovalDto } from '../approval/dto/reassign-approval.dto';
+import { RejectStockAdjustmentDto } from './dto/reject-stock-adjustment.dto';
+import { RejectTransferDto } from './dto/reject-transfer.dto';
+import { InventoryService } from './inventory.service';
 
 @ApiTags('Admin - Inventory')
 @ApiBearerAuth('JWT-auth')
@@ -51,6 +52,14 @@ export class AdminInventoryController {
     async findOne(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.inventoryService.findOne(id);
         return { success: true, message: 'Inventory item retrieved successfully', data };
+    }
+
+    @Patch(':id')
+    @ApiOperation({ summary: 'Update an inventory item — name, category, unit, threshold, expiry, price' })
+    @ApiParam({ name: 'id' })
+    async update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateInventoryItemDto) {
+        const data = await this.inventoryService.updateItem(id, dto);
+        return { success: true, message: 'Inventory item updated successfully', data };
     }
 
     @Post(':id/adjust')
