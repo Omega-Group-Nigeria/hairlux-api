@@ -1,11 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { SalonBookingStatus, StockMovementType } from '@prisma/client';
+import { randomInt } from 'crypto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
+import { ReserveSalonBookingDto } from './dto/reserve-salon-booking.dto';
+import { VerifyReservationDto } from './dto/verify-reservation.dto';
 
 const INCLUDE_FULL = {
     branch: { select: { id: true, name: true } },
@@ -91,7 +94,7 @@ export class SalonBookingService {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I ambiguity
         let code = 'HLS-';
         for (let i = 0; i < 6; i++) {
-            code += chars[crypto.randomInt(chars.length)];
+            code += chars[randomInt(chars.length)];
         }
         return code;
     }
@@ -333,14 +336,14 @@ export class SalonBookingService {
                 });
             }
 
-            const rate = booking.assignedStaff.commissionRate ? Number(booking.assignedStaff.commissionRate) : 0;
+            const rate = booking.assignedStaff?.commissionRate ? Number(booking.assignedStaff.commissionRate) : 0;
             const serviceTotal = booking.services.reduce((sum, s) => sum + Number(s.price) * s.quantity, 0);
             const commissionAmount = Math.round(serviceTotal * rate * 100) / 100;
 
             await tx.salonBookingCommission.create({
                 data: {
                     bookingId: booking.id,
-                    staffId: booking.assignedStaffId,
+                    staffId: booking.assignedStaffId!,
                     amount: commissionAmount,
                     rateApplied: rate,
                 },
