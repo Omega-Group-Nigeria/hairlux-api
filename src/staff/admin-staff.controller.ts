@@ -9,11 +9,10 @@ import {
   Post,
   Query,
   Req,
-  UseGuards,
   Res,
   StreamableFile,
+  UseGuards,
 } from '@nestjs/common';
-import type { Response } from 'express';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -22,27 +21,30 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { PermissionGuard } from '../auth/guards/permission.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
+import type { Response } from 'express';
 import { Permission } from '../auth/decorators/permission.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { PERMISSIONS } from '../common/constants/permissions';
-import { StaffService } from './staff.service';
 import { CompanyDocumentService } from './company-document.service';
-import { StaffCommsService } from './staff-comms.service';
-import { CreateStaffDto } from './dto/create-staff.dto';
-import { QueryStaffDto } from './dto/query-staff.dto';
-import { UpdateStaffDto } from './dto/update-staff.dto';
-import { UpdateStaffStatusDto } from './dto/update-staff-status.dto';
-import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
 import { AddEmploymentHistoryDto } from './dto/add-employment-history.dto';
-import { UpdateEmploymentHistoryDto } from './dto/update-employment-history.dto';
-import { QueryUpcomingBirthdaysDto } from './dto/query-upcoming-birthdays.dto';
 import { ArchiveStaffDto } from './dto/archive-staff.dto';
 import { CreateStaffLocationDto } from './dto/create-staff-location.dto';
+import { CreateStaffDto } from './dto/create-staff.dto';
 import { QueryStaffLocationsDto } from './dto/query-staff-locations.dto';
+import { QueryStaffDto } from './dto/query-staff.dto';
+import { QueryUpcomingBirthdaysDto } from './dto/query-upcoming-birthdays.dto';
+import { SetAdminAccessDto } from './dto/set-admin-access.dto';
+import { TransferBranchDto } from './dto/transfer-branch.dto';
+import { UpdateEmploymentHistoryDto } from './dto/update-employment-history.dto';
+import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
 import { UpdateStaffLocationDto } from './dto/update-staff-location.dto';
+import { UpdateStaffStatusDto } from './dto/update-staff-status.dto';
+import { UpdateStaffDto } from './dto/update-staff.dto';
+import { StaffCommsService } from './staff-comms.service';
+import { StaffService } from './staff.service';
 
 @ApiTags('Admin - Staff')
 @ApiBearerAuth('JWT-auth')
@@ -319,8 +321,6 @@ export class AdminStaffController {
   }
 
   @Get(':id')
-
-  @Get(':id')
   @ApiOperation({ summary: 'Get one staff record with employment history' })
   @ApiParam({ name: 'id', description: 'Staff ID' })
   @ApiResponse({
@@ -424,6 +424,69 @@ export class AdminStaffController {
       data,
     };
   }
+
+  @Patch(':id/transfer-branch')
+  @ApiOperation({
+    summary: 'Transfer staff to a different branch',
+    description:
+      'Closes the current employment-history row and opens a new one at the destination branch, and issues a new branch-coded staff ID — the old one is retired and can never be reissued to anyone else.',
+  })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @ApiResponse({ status: 200, description: 'Staff transferred successfully' })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 404, description: 'Staff record or destination branch not found' })
+  @Permission(PERMISSIONS.STAFF_MANAGE_STATUS)
+  async transferBranch(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: TransferBranchDto,
+    @Req() req: any,
+  ) {
+    const data = await this.staffService.transferBranch(id, dto, req.user.id);
+    return {
+      success: true,
+      message: 'Staff transferred to the new branch successfully',
+      data,
+    };
+  }
+
+  @Get(':id/code-history')
+  @ApiOperation({ summary: "Get a staff member's full staff-code history (every branch transfer)" })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getCodeHistory(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.staffService.getCodeHistory(id);
+    return { success: true, message: 'Staff code history retrieved successfully', data };
+  }
+
+  @Get(':id/admin-access')
+  @ApiOperation({ summary: "Check whether a staff member's account currently has admin portal access" })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getAdminAccess(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.staffService.getAdminAccessStatus(id);
+    return { success: true, message: 'Admin access status retrieved successfully', data };
+  }
+
+  @Patch(':id/admin-access')
+  @ApiOperation({
+    summary: 'Grant or revoke admin portal access for a staff member',
+    description: 'Additive — adds/removes an ADMIN role assignment without touching their base role, so granting admin access never costs them staff-portal access.',
+  })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Roles(UserRole.SUPER_ADMIN)
+  async setAdminAccess(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetAdminAccessDto,
+    @Req() req: any,
+  ) {
+    const data = await this.staffService.setAdminAccess(id, dto.grant, req.user.id);
+    return {
+      success: true,
+      message: dto.grant ? 'Admin access granted successfully' : 'Admin access revoked successfully',
+      data,
+    };
+  }
+
 
   @Get(':id/disciplinary-actions')
   @ApiOperation({ summary: "Get a staff member's disciplinary action history" })

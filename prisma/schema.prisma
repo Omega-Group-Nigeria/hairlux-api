@@ -1229,6 +1229,7 @@ model Staff {
   location      StaffLocation            @relation(fields: [locationId], references: [id])
   managedBranch StaffLocation?           @relation("BranchManager")
   histories     StaffEmploymentHistory[]
+  codeHistory   StaffCodeHistory[]
   user          User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   onboardingItems StaffOnboardingItem[]
@@ -1281,6 +1282,27 @@ model Staff {
   @@index([employmentStatus])
   @@index([locationId])
   @@map("staff")
+}
+
+// Every staff code a staff member has ever held — the `code` unique
+// constraint means a retired code (from a branch transfer) can never be
+// reissued to anyone else. `activeUntil: null` marks the currently-live
+// code; a transfer closes the old row and inserts a new one.
+model StaffCodeHistory {
+  id          String    @id @default(uuid())
+  staffId     String    @map("staff_id")
+  code        String    @unique
+  branchId    String    @map("branch_id")
+  activeFrom  DateTime  @default(now()) @map("active_from")
+  activeUntil DateTime? @map("active_until")
+  reason      String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  staff  Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  branch StaffLocation @relation(fields: [branchId], references: [id])
+
+  @@index([staffId, activeFrom])
+  @@map("staff_code_history")
 }
 
 model StaffEmploymentHistory {
@@ -1346,6 +1368,7 @@ model StaffLocation {
 
   staff                 Staff[]
   histories             StaffEmploymentHistory[]
+  codeHistory           StaffCodeHistory[]
   branchServices        BranchService[]
   interviewApplications Application[]            @relation("ApplicationInterviewLocation")
   jobPostings           JobPosting[]             @relation("JobPostingBranch")
@@ -1362,7 +1385,7 @@ model StaffLocation {
   inventoryItems InventoryItem[]
   // stockTransfers StockTransfer[]
 
-  incomingTransfers StockTransfer[]
+  incomingTransfers  StockTransfer[]
 
   @@map("staff_locations")
 }

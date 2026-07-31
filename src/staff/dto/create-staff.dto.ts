@@ -54,6 +54,11 @@ export class CreateStaffDto {
   @IsUUID()
   userId?: string;
 
+  @ApiPropertyOptional({ description: 'Who this staff member reports to. Defaults to the branch manager if not provided and the branch has one.' })
+  @IsOptional()
+  @IsUUID()
+  reportingToId?: string;
+
   @ApiProperty({ example: 'Amara Okafor' })
   @IsString()
   @IsNotEmpty()

@@ -28,6 +28,7 @@ import {
   SubmitGuarantorDto,
   SubmitReferenceDto,
 } from './dto/submit-onboarding-info.dto';
+import { TransferBranchDto } from './dto/transfer-branch.dto';
 import { UpdateEmploymentHistoryDto } from './dto/update-employment-history.dto';
 import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
 import { UpdateStaffLocationDto } from './dto/update-staff-location.dto';
@@ -161,6 +162,24 @@ interface DisciplinaryActionModelDelegate {
   findMany(args: QueryArgs): Promise<DisciplinaryActionRecord[]>;
 }
 
+type StaffCodeHistoryRecord = {
+  id: string;
+  staffId: string;
+  code: string;
+  branchId: string;
+  activeFrom: Date;
+  activeUntil: Date | null;
+  reason: string | null;
+  createdAt: Date;
+};
+
+interface StaffCodeHistoryModelDelegate {
+  create(args: QueryArgs): Promise<StaffCodeHistoryRecord>;
+  update(args: QueryArgs): Promise<StaffCodeHistoryRecord>;
+  findFirst(args: QueryArgs): Promise<StaffCodeHistoryRecord | null>;
+  findMany(args: QueryArgs): Promise<StaffCodeHistoryRecord[]>;
+}
+
 interface StaffLocationModelDelegate {
   findFirst(args: QueryArgs): Promise<StaffLocationRecord | null>;
   findUnique(args: QueryArgs): Promise<StaffLocationRecord | null>;
@@ -185,6 +204,7 @@ type StaffTransactionClient = {
   staffLocation: StaffLocationModelDelegate;
   staffOnboardingItem: OnboardingItemModelDelegate;
   disciplinaryAction: DisciplinaryActionModelDelegate;
+  staffCodeHistory: StaffCodeHistoryModelDelegate;
 };
 
 @Injectable()
@@ -604,6 +624,17 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
 
     await this.assertLocationExists(dto.locationId, true);
 
+    // Default: report to the branch manager, unless a different reportingToId
+    // was explicitly given or the branch has no manager assigned yet.
+    let resolvedReportingToId = dto.reportingToId;
+    if (!resolvedReportingToId) {
+      const branch = await this.staffLocationModel.findUnique({
+        where: { id: dto.locationId },
+        select: { managerId: true },
+      });
+      resolvedReportingToId = (branch as unknown as { managerId?: string | null })?.managerId ?? undefined;
+    }
+
     const startDate = dto.employmentStartDate
       ? new Date(dto.employmentStartDate)
       : new Date();
@@ -633,6 +664,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
           employmentStatus:
             dto.employmentStatus ?? STAFF_EMPLOYMENT_STATUS.ACTIVE,
           userId: dto.userId ?? null,
+          reportingToId: resolvedReportingToId ?? null,
         } as QueryArgs,
       });
 
@@ -972,6 +1004,158 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
 
     await this.invalidateCache(result.id);
     return this.findOne(result.id);
+  }
+
+  /**
+   * Moves a staff member to a different branch, closing their current
+   * StaffEmploymentHistory row and opening a new one there, and issuing a
+   * fresh branch-coded staffCode via the same sequence used at hire time.
+   * The old code is retired into StaffCodeHistory (unique constraint —
+   * can never be reissued to anyone else) rather than deleted, so it stays
+   * traceable in any historical record that still references it.
+   */
+  async transferBranch(id: string, dto: TransferBranchDto, actorId?: string) {
+    const staff = (await this.findOne(id)) as unknown as {
+      id: string;
+      locationId: string;
+      staffCode: string;
+      currentRole: string;
+      createdAt: Date;
+    };
+
+    const newLocation = await this.prisma.staffLocation.findUnique({ where: { id: dto.newLocationId } });
+    if (!newLocation) throw new NotFoundException('Destination branch not found');
+    if (!newLocation.isActive) throw new BadRequestException('Cannot transfer staff to an inactive branch');
+    if (staff.locationId === dto.newLocationId) {
+      throw new BadRequestException('Staff member is already assigned to this branch');
+    }
+
+    const now = new Date();
+    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : now;
+    const oldLocationId = staff.locationId;
+    const oldStaffCode = staff.staffCode;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const txClient = tx as unknown as StaffTransactionClient;
+
+      // Close the current open employment-history row, open a new one at the new branch.
+      const openHistory = await txClient.staffEmploymentHistory.findFirst({
+        where: { staffId: id, endDate: null },
+        orderBy: { startDate: 'desc' },
+      });
+      if (openHistory) {
+        await txClient.staffEmploymentHistory.update({
+          where: { id: openHistory.id },
+          data: { endDate: effectiveDate },
+        });
+      }
+      await txClient.staffEmploymentHistory.create({
+        data: {
+          staffId: id,
+          roleTitle: staff.currentRole,
+          locationId: dto.newLocationId,
+          employmentType: openHistory?.employmentType ?? 'FULL_TIME',
+          startDate: effectiveDate,
+          reasonForChange: this.normalizeNullableString(dto.reason) ?? 'Branch transfer',
+        },
+      });
+
+      // Retire the old code — self-healing: if it was never recorded (staff
+      // hired before this feature existed, or never transferred before),
+      // backfill one row for it now rather than leaving a gap.
+      const existingCodeRow = await txClient.staffCodeHistory.findFirst({
+        where: { code: oldStaffCode },
+      });
+      if (existingCodeRow) {
+        await txClient.staffCodeHistory.update({
+          where: { id: existingCodeRow.id },
+          data: { activeUntil: now },
+        });
+      } else {
+        await txClient.staffCodeHistory.create({
+          data: {
+            staffId: id,
+            code: oldStaffCode,
+            branchId: oldLocationId,
+            activeFrom: staff.createdAt,
+            activeUntil: now,
+          },
+        });
+      }
+
+      const newStaffCode = await this.generateStaffCode(dto.newLocationId, txClient);
+      await txClient.staffCodeHistory.create({
+        data: {
+          staffId: id,
+          code: newStaffCode,
+          branchId: dto.newLocationId,
+          activeFrom: effectiveDate,
+          reason: this.normalizeNullableString(dto.reason),
+        },
+      });
+
+      return txClient.staff.update({
+        where: { id },
+        data: { locationId: dto.newLocationId, staffCode: newStaffCode },
+      });
+    });
+
+    await this.invalidateCache(result.id);
+    return this.findOne(result.id);
+  }
+
+  async getCodeHistory(staffId: string) {
+    await this.findOne(staffId);
+    return this.prisma.staffCodeHistory.findMany({
+      where: { staffId },
+      orderBy: { activeFrom: 'desc' },
+      include: { branch: { select: { id: true, name: true } } },
+    });
+  }
+
+  /**
+   * Whether this staff member's linked User account currently has admin
+   * portal access — via the additive UserRoleAssignment mechanism (their
+   * base role stays whatever it was, e.g. STAFF, so granting admin access
+   * never costs them staff-portal access). Distinct from the legacy
+   * "Users > Admin Users" path, which set `User.role` directly and predates
+   * this toggle — this only reports/manages the additive assignment.
+   */
+  async getAdminAccessStatus(staffId: string) {
+    const staff = await this.staffModel.findUnique({ where: { id: staffId }, select: { userId: true } }) as unknown as { userId: string | null } | null;
+    if (!staff) throw new NotFoundException('Staff record not found');
+    if (!staff.userId) return { hasAdminAccess: false, linkedToUserAccount: false };
+
+    const assignment = await this.prisma.userRoleAssignment.findFirst({
+      where: { userId: staff.userId, role: { in: ['ADMIN', 'SUPER_ADMIN'] } },
+    });
+    return { hasAdminAccess: !!assignment, linkedToUserAccount: true };
+  }
+
+  async setAdminAccess(staffId: string, grant: boolean, actorId?: string) {
+    const staff = await this.staffModel.findUnique({ where: { id: staffId }, select: { userId: true, name: true } }) as unknown as { userId: string | null; name: string } | null;
+    if (!staff) throw new NotFoundException('Staff record not found');
+    if (!staff.userId) {
+      throw new BadRequestException(`${staff.name} has no linked login account yet, so admin access cannot be granted. They need to complete account setup first.`);
+    }
+
+    if (grant) {
+      const existing = await this.prisma.userRoleAssignment.findFirst({
+        where: { userId: staff.userId, role: 'ADMIN' },
+      });
+      if (!existing) {
+        await this.prisma.userRoleAssignment.create({
+          data: { userId: staff.userId, role: 'ADMIN', assignedById: actorId ?? null },
+        });
+      }
+    } else {
+      await this.prisma.userRoleAssignment.deleteMany({
+        where: { userId: staff.userId, role: { in: ['ADMIN', 'SUPER_ADMIN'] } },
+      });
+    }
+
+    await this.invalidateCache(staffId);
+    return this.getAdminAccessStatus(staffId);
   }
 
   async getDisciplinaryActions(staffId: string) {

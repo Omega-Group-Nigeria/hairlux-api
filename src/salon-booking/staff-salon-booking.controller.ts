@@ -55,6 +55,14 @@ export class StaffSalonBookingController {
         return { success: true, message: 'Reservation found', data };
     }
 
+    @Get('commission')
+    @ApiOperation({ summary: "Get the logged-in staff member's real commission summary — this month, all-time, monthly breakdown, and individual entries" })
+    async getMyCommission(@Req() req: any) {
+        const staff = await this.staffService.findByUserId(req.user.id) as unknown as { id: string };
+        const data = await this.salonBookingService.getMyCommissionSummary(staff.id);
+        return { success: true, message: 'Commission summary retrieved successfully', data };
+    }
+
     @Get(':id')
     @ApiOperation({ summary: 'Get a single booking' })
     @ApiParam({ name: 'id' })
