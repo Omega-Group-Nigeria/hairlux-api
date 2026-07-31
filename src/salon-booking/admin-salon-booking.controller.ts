@@ -9,6 +9,7 @@ import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
+import { VerifyReservationDto } from './dto/verify-reservation.dto';
 import { SalonBookingService } from './salon-booking.service';
 
 @ApiTags('Admin - Salon Bookings')
