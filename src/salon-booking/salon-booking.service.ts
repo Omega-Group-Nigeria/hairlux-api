@@ -193,6 +193,86 @@ export class SalonBookingService {
         return this.findOne(id);
     }
 
+    /**
+     * Real commission summary for the logged-in staff member — this month's
+     * total, all-time total, a monthly breakdown for the last 6 months, and
+     * the individual booking-level entries behind it. No bonus-target or
+     * payout-tracking concepts here — those don't exist as real backend
+     * features yet, so this only ever shows what SalonBookingCommission
+     * actually has recorded.
+     */
+    async getMyCommissionSummary(staffId: string) {
+        const staff = await this.prisma.staff.findUnique({ where: { id: staffId } });
+        if (!staff) throw new NotFoundException('Staff record not found');
+
+        const commissions = await this.prisma.salonBookingCommission.findMany({
+            where: { staffId },
+            orderBy: { calculatedAt: 'desc' },
+            include: {
+                booking: {
+                    select: {
+                        id: true,
+                        customerName: true,
+                        bookingDate: true,
+                        totalAmount: true,
+                        services: { include: { service: { select: { name: true } } } },
+                    },
+                },
+            },
+        });
+
+        const now = new Date();
+        const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        let thisMonthTotal = 0;
+        let bookingsThisMonth = 0;
+        let allTimeTotal = 0;
+        const monthlyMap = new Map<string, { total: number; count: number }>();
+
+        for (const c of commissions) {
+            const amount = Number(c.amount);
+            allTimeTotal += amount;
+
+            const calcDate = new Date(c.calculatedAt);
+            if (calcDate >= startOfThisMonth) {
+                thisMonthTotal += amount;
+                bookingsThisMonth += 1;
+            }
+
+            const monthKey = `${calcDate.getFullYear()}-${String(calcDate.getMonth() + 1).padStart(2, '0')}`;
+            const existing = monthlyMap.get(monthKey) ?? { total: 0, count: 0 };
+            existing.total += amount;
+            existing.count += 1;
+            monthlyMap.set(monthKey, existing);
+        }
+
+        const monthlyBreakdown = Array.from(monthlyMap.entries())
+            .map(([month, v]) => ({ month, total: v.total, count: v.count }))
+            .sort((a, b) => (a.month < b.month ? 1 : -1))
+            .slice(0, 6);
+
+        const entries = commissions.map((c) => ({
+            id: c.id,
+            bookingId: c.bookingId,
+            customerName: c.booking?.customerName ?? null,
+            bookingDate: c.booking?.bookingDate ?? null,
+            serviceNames: c.booking?.services?.map((s) => s.service?.name).filter(Boolean) ?? [],
+            bookingTotal: c.booking?.totalAmount != null ? Number(c.booking.totalAmount) : null,
+            amount: Number(c.amount),
+            rateApplied: Number(c.rateApplied),
+            calculatedAt: c.calculatedAt,
+        }));
+
+        return {
+            commissionRate: staff.commissionRate != null ? Number(staff.commissionRate) : null,
+            thisMonthTotal,
+            bookingsThisMonth,
+            allTimeTotal,
+            monthlyBreakdown,
+            entries,
+        };
+    }
+
     private async resolveInventoryLines(branchId: string, lines: { itemId: string; quantity: number }[]) {
         const itemIds = lines.map((l) => l.itemId);
         const items = await this.prisma.inventoryItem.findMany({ where: { id: { in: itemIds } } });

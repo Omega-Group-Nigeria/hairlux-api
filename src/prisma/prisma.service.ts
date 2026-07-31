@@ -316,6 +316,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.customer;
   }
 
+  get staffCodeHistory() {
+    return this.client.staffCodeHistory;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
