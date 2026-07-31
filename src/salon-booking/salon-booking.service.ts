@@ -9,6 +9,7 @@ import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
 
 const INCLUDE_FULL = {
     branch: { select: { id: true, name: true } },
+    customer: { select: { id: true, name: true, phone: true, email: true } },
     assignedStaff: { select: { id: true, name: true, staffCode: true, commissionRate: true } },
     createdBy: { select: { id: true, name: true, staffCode: true } },
     services: { include: { service: { select: { id: true, name: true } } } },
@@ -28,10 +29,12 @@ export class SalonBookingService {
             throw new BadRequestException('branchId is required');
         }
 
-        const staff = await this.prisma.staff.findUnique({ where: { id: dto.assignedStaffId } });
-        if (!staff) throw new NotFoundException('Assigned staff member not found');
-        if (staff.locationId !== dto.branchId) {
-            throw new BadRequestException('The assigned staff member is not based at this branch');
+        if (dto.assignedStaffId) {
+            const staff = await this.prisma.staff.findUnique({ where: { id: dto.assignedStaffId } });
+            if (!staff) throw new NotFoundException('Assigned staff member not found');
+            if (staff.locationId !== dto.branchId) {
+                throw new BadRequestException('The assigned staff member is not based at this branch');
+            }
         }
 
         const serviceIds = dto.services.map((s) => s.serviceId);
@@ -52,9 +55,14 @@ export class SalonBookingService {
 
         const totalAmount = this.computeTotal(serviceLines, inventoryLines);
 
+        const customerId = dto.customerPhone
+            ? (await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail)).id
+            : undefined;
+
         const booking = await this.prisma.salonBooking.create({
             data: {
                 branchId: dto.branchId,
+                customerId,
                 customerName: dto.customerName,
                 customerPhone: dto.customerPhone,
                 assignedStaffId: dto.assignedStaffId,
@@ -70,6 +78,116 @@ export class SalonBookingService {
         });
 
         return booking;
+    }
+
+    /** Matches by phone (the de-dup key) — repeat visits reuse the same Customer row. */
+    private async findOrCreateCustomer(name: string, phone: string, email?: string) {
+        const existing = await this.prisma.customer.findUnique({ where: { phone } });
+        if (existing) return existing;
+        return this.prisma.customer.create({ data: { name, phone, email } });
+    }
+
+    private generateReservationCode(): string {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I ambiguity
+        let code = 'HLS-';
+        for (let i = 0; i < 6; i++) {
+            code += chars[crypto.randomInt(chars.length)];
+        }
+        return code;
+    }
+
+    /**
+     * Customer-facing — reserving a salon visit in advance from
+     * hairlux-user-interface. No Stylist assigned yet (that happens when the
+     * customer walks in and staff verifies the code) and no `createdById`
+     * (nobody on staff created this).
+     */
+    async reserve(dto: ReserveSalonBookingDto) {
+        const branch = await this.prisma.staffLocation.findUnique({ where: { id: dto.branchId } });
+        if (!branch) throw new NotFoundException('Branch not found');
+
+        const serviceIds = dto.services.map((s) => s.serviceId);
+        const services = await this.prisma.service.findMany({ where: { id: { in: serviceIds } } });
+        if (services.length !== new Set(serviceIds).size) {
+            throw new BadRequestException('One or more services were not found');
+        }
+
+        const serviceLines = dto.services.map((line) => {
+            const service = services.find((s) => s.id === line.serviceId)!;
+            return { serviceId: service.id, price: Number(service.walkInPrice), quantity: line.quantity ?? 1 };
+        });
+        const totalAmount = this.computeTotal(serviceLines, []);
+
+        const customer = await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail);
+
+        // Reservation codes are unique — collisions are astronomically rare
+        // with 6 chars from a 32-symbol alphabet, but retry once just in case.
+        let reservationCode = this.generateReservationCode();
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const clash = await this.prisma.salonBooking.findUnique({ where: { reservationCode } });
+            if (!clash) break;
+            reservationCode = this.generateReservationCode();
+        }
+
+        return this.prisma.salonBooking.create({
+            data: {
+                branchId: dto.branchId,
+                customerId: customer.id,
+                customerName: dto.customerName,
+                customerPhone: dto.customerPhone,
+                bookingDate: new Date(dto.bookingDate),
+                bookingTime: dto.bookingTime,
+                notes: dto.notes,
+                totalAmount,
+                reservationCode,
+                services: { create: serviceLines },
+            },
+            include: INCLUDE_FULL,
+        });
+    }
+
+    /**
+     * Looks up a reservation by code. `restrictToBranchId` is passed for
+     * staff (their own branch only) and omitted for admin (any branch).
+     */
+    async findByReservationCode(code: string, restrictToBranchId?: string) {
+        const booking = await this.prisma.salonBooking.findUnique({
+            where: { reservationCode: code },
+            include: INCLUDE_FULL,
+        });
+        if (!booking) throw new NotFoundException('No reservation found with this code');
+        if (restrictToBranchId && booking.branchId !== restrictToBranchId) {
+            throw new NotFoundException('No reservation found with this code'); // don't leak cross-branch existence
+        }
+        return booking;
+    }
+
+    /** Assigns the Stylist and marks the reservation redeemed — the moment the customer actually walks in. */
+    async verifyReservation(id: string, dto: VerifyReservationDto, restrictToBranchId?: string) {
+        const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
+        if (!booking) throw new NotFoundException('Booking not found');
+        if (!booking.reservationCode) {
+            throw new BadRequestException('This booking has no reservation code to verify — it was not booked in advance');
+        }
+        if (booking.reservationUsed) {
+            throw new BadRequestException('This reservation has already been used');
+        }
+        if (restrictToBranchId && booking.branchId !== restrictToBranchId) {
+            throw new NotFoundException('No reservation found with this code');
+        }
+
+        const staff = await this.prisma.staff.findUnique({ where: { id: dto.assignedStaffId } });
+        if (!staff) throw new NotFoundException('Assigned staff member not found');
+        if (staff.locationId !== booking.branchId) {
+            throw new BadRequestException('The assigned staff member is not based at this branch');
+        }
+
+        await this.prisma.salonBooking.update({
+            where: { id },
+            data: { assignedStaffId: dto.assignedStaffId, reservationUsed: true },
+        });
+
+        return this.findOne(id);
     }
 
     private async resolveInventoryLines(branchId: string, lines: { itemId: string; quantity: number }[]) {
@@ -183,6 +301,9 @@ export class SalonBookingService {
         });
         if (!booking) throw new NotFoundException('Booking not found');
         this.assertModifiable(booking.status as SalonBookingStatus);
+        if (!booking.assignedStaffId || !booking.assignedStaff) {
+            throw new BadRequestException('Cannot complete a booking with no Stylist assigned — verify the reservation or assign one first');
+        }
 
         // Re-validate stock availability at completion time, not just when items were added.
         for (const line of booking.inventoryItems) {

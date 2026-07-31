@@ -50,9 +50,15 @@ export class CreateSalonBookingDto {
     @IsString()
     customerPhone?: string;
 
-    @ApiProperty({ description: 'The Stylist/staff member providing the service' })
+    @ApiPropertyOptional({ example: 'ngozi@example.com' })
+    @IsOptional()
+    @IsString()
+    customerEmail?: string;
+
+    @ApiPropertyOptional({ description: 'The Stylist/staff member providing the service — can be left unset and assigned later (e.g. at reservation verification).' })
+    @IsOptional()
     @IsUUID()
-    assignedStaffId: string;
+    assignedStaffId?: string;
 
     @ApiProperty({ example: '2026-08-01' })
     @IsDateString()

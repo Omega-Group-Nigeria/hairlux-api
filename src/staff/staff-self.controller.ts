@@ -30,6 +30,7 @@ import {
   SubmitReferenceDto,
 } from './dto/submit-onboarding-info.dto';
 import { UpdateDirectiveStatusDto } from './dto/update-directive-status.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto'; 
 import { StaffCommsService } from './staff-comms.service';
 import { StaffOperationsService } from './staff-operations.service';
 import { StaffService } from './staff.service';
@@ -58,6 +59,18 @@ export class StaffSelfController {
   async getMe(@Req() req: any) {
     const data = await this.staffService.findByUserId(req.user.id);
     return { success: true, message: 'Staff record retrieved successfully', data };
+  }
+
+  @Patch('me/profile')
+  @ApiOperation({
+    summary: 'Edit your own basic contact info (phone)',
+    description: 'Applies immediately, no admin review needed — separate from the onboarding submission endpoints, which do require review.',
+  })
+  @ApiResponse({ status: 200, description: 'Profile updated successfully' })
+  async updateMyProfile(@Req() req: any, @Body() dto: UpdateMyProfileDto) {
+    const staff = await this.staffService.findByUserId(req.user.id);
+    const data = await this.staffService.updateMyProfile((staff as unknown as { id: string }).id, dto);
+    return { success: true, message: 'Profile updated successfully', data };
   }
 
   @Get('me/onboarding')

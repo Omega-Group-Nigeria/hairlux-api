@@ -45,6 +45,15 @@ export class StaffSalonBookingController {
         return { success: true, message: 'Bookings retrieved successfully', data };
     }
 
+    @Get('verify/:code')
+    @ApiOperation({ summary: "Look up a reservation by code — restricted to the logged-in staff member's own branch" })
+    @ApiParam({ name: 'code' })
+    async findByReservationCode(@Req() req: any, @Param('code') code: string) {
+        const staff = await this.staffService.findByUserId(req.user.id) as unknown as { id: string; locationId: string };
+        const data = await this.salonBookingService.findByReservationCode(code, staff.locationId);
+        return { success: true, message: 'Reservation found', data };
+    }
+
     @Get(':id')
     @ApiOperation({ summary: 'Get a single booking' })
     @ApiParam({ name: 'id' })
@@ -59,6 +68,15 @@ export class StaffSalonBookingController {
     async addInventoryItem(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddSalonBookingInventoryItemDto) {
         const data = await this.salonBookingService.addInventoryItem(id, dto);
         return { success: true, message: 'Item added to booking successfully', data };
+    }
+
+    @Patch(':id/verify')
+    @ApiOperation({ summary: "Verify a reservation for your own branch — assign a Stylist and mark it redeemed" })
+    @ApiParam({ name: 'id' })
+    async verifyReservation(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: VerifyReservationDto) {
+        const staff = await this.staffService.findByUserId(req.user.id) as unknown as { id: string; locationId: string };
+        const data = await this.salonBookingService.verifyReservation(id, dto, staff.locationId);
+        return { success: true, message: 'Reservation verified successfully', data };
     }
 
     @Patch(':id/start')

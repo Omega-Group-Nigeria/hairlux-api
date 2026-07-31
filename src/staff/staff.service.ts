@@ -887,7 +887,28 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         }),
       },
     });
-    
+
+    await this.invalidateCache(updated.id);
+    return this.findOne(updated.id);
+  }
+
+  /**
+   * Self-service edit — deliberately separate from the general admin `update()`
+   * and from the onboarding-item PATCH endpoints (guarantor/emergency-contact/
+   * address/reference), which move an onboarding item to SUBMITTED and require
+   * re-review. This just updates the field directly, no review side effects,
+   * matching the SRS's "staff may self-update contact information" rule.
+   */
+  async updateMyProfile(staffId: string, dto: { phone?: string }) {
+    await this.findOne(staffId);
+
+    const updated = await this.staffModel.update({
+      where: { id: staffId },
+      data: {
+        ...(dto.phone !== undefined && { phone: this.normalizeNullableString(dto.phone) }),
+      },
+    });
+
     await this.invalidateCache(updated.id);
     return this.findOne(updated.id);
   }

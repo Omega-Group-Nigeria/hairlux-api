@@ -490,6 +490,7 @@ model User {
   roleAssignments            UserRoleAssignment[]        @relation("UserRoleAssignments")
   roleAssignmentsGranted     UserRoleAssignment[]        @relation("RoleAssignedBy")
   staff                      Staff?
+  customerProfile            Customer?
   createdAnnouncements       Announcement[]              @relation("AnnouncementCreatedBy")
   createdDirectives          Directive[]                 @relation("DirectiveCreatedBy")
 
@@ -694,6 +695,26 @@ model ServiceCommissionRate {
   @@map("service_commission_rates")
 }
 
+// ─── Salon customer tracking (lightweight, no auth required) ───
+// Deliberately separate from `User` — most walk-in/salon customers never need
+// a password-bearing account at all. `userId` is only ever set if a customer
+// later chooses to claim a real login to see their booking history; until
+// then this just exists to de-duplicate repeat visits by phone number.
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String   @unique
+  email     String?
+  userId    String?  @unique @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  salonBookings SalonBooking[]
+
+  @@map("customers")
+}
+
 model Booking {
   id                       String                   @id @default(uuid())
   userId                   String                   @map("user_id")
@@ -766,10 +787,11 @@ model Booking {
 model SalonBooking {
   id              String             @id @default(uuid())
   branchId        String             @map("branch_id")
+  customerId      String?            @map("customer_id")
   customerName    String             @map("customer_name")
   customerPhone   String?            @map("customer_phone")
-  assignedStaffId String             @map("assigned_staff_id")
-  createdById     String             @map("created_by_id")
+  assignedStaffId String?            @map("assigned_staff_id")
+  createdById     String?            @map("created_by_id")
   bookingDate     DateTime           @map("booking_date") @db.Date
   bookingTime     String             @map("booking_time") // "HH:mm"
   status          SalonBookingStatus @default(SCHEDULED)
@@ -778,12 +800,15 @@ model SalonBooking {
   cancelReason    String?            @map("cancel_reason")
   completedAt     DateTime?          @map("completed_at")
   cancelledAt     DateTime?          @map("cancelled_at")
+  reservationCode String?            @unique @map("reservation_code")
+  reservationUsed Boolean            @default(false) @map("reservation_used")
   createdAt       DateTime           @default(now()) @map("created_at")
   updatedAt       DateTime           @updatedAt @map("updated_at")
 
   branch         StaffLocation               @relation(fields: [branchId], references: [id])
-  assignedStaff  Staff                       @relation("SalonBookingAssignedStaff", fields: [assignedStaffId], references: [id])
-  createdBy      Staff                       @relation("SalonBookingCreatedBy", fields: [createdById], references: [id])
+  customer       Customer?                   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  assignedStaff  Staff?                      @relation("SalonBookingAssignedStaff", fields: [assignedStaffId], references: [id])
+  createdBy      Staff?                      @relation("SalonBookingCreatedBy", fields: [createdById], references: [id])
   services       SalonBookingService[]
   inventoryItems SalonBookingInventoryItem[]
   commission     SalonBookingCommission?
@@ -1348,7 +1373,7 @@ model StaffLocation {
 // approval workflow itself: who it's currently sitting with, and its status.
 model ApprovalRequest {
   id                String              @id @default(uuid())
-  requestType       ApprovalRequestType
+  requestType       ApprovalRequestType @map("request_type")
   branchId          String?             @map("branch_id")
   submittedById     String              @map("submitted_by_id")
   currentApproverId String?             @map("current_approver_id")

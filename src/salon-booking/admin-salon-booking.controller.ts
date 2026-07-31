@@ -1,15 +1,15 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { StaffService } from '../staff/staff.service';
-import { SalonBookingService } from './salon-booking.service';
-import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
+import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
+import { SalonBookingService } from './salon-booking.service';
 
 @ApiTags('Admin - Salon Bookings')
 @ApiBearerAuth('JWT-auth')
@@ -29,12 +29,19 @@ export class AdminSalonBookingController {
         const data = await this.salonBookingService.create(dto, staff.id);
         return { success: true, message: 'Booking created successfully', data };
     }
-
     @Get()
     @ApiOperation({ summary: 'List bookings, filterable by branch/staff/status/date' })
     async findAll(@Query() query: QuerySalonBookingsDto) {
         const data = await this.salonBookingService.findAll(query);
         return { success: true, message: 'Bookings retrieved successfully', data };
+    }
+
+    @Get('verify/:code')
+    @ApiOperation({ summary: 'Look up a reservation by code — any branch' })
+    @ApiParam({ name: 'code' })
+    async findByReservationCode(@Param('code') code: string) {
+        const data = await this.salonBookingService.findByReservationCode(code);
+        return { success: true, message: 'Reservation found', data };
     }
 
     @Get(':id')
@@ -51,6 +58,14 @@ export class AdminSalonBookingController {
     async addInventoryItem(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddSalonBookingInventoryItemDto) {
         const data = await this.salonBookingService.addInventoryItem(id, dto);
         return { success: true, message: 'Item added to booking successfully', data };
+    }
+
+    @Patch(':id/verify')
+    @ApiOperation({ summary: 'Verify a reservation — assign a Stylist and mark it redeemed' })
+    @ApiParam({ name: 'id' })
+    async verifyReservation(@Param('id', ParseUUIDPipe) id: string, @Body() dto: VerifyReservationDto) {
+        const data = await this.salonBookingService.verifyReservation(id, dto);
+        return { success: true, message: 'Reservation verified successfully', data };
     }
 
     @Patch(':id/start')

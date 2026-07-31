@@ -4,11 +4,11 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { SalonBookingService } from './salon-booking.service';
 import { AdminSalonBookingController } from './admin-salon-booking.controller';
 import { StaffSalonBookingController } from './staff-salon-booking.controller';
-import { SalonBookingController } from './salon-booking.controller';
+import { CustomerSalonBookingController } from './customer-salon-booking.controller';
 
 @Module({
   imports: [StaffModule, InventoryModule],
-  controllers: [AdminSalonBookingController, StaffSalonBookingController, SalonBookingController],
+  controllers: [AdminSalonBookingController, StaffSalonBookingController, CustomerSalonBookingController],
   providers: [SalonBookingService],
   exports: [SalonBookingService],
 })
