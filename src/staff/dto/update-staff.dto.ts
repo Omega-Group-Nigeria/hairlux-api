@@ -5,6 +5,9 @@ import {
   IsDateString,
   IsIn,
   IsUUID,
+  IsNumber,
+  Min,
+  Max,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
@@ -72,4 +75,34 @@ export class UpdateStaffDto {
   @IsOptional()
   @IsDateString()
   exitDate?: string;
+
+  @ApiPropertyOptional({
+    example: 'Opens the branch, manages front-desk bookings, handles cash reconciliation.',
+    description: "Free-text description of this staff member's current responsibilities",
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => toTrimmedString(value))
+  responsibilities?: string;
+
+  @ApiPropertyOptional({
+    example: '550e8400-e29b-41d4-a716-446655440000',
+    description: "This staff member's direct supervisor/manager (another Staff record's id). Send null to clear.",
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID()
+  reportingToId?: string;
+
+  @ApiPropertyOptional({
+    example: 0.15,
+    description: 'Commission rate for this staff member as a decimal (0.15 = 15%). Overrides any service-level default when calculating salon booking commission. Send null to clear the override.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  commissionRate?: number;
+
 }

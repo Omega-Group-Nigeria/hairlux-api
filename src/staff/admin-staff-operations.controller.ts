@@ -1,0 +1,55 @@
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Permission } from '../auth/decorators/permission.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { PERMISSIONS } from '../common/constants/permissions';
+import { StaffOperationsService } from './staff-operations.service';
+
+@ApiTags('Admin - Attendance & Inventory (Phase 3 Prototype)')
+@ApiBearerAuth('JWT-auth')
+@Controller('admin')
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
+@Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+export class AdminStaffOperationsController {
+  constructor(private readonly operationsService: StaffOperationsService) { }
+
+  @Get('inventory/dashboard')
+  @ApiOperation({
+    summary: 'Running stock total per branch/product (prototype-level, computed from the log)',
+  })
+  @ApiQuery({ name: 'locationId', required: false })
+  @ApiResponse({ status: 200, description: 'Inventory dashboard retrieved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:read permission' })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getInventoryDashboard(@Query('locationId') locationId?: string) {
+    const data = await this.operationsService.getInventoryDashboard(locationId);
+    return { success: true, message: 'Inventory dashboard retrieved successfully', data };
+  }
+
+  @Get('inventory/entries')
+  @ApiOperation({ summary: 'Raw inventory log entries, filterable' })
+  @ApiQuery({ name: 'locationId', required: false })
+  @ApiQuery({ name: 'productName', required: false })
+  @ApiResponse({ status: 200, description: 'Inventory entries retrieved successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
+  @ApiResponse({ status: 403, description: 'Forbidden - Missing staff:read permission' })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getInventoryEntries(
+    @Query('locationId') locationId?: string,
+    @Query('productName') productName?: string,
+  ) {
+    const data = await this.operationsService.getInventoryEntries({ locationId, productName });
+    return { success: true, message: 'Inventory entries retrieved successfully', data };
+  }
+}

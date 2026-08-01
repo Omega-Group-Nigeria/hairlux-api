@@ -1,0 +1,1 @@
+export { RegisterFcmTokenDto } from '../../common/dto/register-fcm-token.dto';

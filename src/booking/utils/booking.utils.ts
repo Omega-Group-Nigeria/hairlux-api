@@ -1,6 +1,14 @@
 import { BadRequestException } from '@nestjs/common';
 import { BookingType, Prisma } from '@prisma/client';
+import {
+  canRetryMatching,
+  resolveAssignmentStatusMessage,
+} from '../../beautician/matching/utils/matching-radius.util';
 import { ServiceBookingItemDto } from '../dto/create-booking.dto';
+import {
+  formatBookingServiceAddress,
+  type BookingLocationSource,
+} from './booking-location.utils';
 
 export interface BookingServiceRecord {
   serviceId: string;
@@ -108,16 +116,209 @@ export function normalizeBookingServices(services: unknown): BookingServiceRecor
   });
 }
 
-export function formatBookingResponse<T extends { services: unknown; totalAmount?: unknown }>(
-  booking: T,
-): Omit<T, 'services' | 'totalAmount'> & {
-  services: BookingServiceRecord[];
-  totalAmount: number;
-} {
+export const bookingBranchSelect = {
+  id: true,
+  name: true,
+  address: true,
+} as const;
+
+export const assignedBeauticianSummarySelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
+  beauticianProfile: {
+    select: {
+      profilePhotoUrl: true,
+      ratingAverage: true,
+      specialties: true,
+      yearsOfExperience: true,
+    },
+  },
+} as const;
+
+export type AssignedBeauticianSummary = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  profilePhotoUrl: string | null;
+  ratingAverage: number | null;
+  specialties: string[];
+  yearsOfExperience: number | null;
+};
+
+type AssignedBeauticianLike = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  beauticianProfile?: {
+    profilePhotoUrl: string | null;
+    ratingAverage: unknown;
+    specialties: string[];
+    yearsOfExperience: number | null;
+  } | null;
+} | null | undefined;
+
+export function formatAssignedBeauticianSummary(
+  beautician: AssignedBeauticianLike,
+): AssignedBeauticianSummary | null {
+  if (!beautician) {
+    return null;
+  }
+
+  const profile = beautician.beauticianProfile;
+
   return {
-    ...booking,
-    services: normalizeBookingServices(booking.services),
-    totalAmount: Number(booking.totalAmount ?? 0),
+    id: beautician.id,
+    firstName: beautician.firstName,
+    lastName: beautician.lastName,
+    phone: beautician.phone,
+    profilePhotoUrl: profile?.profilePhotoUrl ?? null,
+    ratingAverage: profile ? Number(profile.ratingAverage) : null,
+    specialties: profile?.specialties ?? [],
+    yearsOfExperience: profile?.yearsOfExperience ?? null,
+  };
+}
+
+export const bookingUserReadInclude = {
+  address: true,
+  branch: { select: bookingBranchSelect },
+  assignedBeautician: { select: assignedBeauticianSummarySelect },
+} as const;
+
+export const bookingAdminUserSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+} as const;
+
+export const bookingAdminReadInclude = {
+  ...bookingUserReadInclude,
+  user: { select: bookingAdminUserSelect },
+} as const;
+
+export type BookingBranchSummary = {
+  id: string;
+  name: string;
+  address: string;
+};
+
+type BookingBranchLike = BookingBranchSummary | null | undefined;
+
+export function formatBookingBranch(
+  branch: BookingBranchLike,
+): BookingBranchSummary | null {
+  if (!branch) {
+    return null;
+  }
+
+  return {
+    id: branch.id,
+    name: branch.name,
+    address: branch.address,
+  };
+}
+
+export function formatBookingResponse(
+  booking: {
+    services: unknown;
+    totalAmount?: unknown;
+    branch?: BookingBranchLike;
+    assignedBeautician?: AssignedBeauticianLike;
+    address?: unknown;
+    tempLatitude?: unknown;
+    tempLongitude?: unknown;
+    tempFullAddress?: string | null;
+    [key: string]: unknown;
+  },
+) {
+  const hasBranchRelation = 'branch' in booking;
+  const hasAssignedBeautician = 'assignedBeautician' in booking;
+  const {
+    branch,
+    services,
+    totalAmount,
+    assignedBeautician,
+    address: _rawAddress,
+    tempLatitude,
+    tempLongitude,
+    tempFullAddress,
+    ...rest
+  } = booking;
+
+  const locationSource: BookingLocationSource = {
+    address: booking.address as BookingLocationSource['address'],
+    tempLatitude,
+    tempLongitude,
+    tempFullAddress,
+  };
+  const resolvedAddress = formatBookingServiceAddress(locationSource);
+
+  const formatted = {
+    ...rest,
+    services: normalizeBookingServices(services),
+    totalAmount: Number(totalAmount ?? 0),
+    address: resolvedAddress,
+    tempLatitude:
+      tempLatitude != null && tempLatitude !== undefined
+        ? Number(tempLatitude)
+        : null,
+    tempLongitude:
+      tempLongitude != null && tempLongitude !== undefined
+        ? Number(tempLongitude)
+        : null,
+    tempFullAddress: tempFullAddress ?? null,
+  };
+
+  const withBranch = hasBranchRelation
+    ? { ...formatted, branch: formatBookingBranch(branch) }
+    : formatted;
+
+  const assignmentMessage = resolveAssignmentStatusMessage({
+    status: String(rest.status ?? ''),
+    matchingAttempt: rest.matchingAttempt as number | null | undefined,
+    matchingExhaustedAt: rest.matchingExhaustedAt as
+      | Date
+      | string
+      | null
+      | undefined,
+    matchingExhaustedReason: rest.matchingExhaustedReason as
+      | import('@prisma/client').MatchingExhaustedReason
+      | null
+      | undefined,
+  });
+  const retryMatchingAvailable = canRetryMatching({
+    status: String(rest.status ?? ''),
+    matchingExhaustedAt: rest.matchingExhaustedAt as
+      | Date
+      | string
+      | null
+      | undefined,
+  });
+
+  const withAssignmentMessage = {
+    ...withBranch,
+    ...(rest.matchingAttempt != null
+      ? { matchingTier: rest.matchingAttempt as number }
+      : {}),
+    ...(rest.dispatchStatus != null
+      ? { dispatchStatus: rest.dispatchStatus }
+      : {}),
+    ...(assignmentMessage ? { assignmentMessage } : {}),
+    ...(retryMatchingAvailable ? { canRetryMatching: true } : {}),
+  };
+
+  if (!hasAssignedBeautician) {
+    return withAssignmentMessage;
+  }
+
+  return {
+    ...withAssignmentMessage,
+    assignedBeautician: formatAssignedBeauticianSummary(assignedBeautician),
   };
 }
 
@@ -137,21 +338,4 @@ export function toEmailServiceLines(
   }));
 }
 
-export function formatBookingAddress(address: unknown) {
-  if (!address || typeof address !== 'object' || Array.isArray(address)) {
-    return null;
-  }
-
-  const raw = address as Record<string, unknown>;
-  return {
-    id: raw.id,
-    fullAddress: raw.fullAddress ?? null,
-    streetAddress: raw.streetAddress ?? null,
-    city: raw.city ?? null,
-    state: raw.state ?? null,
-    country: raw.country ?? null,
-    placeId: raw.placeId ?? null,
-    addressComponents: raw.addressComponents ?? null,
-    isDefault: raw.isDefault ?? false,
-  };
-}
+export { formatAddress as formatBookingAddress } from '../../common/utils/address.utils';

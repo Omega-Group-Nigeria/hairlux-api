@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  BookingCommsCloseReason,
   BookingStatus,
   PaymentMethod,
   TransactionStatus,
@@ -14,13 +15,28 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { QueryBookingsDto } from '../dto/query-bookings.dto';
 import { RescheduleBookingDto } from '../dto/reschedule-booking.dto';
-import { formatBookingResponse } from '../utils/booking.utils';
+import {
+  bookingUserReadInclude,
+  formatBookingResponse,
+} from '../utils/booking.utils';
+import { NoShowPenaltyService } from '../../beautician/services/no-show-penalty.service';
+import { MatchingOrchestratorService } from '../../beautician/matching/services/matching-orchestrator.service';
+import { CommsSessionService } from '../../comms/services/comms-session.service';
+import { CommsPresenterService } from '../../comms/services/comms-presenter.service';
+import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
+import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class BookingCoreService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
+    private readonly noShowPenaltyService: NoShowPenaltyService,
+    private readonly matchingOrchestrator: MatchingOrchestratorService,
+    private readonly commsSessionService: CommsSessionService,
+    private readonly commsPresenter: CommsPresenterService,
+    private readonly commsRealtime: CommsRealtimeService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   async findUserBookings(userId: string, queryDto: QueryBookingsDto) {
@@ -48,9 +64,7 @@ export class BookingCoreService {
 
     const bookings = await this.prisma.booking.findMany({
       where,
-      include: {
-        address: true,
-      },
+      include: bookingUserReadInclude,
       orderBy: {
         bookingDate: 'desc',
       },
@@ -63,7 +77,8 @@ export class BookingCoreService {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
-        address: true,
+        ...bookingUserReadInclude,
+        commsSession: true,
         user: {
           select: {
             id: true,
@@ -84,7 +99,10 @@ export class BookingCoreService {
       throw new ForbiddenException('You do not have access to this booking');
     }
 
-    return formatBookingResponse(booking);
+    return {
+      ...formatBookingResponse(booking),
+      comms: this.commsPresenter.embedForBooking(booking),
+    };
   }
 
   async reschedule(
@@ -124,9 +142,7 @@ export class BookingCoreService {
         bookingTime: time,
         notes: reason ? `Rescheduled: ${reason}` : booking.notes,
       },
-      include: {
-        address: true,
-      },
+      include: bookingUserReadInclude,
     });
 
     return formatBookingResponse(updatedBooking);
@@ -172,9 +188,7 @@ export class BookingCoreService {
           status,
           cancelReason: reason,
         },
-        include: {
-          address: true,
-        },
+        include: bookingUserReadInclude,
       });
 
       if (booking.paymentMethod === PaymentMethod.WALLET) {
@@ -216,7 +230,30 @@ export class BookingCoreService {
       ...(booking.paymentMethod === PaymentMethod.WALLET
         ? [this.redis.del(`wallet:balance:${userId}`)]
         : []),
+      this.noShowPenaltyService.recordIfApplicable(id),
+      ...(booking.status === BookingStatus.PENDING_ASSIGNMENT
+        ? [this.matchingOrchestrator.cancelDispatchForBooking(id)]
+        : []),
     ]);
+
+    if (booking.assignedBeauticianUserId) {
+      await this.commsSessionService.closeForBookingSafely(
+        id,
+        BookingCommsCloseReason.CANCELLED,
+      );
+
+      await this.commsRealtime.emitBookingStatus(
+        id,
+        BookingStatus.CANCELLED,
+      );
+    }
+
+    this.bookingPushNotifier.notifyCancelled({
+      customerUserId: booking.userId,
+      bookingId: id,
+      reservationCode: booking.reservationCode,
+      assignedBeauticianUserId: booking.assignedBeauticianUserId,
+    });
 
     return formatBookingResponse(result);
   }

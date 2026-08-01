@@ -7,7 +7,11 @@ import {
 import { BookingStatus, BookingType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
-import { formatBookingAddress, formatBookingResponse } from '../utils/booking.utils';
+import {
+  bookingAdminReadInclude,
+  bookingUserReadInclude,
+  formatBookingResponse,
+} from '../utils/booking.utils';
 
 @Injectable()
 export class ReservationService {
@@ -42,9 +46,7 @@ export class ReservationService {
   async findByReservationCode(code: string, userId: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { reservationCode: code.toUpperCase() },
-      include: {
-        address: true,
-      },
+      include: bookingUserReadInclude,
     });
 
     if (!booking) {
@@ -61,18 +63,7 @@ export class ReservationService {
   async adminFindByReservationCode(code: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { reservationCode: code.toUpperCase() },
-      include: {
-        address: true,
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
-      },
+      include: bookingAdminReadInclude,
     });
 
     if (!booking) {
@@ -81,7 +72,6 @@ export class ReservationService {
 
     return {
       ...formatBookingResponse(booking),
-      address: formatBookingAddress(booking.address),
       isValid:
         !booking.reservationUsed && booking.status !== BookingStatus.CANCELLED,
     };
@@ -117,19 +107,11 @@ export class ReservationService {
             ? BookingStatus.COMPLETED
             : BookingStatus.IN_PROGRESS,
       },
-      include: {
-        user: {
-          select: { id: true, firstName: true, lastName: true, phone: true },
-        },
-        address: true,
-      },
+      include: bookingAdminReadInclude,
     });
 
     void this.redis.delByPattern('analytics:*');
 
-    return {
-      ...formatBookingResponse(updated),
-      address: formatBookingAddress(updated.address),
-    };
+    return formatBookingResponse(updated);
   }
 }

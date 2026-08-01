@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -26,6 +27,10 @@ import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
+import { VerifyArrivalDto } from '../beautician/dto/verify-arrival.dto';
+import { ConfirmCompletionDto } from '../beautician/dto/confirm-completion.dto';
+import { UserRole } from '@prisma/client';
+import { CompleteServiceDto } from '../beautician/dto/complete-service.dto';
 
 @ApiTags('Bookings')
 @Controller('bookings')
@@ -118,7 +123,7 @@ export class BookingController {
     description:
       'Book one or more services in a single appointment. All services are stored under ONE booking record with a single reservation code. ' +
       'Each service item should provide `serviceMode` (`HOME_SERVICE` or `WALK_IN`) so mixed-mode bookings are supported in one request. ' +
-      '`addressId` is required whenever at least one service uses `HOME_SERVICE`. ' +
+      'For HOME_SERVICE, provide either a saved `addressId` or a temporary current-location triple (`tempLatitude`, `tempLongitude`, `tempFullAddress`). ' +
       'Payment: WALLET deducts the full total from your wallet immediately — booking is only created if balance is sufficient. ' +
       'CASH: slot is reserved and payment is collected on the day. ' +
       'If `guestEmail` is provided, a notification email with the reservation code is sent to the guest after successful booking.',
@@ -437,6 +442,140 @@ export class BookingController {
   ) {
     const data = await this.bookingService.findByReservationCode(code, userId);
     return { success: true, message: 'Booking retrieved successfully', data };
+  }
+
+  @Get(':id/live-tracking')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Get live beautician tracking for a home service booking',
+  })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  async getLiveTracking(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+    @GetUser('role') role: UserRole,
+  ) {
+    const data = await this.bookingService.getLiveTracking(id, userId, role);
+    return {
+      success: true,
+      message: 'Live tracking retrieved successfully',
+      data,
+    };
+  }
+
+  @Post(':id/retry-matching')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Retry beautician matching',
+    description:
+      'Restarts matching when a previous search was exhausted and no beautician was assigned.',
+  })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  async retryMatching(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+  ) {
+    const data = await this.bookingService.retryMatchingForUser(userId, id);
+    return {
+      success: true,
+      message: 'Beautician matching restarted successfully',
+      data,
+    };
+  }
+
+  @Get(':id/verification')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Get arrival PIN/QR for assigned beautician',
+  })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  async getArrivalVerification(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+    @GetUser('role') role: UserRole,
+  ) {
+    if (role !== UserRole.BEAUTICIAN) {
+      throw new ForbiddenException(
+        'Only the assigned beautician can view arrival verification',
+      );
+    }
+
+    const data = await this.bookingService.getArrivalVerification(id, userId);
+    return {
+      success: true,
+      message: 'Arrival verification retrieved successfully',
+      data,
+    };
+  }
+
+  @Post(':id/verify-arrival')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Customer verifies beautician arrival via PIN or QR' })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  async verifyArrival(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+    @Body() dto: VerifyArrivalDto,
+  ) {
+    const data = await this.bookingService.verifyArrival(id, userId, dto);
+    return {
+      success: true,
+      message: 'Arrival verified successfully',
+      data,
+    };
+  }
+
+  @Post(':id/complete-service')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Assigned beautician marks service complete' })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  async completeService(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+    @GetUser('role') role: UserRole,
+    @Body() dto: CompleteServiceDto,
+  ) {
+    if (role !== UserRole.BEAUTICIAN) {
+      throw new ForbiddenException(
+        'Only the assigned beautician can complete this service',
+      );
+    }
+
+    const data = await this.bookingService.completeService(
+      id,
+      userId,
+      dto.notes,
+    );
+    return {
+      success: true,
+      message: data.message,
+      data,
+    };
+  }
+
+  @Post(':id/confirm-completion')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Customer confirms service completion and submits rating',
+  })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  async confirmCompletion(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+    @Body() dto: ConfirmCompletionDto,
+  ) {
+    const data = await this.bookingService.confirmCompletion(id, userId, dto);
+    return {
+      success: true,
+      message: data.message,
+      data,
+    };
   }
 
   @Get(':id')

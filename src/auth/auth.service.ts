@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
+import { RegisterBeauticianDto } from './dto/register-beautician.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -166,6 +167,96 @@ export class AuthService {
     };
   }
 
+  async registerBeautician(registerDto: RegisterBeauticianDto) {
+    const { email, password, firstName, lastName, phone, dateOfBirth } =
+      registerDto;
+
+    const normalizedEmail = email.toLowerCase();
+    const parsedDateOfBirth =
+      dateOfBirth instanceof Date
+        ? dateOfBirth
+        : this.parseDateOfBirth(String(dateOfBirth));
+
+    await this.assertBeauticianRegistrationAvailable({
+      email: normalizedEmail,
+      firstName,
+      lastName,
+      phone,
+      dateOfBirth: parsedDateOfBirth,
+    });
+
+    const hashedPassword = await argon2.hash(password, {
+      type: argon2.argon2id,
+      memoryCost: 65536,
+      timeCost: 4,
+      parallelism: 1,
+    });
+
+    const otpCode = this.generateOtpCode();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const newUser = await tx.user.create({
+        data: {
+          email: normalizedEmail,
+          password: hashedPassword,
+          firstName,
+          lastName,
+          phone,
+          dateOfBirth: parsedDateOfBirth,
+          role: UserRole.BEAUTICIAN,
+          status: UserStatus.ACTIVE,
+          otpCode,
+          otpExpiry,
+        },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          dateOfBirth: true,
+          role: true,
+          status: true,
+          emailVerified: true,
+          createdAt: true,
+        },
+      });
+
+      await tx.wallet.create({
+        data: {
+          userId: newUser.id,
+          balance: 0,
+        },
+      });
+
+      await tx.beauticianProfile.create({
+        data: {
+          userId: newUser.id,
+        },
+      });
+
+      return newUser;
+    });
+
+    await this.mailService.sendOtpEmail(user.email, otpCode, user.firstName);
+
+    const sessionId = await this.rotateActiveSession(user.id);
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      sessionId,
+    );
+
+    return {
+      user,
+      ...tokens,
+      message:
+        'Beautician registration successful. Please verify your email with the OTP sent to your email address.',
+    };
+  }
+
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
@@ -268,46 +359,37 @@ export class AuthService {
     }
   }
 
-  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
-    const { email } = forgotPasswordDto;
+  /**
+ * Generates a password-setup token and emails it. Shared by genuine
+ * forgot-password requests and by brand-new accounts that start with an
+ * unusable random password (e.g. staff created via convertToStaff).
+ */
+  async initiatePasswordSetup(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
-    });
-
-    // Don't reveal if user exists or not
-    if (!user) {
-      return {
-        message: 'If the email exists, a password reset link has been sent',
-      };
-    }
-
-    // Generate reset token
     const resetToken = randomBytes(32).toString('hex');
-    const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour
-
-    // Hash reset token before storing
+    const resetTokenExpiry = new Date(Date.now() + 3600000);
     const hashedResetToken = await argon2.hash(resetToken);
-
     await this.prisma.user.update({
       where: { id: user.id },
-      data: {
-        resetToken: hashedResetToken,
-        resetTokenExpiry,
-      },
+      data: { resetToken: hashedResetToken, resetTokenExpiry },
     });
 
-    // TODO: Send email with reset link containing the token
-    await this.mailService.sendPasswordResetEmail(
-      user.email,
-      resetToken,
-      user.firstName,
-      user.role,
-    );
+    await this.mailService.sendPasswordResetEmail(user.email, resetToken, user.firstName, user.role);
+  }
 
-    return {
-      message: 'If the email exists, a password reset link has been sent',
-    };
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
+    const { email } = forgotPasswordDto;
+    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+
+    if (!user) {
+    return { message: 'If the email exists, a password reset link has been sent' };
+    }
+
+    await this.initiatePasswordSetup(user.id);
+
+    return { message: 'If the email exists, a password reset link has been sent' };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
@@ -463,12 +545,20 @@ export class AuthService {
       throw new UnauthorizedException(ErrorMessages.SESSION_REVOKED);
     }
 
+    const roleAssignments = await this.prisma.userRoleAssignment.findMany({
+    where: { userId: user.id },
+    select: { role: true },
+  });
+
+    const roles = Array.from(new Set([user.role, ...roleAssignments.map((r) => r.role)]));
+
+
     const permissions = await this.getPermissionsForUser(
       user.role,
       user.adminRoleId ?? null,
     );
 
-    return { ...user, permissions };
+    return { ...user, permissions, roles };
   }
 
   private async getPermissionsForUser(
@@ -520,6 +610,14 @@ export class AuthService {
       user.adminRoleId ?? null,
     );
 
+    // ── same computation as validateUser() ──
+    const roleAssignments = await this.prisma.userRoleAssignment.findMany({
+      where: { userId: user.id },
+      select: { role: true },
+    });
+    const roles = Array.from(new Set([user.role, ...roleAssignments.map((r) => r.role)]));
+
+
     const hasPin = !!user.pin;
 
     const {
@@ -537,6 +635,7 @@ export class AuthService {
         ...userWithoutSensitiveData,
         adminRole: user.adminRole ?? null,
         permissions,
+        roles,
         hasPin,
       },
       ...tokens,
@@ -738,6 +837,52 @@ export class AuthService {
       },
       ...tokens,
     };
+  }
+
+  private parseDateOfBirth(dateOfBirth: string): Date {
+    const [year, month, day] = dateOfBirth.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, day));
+  }
+
+  private async assertBeauticianRegistrationAvailable(input: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    dateOfBirth: Date;
+  }): Promise<void> {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: input.email },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
+    }
+
+    const existingPhone = await this.prisma.user.findFirst({
+      where: { phone: input.phone },
+      select: { id: true },
+    });
+
+    if (existingPhone) {
+      throw new ConflictException(ErrorMessages.PHONE_ALREADY_EXISTS);
+    }
+
+    const existingIdentity = await this.prisma.user.findFirst({
+      where: {
+        firstName: { equals: input.firstName, mode: 'insensitive' },
+        lastName: { equals: input.lastName, mode: 'insensitive' },
+        dateOfBirth: input.dateOfBirth,
+      },
+      select: { id: true },
+    });
+
+    if (existingIdentity) {
+      throw new ConflictException(
+        ErrorMessages.BEAUTICIAN_IDENTITY_ALREADY_EXISTS,
+      );
+    }
   }
 
   private generateOtpCode(): string {

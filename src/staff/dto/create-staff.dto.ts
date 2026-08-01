@@ -6,6 +6,7 @@ import {
   IsDateString,
   IsIn,
   IsUUID,
+  MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
@@ -32,12 +33,32 @@ export const STAFF_EMPLOYMENT_TYPE_VALUES = [
   'TEMPORARY',
 ] as const;
 
+export const DISCIPLINARY_ACTION_TYPE_VALUES = [
+  'VERBAL_WARNING',
+  'WRITTEN_WARNING',
+  'SUSPENSION',
+  'TERMINATION',
+] as const;
+
 export type StaffEmploymentStatusValue =
   (typeof STAFF_EMPLOYMENT_STATUS_VALUES)[number];
 export type StaffEmploymentTypeValue =
   (typeof STAFF_EMPLOYMENT_TYPE_VALUES)[number];
+export type DisciplinaryActionTypeValue =
+  (typeof DISCIPLINARY_ACTION_TYPE_VALUES)[number];
 
 export class CreateStaffDto {
+
+  @ApiPropertyOptional({ description: 'Link to an existing User account — set automatically by convertToStaff(), not typically provided directly', })
+  @IsOptional()
+  @IsUUID()
+  userId?: string;
+
+  @ApiPropertyOptional({ description: 'Who this staff member reports to. Defaults to the branch manager if not provided and the branch has one.' })
+  @IsOptional()
+  @IsUUID()
+  reportingToId?: string;
+
   @ApiProperty({ example: 'Amara Okafor' })
   @IsString()
   @IsNotEmpty()
@@ -76,6 +97,13 @@ export class CreateStaffDto {
   @IsOptional()
   @IsDateString()
   dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: '45 Ring Road, Ibadan, Oyo State' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(({ value }) => toTrimmedString(value))
+  address?: string;
 
   @ApiPropertyOptional({
     enum: STAFF_EMPLOYMENT_STATUS_VALUES,

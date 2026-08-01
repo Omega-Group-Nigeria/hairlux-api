@@ -1,8 +1,8 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
+import { Pool } from 'pg';
 
 @Injectable()
 export class PrismaService implements OnModuleInit, OnModuleDestroy {
@@ -59,6 +59,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   get service() {
     return this.client.service;
+  }
+
+  get serviceCommissionRate() {
+    return this.client.serviceCommissionRate;
   }
 
   get booking() {
@@ -145,6 +149,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.staff;
   }
 
+  get application() {
+    return this.client.application;
+  }
+
   get staffEmploymentHistory() {
     return this.client.staffEmploymentHistory;
   }
@@ -153,11 +161,197 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.staffLocation;
   }
 
+  get branchService() {
+    return this.client.branchService;
+  }
+
   get waitlistEntry() {
     return this.client.waitlistEntry;
+  }
+
+  get productCategory() {
+    return this.client.productCategory;
+  }
+
+  get product() {
+    return this.client.product;
+  }
+
+  get productImage() {
+    return this.client.productImage;
+  }
+
+  get deliveryRegion() {
+    return this.client.deliveryRegion;
+  }
+
+  get shopOrder() {
+    return this.client.shopOrder;
+  }
+
+  get beauticianProfile() {
+    return this.client.beauticianProfile;
+  }
+
+  get beauticianService() {
+    return this.client.beauticianService;
+  }
+
+  get jobOffer() {
+    return this.client.jobOffer;
+  }
+
+  get dispatchEvent() {
+    return this.client.dispatchEvent;
+  }
+
+  get dispatchConfig() {
+    return this.client.dispatchConfig;
+  }
+
+  get homeServiceSettings() {
+    return this.client.homeServiceSettings;
+  }
+
+  get payoutRequest() {
+    return this.client.payoutRequest;
+  }
+
+  get fcmToken() {
+    return this.client.fcmToken;
+  }
+
+  get beauticianLocationHistory() {
+    return this.client.beauticianLocationHistory;
+  }
+
+  get bookingCommsSession() {
+    return this.client.bookingCommsSession;
+  }
+
+  get bookingCommsEvent() {
+    return this.client.bookingCommsEvent;
+  }
+
+  get userRoleAssignment() {
+    return this.client.userRoleAssignment;
+  }
+
+  get staffOnboardingItem() {
+    return this.client.staffOnboardingItem;
+  }
+
+  get companyDocument() {
+    return this.client.companyDocument;
+  }
+
+  get staffDocumentAcknowledgment() {
+    return this.client.staffDocumentAcknowledgment;
+  }
+
+  get announcement() {
+    return this.client.announcement;
+  }
+
+  get announcementRead() {
+    return this.client.announcementRead;
+  }
+
+  get directive() {
+    return this.client.directive;
+  }
+
+  get attendanceRecord() {
+    return this.client.attendanceRecord;
+  }
+
+  get inventoryLogEntry() {
+    return this.client.inventoryLogEntry;
+  }
+
+  get employmentApproval() {
+    return this.client.employmentApproval;
+  }
+
+  get offerLetter() {
+    return this.client.offerLetter;
+  }
+
+  get leaveRequest() {
+    return this.client.leaveRequest;
+  }
+
+  get approvalRequest() {
+    return this.client.approvalRequest;
+  }
+
+  get approvalAction() {
+    return this.client.approvalAction;
+  }
+
+  get disciplinaryAction() {
+    return this.client.disciplinaryAction;
+  }
+  get stockAdjustmentRequest() {
+    return this.client.stockAdjustmentRequest;
+  }
+
+  get salonBooking() {
+    return this.client.salonBooking;
+  }
+
+  get salonBookingService() {
+    return this.client.salonBookingService;
+  }
+
+  get salonBookingInventoryItem() {
+    return this.client.salonBookingInventoryItem;
+  }
+
+  get salonBookingCommission() {
+    return this.client.salonBookingCommission;
+  }
+
+  get customer() {
+    return this.client.customer;
+  }
+
+  get staffCodeHistory() {
+    return this.client.staffCodeHistory;
+  }
+
+  get expiryAlert() {
+    return this.client.expiryAlert;
+  }
+
+  get productSale() {
+    return this.client.productSale;
+  }
+
+  get productSaleItem() {
+    return this.client.productSaleItem;
   }
 
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
+
+  get inventoryItem() {
+    return this.client.inventoryItem;
+  }
+
+  get stockMovement() {
+    return this.client.stockMovement;
+  }
+
+  get lowStockAlert() {
+    return this.client.lowStockAlert;
+  }
+
+  get stockTransfer() {
+    return this.client.stockTransfer;
+  }
+
+  
+
 }

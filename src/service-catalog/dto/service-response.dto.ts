@@ -10,6 +10,14 @@ export class CategoryResponseDto {
   @ApiProperty({ example: 'Professional hair styling and treatments' })
   description: string;
 
+  @ApiProperty({
+    example:
+      'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/hair-services.webp',
+    required: false,
+    nullable: true,
+  })
+  imageUrl?: string | null;
+
   @ApiProperty({ example: '2024-01-15T10:30:00.000Z' })
   createdAt: Date;
 

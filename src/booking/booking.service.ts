@@ -17,6 +17,13 @@ import { QueryBookingsDto } from './dto/query-bookings.dto';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
 import { SetBusinessHoursDto } from './dto/set-business-hours.dto';
 import { VerifyBookingPaymentDto } from './dto/verify-booking-payment.dto';
+import { VerifyArrivalService } from '../beautician/arrival-verification/services/verify-arrival.service';
+import { ArrivalVerificationReadService } from '../beautician/arrival-verification/services/arrival-verification-read.service';
+import { CustomerCompletionService } from '../beautician/home-service-booking/services/customer-completion.service';
+import { ServiceCompletionService } from '../beautician/home-service-booking/services/service-completion.service';
+import { LiveTrackingService } from '../beautician/tracking/live-tracking.service';
+import { UserRole } from '@prisma/client';
+import { BookingMatchingService } from './services/booking-matching.service';
 
 @Injectable()
 export class BookingService {
@@ -26,6 +33,12 @@ export class BookingService {
     private readonly bookingAnalyticsService: BookingAnalyticsService,
     private readonly availabilityService: AvailabilityService,
     private readonly reservationService: ReservationService,
+    private readonly verifyArrivalService: VerifyArrivalService,
+    private readonly arrivalVerificationReadService: ArrivalVerificationReadService,
+    private readonly customerCompletionService: CustomerCompletionService,
+    private readonly serviceCompletionService: ServiceCompletionService,
+    private readonly liveTrackingService: LiveTrackingService,
+    private readonly bookingMatchingService: BookingMatchingService,
   ) {}
 
   async checkAvailability(queryDto: CheckAvailabilityDto) {
@@ -149,5 +162,75 @@ export class BookingService {
 
   async useReservation(code: string) {
     return this.reservationService.useReservation(code);
+  }
+
+  async getArrivalVerification(bookingId: string, beauticianUserId: string) {
+    return this.arrivalVerificationReadService.getVerificationDisplay(
+      bookingId,
+      beauticianUserId,
+    );
+  }
+
+  async verifyArrival(
+    bookingId: string,
+    customerUserId: string,
+    input: { pin?: string; qrToken?: string },
+  ) {
+    return this.verifyArrivalService.verify(bookingId, customerUserId, input);
+  }
+
+  async completeService(
+    bookingId: string,
+    beauticianUserId: string,
+    notes?: string,
+  ) {
+    return this.serviceCompletionService.completeService(
+      bookingId,
+      beauticianUserId,
+      notes,
+    );
+  }
+
+  async confirmCompletion(
+    bookingId: string,
+    customerUserId: string,
+    input: { rating: number; review?: string },
+  ) {
+    return this.customerCompletionService.confirmCompletion(
+      bookingId,
+      customerUserId,
+      input,
+    );
+  }
+
+  async getLiveTracking(
+    bookingId: string,
+    userId: string,
+    role: UserRole,
+  ) {
+    return this.liveTrackingService.getLiveTracking(bookingId, userId, role);
+  }
+
+  async retryMatchingForUser(userId: string, bookingId: string) {
+    return this.bookingMatchingService.retryMatchingForUser(userId, bookingId);
+  }
+
+  async retryMatchingAdmin(bookingId: string, startAtTier = 1) {
+    return this.bookingMatchingService.retryMatchingAdmin(
+      bookingId,
+      startAtTier,
+    );
+  }
+
+  async forceAssignAdmin(
+    bookingId: string,
+    beauticianUserId: string,
+    adminUserId: string,
+  ) {
+    return this.bookingMatchingService.forceAssignAdmin(
+      bookingId,
+      beauticianUserId,
+      adminUserId,
+    );
   }
 }

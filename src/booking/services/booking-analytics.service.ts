@@ -4,38 +4,54 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  BookingCommsCloseReason,
   BookingStatus,
   BookingType,
+  DispatchStatus,
   PaymentMethod,
   TransactionStatus,
   TransactionType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { NoShowPenaltyService } from '../../beautician/services/no-show-penalty.service';
+import { MatchingOrchestratorService } from '../../beautician/matching/services/matching-orchestrator.service';
 import { AdminCreateBookingDto } from '../dto/admin-create-booking.dto';
 import { AdminQueryBookingsDto } from '../dto/admin-query-bookings.dto';
 import { GetCalendarDto } from '../dto/get-calendar.dto';
 import { GetStatsDto } from '../dto/get-stats.dto';
 import {
   BookingServiceRecord,
+  bookingAdminReadInclude,
+  bookingUserReadInclude,
   buildBookingServiceRecord,
   calculateBookingServicesTotal,
-  formatBookingAddress,
+  formatBookingBranch,
   formatBookingResponse,
   normalizeBookingServices,
   resolvePriceForBookingType,
   toBookingServicesJson,
 } from '../utils/booking.utils';
-import { BookingWalletService } from './booking-wallet.service';
+import { WalletDebitService } from '../../wallet/wallet-debit.service';
+import { CommsSessionService } from '../../comms/services/comms-session.service';
+import { CommsAdminService } from '../../comms/services/comms-admin.service';
+import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
 import { ReservationService } from './reservation.service';
+import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class BookingAnalyticsService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
-    private bookingWalletService: BookingWalletService,
+    private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
+    private readonly noShowPenaltyService: NoShowPenaltyService,
+    private readonly matchingOrchestrator: MatchingOrchestratorService,
+    private readonly commsSessionService: CommsSessionService,
+    private readonly commsAdminService: CommsAdminService,
+    private readonly commsRealtime: CommsRealtimeService,
+    private readonly bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   private isUniqueConstraintError(err: unknown, field: string): boolean {
@@ -125,18 +141,7 @@ export class BookingAnalyticsService {
         where,
         skip,
         take: limit,
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
-          address: true,
-        },
+        include: bookingAdminReadInclude,
         orderBy: {
           bookingDate: 'desc',
         },
@@ -145,10 +150,7 @@ export class BookingAnalyticsService {
     ]);
 
     return {
-      data: bookings.map((booking) => ({
-        ...formatBookingResponse(booking),
-        address: formatBookingAddress(booking.address),
-      })),
+      data: bookings.map((booking) => formatBookingResponse(booking)),
       meta: {
         total,
         page,
@@ -161,27 +163,18 @@ export class BookingAnalyticsService {
   async findOneAdmin(id: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
-      include: {
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            phone: true,
-          },
-        },
-        address: true,
-      },
+      include: bookingAdminReadInclude,
     });
 
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
 
+    const comms = await this.commsAdminService.getSessionForBooking(id);
+
     return {
       ...formatBookingResponse(booking),
-      address: formatBookingAddress(booking.address),
+      comms,
     };
   }
 
@@ -204,25 +197,13 @@ export class BookingAnalyticsService {
     if (idempotencyKey) {
       const existing = await this.prisma.booking.findFirst({
         where: { userId, idempotencyKey },
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
-          address: true,
-        },
+        include: bookingAdminReadInclude,
       });
 
       if (existing) {
         return {
           ...formatBookingResponse(existing),
           reservationCode: existing.reservationCode,
-          address: formatBookingAddress(existing.address),
         };
       }
     }
@@ -264,11 +245,11 @@ export class BookingAnalyticsService {
     const totalAmount = calculateBookingServicesTotal(serviceRecords);
 
     let address: Awaited<
-      ReturnType<typeof this.prisma.address.findUnique>
+      ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
     if (bookingType === BookingType.HOME_SERVICE) {
-      address = await this.prisma.address.findUnique({
-        where: { id: addressId },
+      address = await this.prisma.address.findFirst({
+        where: { id: addressId, deletedAt: null },
       });
 
       if (!address) {
@@ -308,26 +289,17 @@ export class BookingAnalyticsService {
               paymentMethod: paymentMethod || PaymentMethod.CASH,
               notes,
             },
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  phone: true,
-                },
-              },
-              address: true,
-            },
+            include: bookingAdminReadInclude,
           });
 
           if (paymentMethod === PaymentMethod.WALLET) {
-            await this.bookingWalletService.debitWalletAndRecordTx(tx, {
+            await this.walletDebitService.debitWalletAndRecordTx(tx, {
               userId,
               amount: totalAmount,
               reference: created.id,
               description: `Payment for booking #${created.id}`,
+              insufficientBalanceMessage:
+                'Insufficient wallet balance to complete this booking',
             });
           }
 
@@ -338,25 +310,13 @@ export class BookingAnalyticsService {
       if (idempotencyKey && this.isUniqueConstraintError(err, 'idempotencyKey')) {
         const existing = await this.prisma.booking.findFirst({
           where: { userId, idempotencyKey },
-          include: {
-            user: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                phone: true,
-              },
-            },
-            address: true,
-          },
+          include: bookingAdminReadInclude,
         });
 
         if (existing) {
           return {
             ...formatBookingResponse(existing),
             reservationCode: existing.reservationCode,
-            address: formatBookingAddress(existing.address),
           };
         }
       }
@@ -367,7 +327,6 @@ export class BookingAnalyticsService {
       ...formatBookingResponse(booking),
       services: serviceRecords,
       reservationCode: booking.reservationCode,
-      address: formatBookingAddress(booking.address),
     };
   }
 
@@ -395,18 +354,7 @@ export class BookingAnalyticsService {
       const updatedBooking = await prisma.booking.update({
         where: { id },
         data: { status },
-        include: {
-          user: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-            },
-          },
-          address: true,
-        },
+        include: bookingAdminReadInclude,
       });
 
       if (
@@ -451,12 +399,40 @@ export class BookingAnalyticsService {
       booking.paymentMethod === PaymentMethod.WALLET
         ? [this.redis.del(`wallet:balance:${booking.userId}`)]
         : []),
+      ...(status === BookingStatus.CANCELLED
+        ? [this.noShowPenaltyService.recordIfApplicable(id)]
+        : []),
+      ...(status === BookingStatus.CANCELLED &&
+      booking.status === BookingStatus.PENDING_ASSIGNMENT
+        ? [this.matchingOrchestrator.cancelDispatchForBooking(id)]
+        : []),
     ]);
 
-    return {
-      ...formatBookingResponse(result),
-      address: formatBookingAddress(result.address),
-    };
+    if (
+      status === BookingStatus.CANCELLED &&
+      booking.assignedBeauticianUserId
+    ) {
+      await this.commsSessionService.closeForBookingSafely(
+        id,
+        BookingCommsCloseReason.CANCELLED,
+      );
+
+      await this.commsRealtime.emitBookingStatus(
+        id,
+        BookingStatus.CANCELLED,
+      );
+    }
+
+    if (status === BookingStatus.CANCELLED) {
+      this.bookingPushNotifier.notifyCancelled({
+        customerUserId: booking.userId,
+        bookingId: id,
+        reservationCode: booking.reservationCode,
+        assignedBeauticianUserId: booking.assignedBeauticianUserId,
+      });
+    }
+
+    return formatBookingResponse(result);
   }
 
   async getCalendar(calendarDto: GetCalendarDto) {
@@ -477,6 +453,7 @@ export class BookingAnalyticsService {
         },
       },
       include: {
+        ...bookingUserReadInclude,
         user: {
           select: {
             id: true,
@@ -507,6 +484,9 @@ export class BookingAnalyticsService {
         id: booking.id,
         time: booking.bookingTime,
         status: booking.status,
+        bookingType: booking.bookingType,
+        branchId: booking.branchId,
+        branch: formatBookingBranch(booking.branch),
         user: booking.user,
         services: normalizeBookingServices(booking.services),
       });
@@ -609,6 +589,13 @@ export class BookingAnalyticsService {
       .map(([id, stats]) => ({ serviceId: id, ...stats }))
       .sort((a, b) => b.count - a.count);
 
+    const matchExhaustedCount = await this.prisma.booking.count({
+      where: {
+        status: BookingStatus.PENDING_ASSIGNMENT,
+        dispatchStatus: DispatchStatus.MATCH_EXHAUSTED,
+      },
+    });
+
     return {
       period: allTime
         ? { allTime: true }
@@ -620,6 +607,9 @@ export class BookingAnalyticsService {
           paidBookings.length > 0 ? totalRevenue / paidBookings.length : 0,
       },
       byStatus,
+      dispatch: {
+        matchExhaustedCount,
+      },
       topServices: popularServices.slice(0, 5),
     };
   }

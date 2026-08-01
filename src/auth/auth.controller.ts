@@ -16,6 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
+import { RegisterBeauticianDto } from './dto/register-beautician.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -64,6 +65,45 @@ export class AuthController {
   async register(@Body() registerDto: RegisterDto) {
     const result = await this.authService.register(registerDto);
     return ResponseUtil.success(result, 'User registered successfully');
+  }
+
+  @Post('register-beautician')
+  @ApiOperation({
+    summary: 'Register a new beautician account',
+    description:
+      'Creates a user with role BEAUTICIAN, an empty beautician profile, and a wallet. Email, phone, and name + date of birth must each be unique.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Beautician registered successfully',
+    example: {
+      success: true,
+      message: 'Beautician registered successfully',
+      data: {
+        user: {
+          id: '550e8400-e29b-41d4-a716-446655440000',
+          email: 'stylist@example.com',
+          firstName: 'Ada',
+          lastName: 'Okafor',
+          phone: '+2348012345678',
+          dateOfBirth: '1996-06-15T00:00:00.000Z',
+          role: 'BEAUTICIAN',
+          status: 'ACTIVE',
+          createdAt: '2026-06-20T12:00:00.000Z',
+        },
+        accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+        refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 409,
+    description:
+      'Email, phone, or name + date of birth already associated with an account',
+  })
+  async registerBeautician(@Body() registerDto: RegisterBeauticianDto) {
+    const result = await this.authService.registerBeautician(registerDto);
+    return ResponseUtil.success(result, 'Beautician registered successfully');
   }
 
   @Post('login')

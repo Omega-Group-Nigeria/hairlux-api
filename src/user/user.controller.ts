@@ -25,6 +25,9 @@ import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 import { ResponseUtil } from '../common/utils/response.util';
 import { AddressValidationPipe } from './pipes/address-validation.pipe';
+import { RegisterFcmTokenDto } from '../common/dto/register-fcm-token.dto';
+import { FcmTokenService } from '../beautician/fcm/fcm-token.service';
+import { StreamDeviceSyncService } from '../comms/services/stream-device-sync.service';
 
 const addressValidationPipe = new AddressValidationPipe();
 
@@ -33,7 +36,11 @@ const addressValidationPipe = new AddressValidationPipe();
 @Controller('user')
 @UseGuards(JwtAuthGuard)
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly fcmTokenService: FcmTokenService,
+    private readonly streamDeviceSync: StreamDeviceSyncService,
+  ) {}
 
   @Get('profile')
   @ApiOperation({ summary: 'Get user profile' })
@@ -147,6 +154,8 @@ export class UserController {
           state: 'Lagos',
           country: 'Nigeria',
           placeId: 'ChIJ...',
+          latitude: 6.4474,
+          longitude: 3.4721,
           addressComponents: {
             streetAddress: '12 Admiralty Way',
             city: 'Lagos',
@@ -200,6 +209,8 @@ export class UserController {
         state: 'Lagos',
         country: 'Nigeria',
         placeId: 'ChIJ...',
+        latitude: 6.4474,
+        longitude: 3.4721,
         addressComponents: {
           streetAddress: '12 Admiralty Way',
           city: 'Lagos',
@@ -243,6 +254,8 @@ export class UserController {
         state: 'Lagos',
         country: 'Nigeria',
         placeId: 'ChIJ...',
+        latitude: 6.4281,
+        longitude: 3.4219,
         addressComponents: {
           streetAddress: '25 Victoria Island',
           city: 'Lagos',
@@ -309,7 +322,11 @@ export class UserController {
   }
 
   @Delete('addresses/:id')
-  @ApiOperation({ summary: 'Delete an address' })
+  @ApiOperation({
+    summary: 'Delete an address',
+    description:
+      'Soft-deletes the address (hidden from saved lists). Historical bookings and shop orders keep the address via FK.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Address deleted successfully',
@@ -323,15 +340,28 @@ export class UserController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Address not found' })
-  @ApiResponse({
-    status: 400,
-    description: 'Cannot delete address that is used in bookings',
-  })
   async deleteAddress(
     @GetUser('id') userId: string,
     @Param('id') addressId: string,
   ) {
     const result = await this.userService.deleteAddress(userId, addressId);
     return ResponseUtil.success(result, result.message);
+  }
+
+  @Post('fcm-token')
+  @ApiOperation({ summary: 'Register FCM push notification token' })
+  async registerFcmToken(
+    @GetUser('id') userId: string,
+    @Body() dto: RegisterFcmTokenDto,
+  ) {
+    const data = await this.fcmTokenService.registerToken(
+      userId,
+      dto.token,
+      dto.platform,
+    );
+
+    void this.streamDeviceSync.syncUserDevices(userId);
+
+    return ResponseUtil.success(data, 'FCM token registered successfully');
   }
 }

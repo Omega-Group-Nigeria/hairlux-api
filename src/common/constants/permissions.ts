@@ -20,6 +20,10 @@ export const PERMISSIONS = {
   SERVICES_DELETE: 'services:delete', // Remove services
   SERVICES_MANAGE_CATEGORIES: 'services:manage_categories', // CRUD categories
 
+  // ── Branches ────────────────────────────────────────────────────────────────
+  BRANCHES_READ: 'branches:read', // View branches and branch service config
+  BRANCHES_MANAGE: 'branches:manage', // CRUD branches; manage availability & walk-in prices
+
   // ── Discounts ────────────────────────────────────────────────────────────────
   DISCOUNTS_READ: 'discounts:read', // View discount codes
   DISCOUNTS_CREATE: 'discounts:create', // Create general codes
@@ -55,10 +59,25 @@ export const PERMISSIONS = {
   STAFF_ARCHIVE: 'staff:archive', // Archive / restore staff
   STAFF_MANAGE_STATUS: 'staff:manage_status', // Update employment status
   STAFF_MANAGE_LOCATIONS: 'staff:manage_locations', // Manage staff locations
+  STAFF_MANAGE_DOCUMENTS: 'staff:manage_documents', // Create/version company documents (contracts, NDA, handbook, etc.)
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
+
+  // ── Beauticians ───────────────────────────────────────────────────────────────
+  BEAUTICIANS_READ: 'beauticians:read', // View beautician list & profiles
+  BEAUTICIANS_MANAGE: 'beauticians:manage', // Suspend, override commission, force status
+  BEAUTICIANS_REVIEW: 'beauticians:review', // KYC & profile review approve/reject
+  BEAUTICIANS_ASSIGN_SERVICES: 'beauticians:assign_services', // Assign eligible services
+  BEAUTICIANS_PROCESS_PAYOUTS: 'beauticians:process_payouts', // Process payout requests
+
+  // ── Shop ─────────────────────────────────────────────────────────────────────
+  SHOP_READ: 'shop:read', // View products, delivery regions & orders
+  SHOP_MANAGE_PRODUCTS: 'shop:manage_products', // CRUD products
+  SHOP_MANAGE_CATEGORIES: 'shop:manage_categories', // CRUD product categories
+  SHOP_MANAGE_DELIVERY: 'shop:manage_delivery', // CRUD delivery regions
+  SHOP_UPDATE_STATUS: 'shop:update_status', // Update shop order status / cancel
 
   // ── Roles ────────────────────────────────────────────────────────────────────
   ROLES_READ: 'roles:read', // View admin roles & permissions
@@ -66,6 +85,17 @@ export const PERMISSIONS = {
   ROLES_UPDATE: 'roles:update', // Edit role permissions
   ROLES_DELETE: 'roles:delete', // Delete roles
   ROLES_ASSIGN: 'roles:assign', // Assign roles to admin users
+
+  // ── Applications ──────────────────────────────────────────────────────────────
+  APPLICATION_READ: 'application:read',
+  APPLICATION_MANAGE_STATUS: 'application:manage_status',
+  APPLICATION_CONVERT: 'application:convert',
+
+  // ── Staff Portal (module visibility — read by staff-portal, not admin endpoints) ──
+  STAFF_PORTAL_INVENTORY: 'staff-portal:inventory', // See the Inventory module
+  STAFF_PORTAL_BOOKINGS: 'staff-portal:bookings', // See the Bookings module
+  STAFF_PORTAL_SALES: 'staff-portal:sales', // See the Sell Products module
+  STAFF_PORTAL_APPROVALS: 'staff-portal:approvals', // See My Approvals (in addition to branch managers, who always see it)
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -126,6 +156,16 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
+    group: 'Branches',
+    permissions: [
+      { key: PERMISSIONS.BRANCHES_READ, label: 'View branches & service config' },
+      {
+        key: PERMISSIONS.BRANCHES_MANAGE,
+        label: 'Manage branches, availability & walk-in prices',
+      },
+    ],
+  },
+  {
     group: 'Discounts',
     permissions: [
       { key: PERMISSIONS.DISCOUNTS_READ, label: 'View discount codes' },
@@ -175,6 +215,20 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
+    group: 'Applications',
+    permissions: [
+      { key: PERMISSIONS.APPLICATION_READ, label: 'View job applications' },
+      {
+        key: PERMISSIONS.APPLICATION_MANAGE_STATUS,
+        label: 'Move applications through the review pipeline (shortlist, reject, interview, etc.)',
+      },
+      {
+        key: PERMISSIONS.APPLICATION_CONVERT,
+        label: 'Convert an accepted application into a staff record',
+      },
+    ],
+  },
+  {
     group: 'Influencers',
     permissions: [
       { key: PERMISSIONS.INFLUENCERS_READ, label: 'View influencers & stats' },
@@ -201,6 +255,55 @@ export const PERMISSION_GROUPS = [
         key: PERMISSIONS.STAFF_MANAGE_LOCATIONS,
         label: 'Manage staff locations',
       },
+      {
+        key: PERMISSIONS.STAFF_MANAGE_DOCUMENTS,
+        label: 'Create and version company documents (contracts, NDA, handbook, etc.)',
+      },
+    ],
+  },
+  {
+    group: 'Shop',
+    permissions: [
+      { key: PERMISSIONS.SHOP_READ, label: 'View shop catalog, regions & orders' },
+      { key: PERMISSIONS.SHOP_MANAGE_PRODUCTS, label: 'Manage shop products' },
+      {
+        key: PERMISSIONS.SHOP_MANAGE_CATEGORIES,
+        label: 'Manage shop product categories',
+      },
+      {
+        key: PERMISSIONS.SHOP_MANAGE_DELIVERY,
+        label: 'Manage delivery regions & fees',
+      },
+      {
+        key: PERMISSIONS.SHOP_UPDATE_STATUS,
+        label: 'Update shop order status & cancel',
+      },
+    ],
+  },
+  {
+    group: 'Settings',
+    permissions: [
+      { key: PERMISSIONS.SETTINGS_READ, label: 'View system settings' },
+      { key: PERMISSIONS.SETTINGS_MANAGE, label: 'Update system settings' },
+    ],
+  },
+  {
+    group: 'Beauticians',
+    permissions: [
+      { key: PERMISSIONS.BEAUTICIANS_READ, label: 'View beauticians & profiles' },
+      { key: PERMISSIONS.BEAUTICIANS_MANAGE, label: 'Manage beautician accounts' },
+      {
+        key: PERMISSIONS.BEAUTICIANS_REVIEW,
+        label: 'Review KYC & professional profiles',
+      },
+      {
+        key: PERMISSIONS.BEAUTICIANS_ASSIGN_SERVICES,
+        label: 'Assign eligible services to beauticians',
+      },
+      {
+        key: PERMISSIONS.BEAUTICIANS_PROCESS_PAYOUTS,
+        label: 'Process beautician payout requests',
+      },
     ],
   },
   {
@@ -214,6 +317,28 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.ROLES_UPDATE, label: 'Edit role permissions' },
       { key: PERMISSIONS.ROLES_DELETE, label: 'Delete admin roles' },
       { key: PERMISSIONS.ROLES_ASSIGN, label: 'Assign roles to admin users' },
+    ],
+  },
+
+  {
+    group: 'Staff Portal',
+    permissions: [
+      {
+        key: PERMISSIONS.STAFF_PORTAL_INVENTORY,
+        label: 'See the Inventory module on the staff dashboard',
+      },
+      {
+        key: PERMISSIONS.STAFF_PORTAL_BOOKINGS,
+        label: 'See the Bookings module on the staff dashboard',
+      },
+      {
+        key: PERMISSIONS.STAFF_PORTAL_SALES,
+        label: 'See the Sell Products module on the staff dashboard',
+      },
+      {
+        key: PERMISSIONS.STAFF_PORTAL_APPROVALS,
+        label: 'See My Approvals on the staff dashboard (branch managers always see this regardless)',
+      },
     ],
   },
 ];

@@ -13,6 +13,8 @@ enum UserRole {
   USER
   ADMIN
   SUPER_ADMIN
+  BEAUTICIAN
+  STAFF
 }
 
 enum UserStatus {
@@ -20,11 +22,32 @@ enum UserStatus {
   INACTIVE
 }
 
+enum MatchingExhaustedReason {
+  NO_BEAUTICIANS_ONLINE
+  NO_CANDIDATES_IN_AREA
+  OFFERS_NOT_ACCEPTED
+  COVERAGE_GAP
+}
+
+enum DispatchStatus {
+  PENDING_MATCH
+  OFFERING
+  MATCH_EXHAUSTED
+  ASSIGNED
+  CANCELLED
+}
+
 enum BookingStatus {
   PENDING
+  PENDING_ASSIGNMENT
   CONFIRMED
+  ASSIGNED
+  EN_ROUTE
+  ARRIVED
+  ARRIVED_VERIFIED
   IN_PROGRESS
   COMPLETED
+  AWAITING_CUSTOMER_CONFIRM
   CANCELLED
 }
 
@@ -32,6 +55,7 @@ enum PaymentMethod {
   WALLET
   CASH
   MONNIFY
+  PAYSTACK
 }
 
 enum TransactionType {
@@ -41,6 +65,94 @@ enum TransactionType {
   CREDIT
   REFUND
   INFLUENCER_REWARD
+  SHOP_PURCHASE
+  SERVICE_EARNINGS
+  PAYOUT_REQUEST
+  PAYOUT_COMPLETED
+}
+
+enum KycStatus {
+  PENDING
+  IN_PROGRESS
+  VERIFIED
+  REJECTED
+  SUSPENDED
+  NEEDS_REVIEW
+}
+
+enum ProfileReviewStatus {
+  NOT_SUBMITTED
+  /// Profile fields submitted; beautician must record KYC video before admin review.
+  AWAITING_VIDEO
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum AvailabilityStatus {
+  OFFLINE
+  ONLINE
+  OFFERED
+  ON_JOB
+}
+
+enum JobOfferStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  TIMED_OUT
+  CANCELLED
+}
+
+enum PayoutMode {
+  MANUAL
+  AUTO
+}
+
+enum PayoutRequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+enum BookingCommsSessionStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum BookingCommsCloseReason {
+  CUSTOMER_CONFIRMED
+  AUTO_FINALIZED
+  CANCELLED
+  REASSIGNED
+}
+
+enum BookingCommsEventType {
+  CHAT_MESSAGE
+  CALL_STARTED
+  CALL_ENDED
+}
+
+enum FcmPlatform {
+  IOS
+  ANDROID
+  WEB
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ShopOrderStatus {
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
 }
 
 enum TransactionStatus {
@@ -112,49 +224,300 @@ enum StaffEmploymentType {
   TEMPORARY
 }
 
+enum InterviewMode {
+  IN_PERSON
+  VIRTUAL
+}
+
+enum OnboardingItemType {
+  GUARANTOR_VERIFICATION
+  EMERGENCY_CONTACT
+  REFERENCE_CHECK
+  ADDRESS_VERIFICATION
+  PASSPORT_PHOTO
+  POLICY_ACKNOWLEDGMENT
+}
+
+enum OnboardingItemReviewStatus {
+  NOT_STARTED
+  SUBMITTED
+  COMPLETE
+}
+
+enum CompanyDocumentType {
+  EMPLOYMENT_CONTRACT
+  NDA
+  IT_ACCEPTABLE_USE_POLICY
+  STAFF_HANDBOOK
+  CODE_OF_CONDUCT
+  DATA_PROTECTION_POLICY
+}
+
+enum JobPostingStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  ARCHIVED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  ABSENT
+  ON_LEAVE
+  APPROVED_PERMISSION
+  PUBLIC_HOLIDAY
+}
+
+enum LeaveRequestType {
+  ANNUAL_LEAVE
+  SICK_LEAVE
+  CASUAL_LEAVE
+  DAY_OFF
+  PERMISSION_LATE_ARRIVAL
+  PERMISSION_EARLY_DEPARTURE
+  OVERTIME_REQUEST
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model StaffOnboardingItem {
+  id           String                     @id @default(uuid())
+  staffId      String                     @map("staff_id")
+  type         OnboardingItemType
+  isComplete   Boolean                    @default(false) @map("is_complete")
+  reviewStatus OnboardingItemReviewStatus @default(NOT_STARTED) @map("review_status")
+  submittedAt  DateTime?                  @map("submitted_at")
+  completedAt  DateTime?                  @map("completed_at")
+  completedBy  String?                    @map("completed_by") // admin userId
+  notes        String?
+  createdAt    DateTime                   @default(now()) @map("created_at")
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, type])
+  @@map("staff_onboarding_items")
+}
+
+model CompanyDocument {
+  id         String              @id @default(uuid())
+  type       CompanyDocumentType
+  version    Int                 @default(1)
+  title      String
+  contentUrl String              @map("content_url")
+  isActive   Boolean             @default(true) @map("is_active")
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  acknowledgments StaffDocumentAcknowledgment[]
+
+  @@map("company_documents")
+}
+
+enum InterviewOutcome {
+  PASS
+  FAIL
+  HOLD
+}
+
+enum OfferLetterStatus {
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  SHORTLISTED
+  INTERVIEW_SCHEDULED
+  INTERVIEW_COMPLETED
+  OFFER_EXTENDED
+  EMPLOYED
+  NOT_SELECTED
+}
+
+enum InventoryCategory {
+  FOR_SALE
+  INTERNAL_USE
+  STORAGE
+}
+
+enum StockMovementType {
+  RECEIVED // goods received into stock
+  SOLD // deducted via a sale
+  CONSUMED // reserved for Service Material Consumption, once that module exists
+  ADJUSTMENT // manual correction — requires a reason
+  TRANSFER_OUT // moved to another branch
+  TRANSFER_IN // received from another branch
+}
+
+enum StockTransferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum LowStockAlertStage {
+  SUPERVISOR
+  OPERATIONS
+  MANAGEMENT
+}
+
+enum ExpiryAlertSeverity {
+  EXPIRING_SOON // within the warning window, not yet past expiry
+  EXPIRED // past its expiry date
+}
+
+// ─── Shared Approval Chain (reusable across Leave, Inventory, Payroll, etc.) ───
+
+enum ApprovalRequestType {
+  LEAVE_REQUEST
+  INVENTORY_ADJUSTMENT
+  STOCK_TRANSFER
+  PAYROLL_ADJUSTMENT
+  COMMISSION_ADJUSTMENT
+  DISCIPLINARY_ACTION
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  MORE_INFO_REQUESTED
+}
+
+enum ApprovalActionType {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REASSIGNED
+  MORE_INFO_REQUESTED
+  INFO_PROVIDED
+}
+
+enum SalonBookingStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum DisciplinaryActionType {
+  VERBAL_WARNING
+  WRITTEN_WARNING
+  SUSPENSION
+  TERMINATION
+}
+
+enum DisciplinaryActionStatus {
+  ACTIVE
+  APPEALED
+  OVERTURNED
+  UPHELD
+}
+
+model StaffDocumentAcknowledgment {
+  id             String   @id @default(uuid())
+  staffId        String   @map("staff_id")
+  documentId     String   @map("document_id")
+  acknowledgedAt DateTime @default(now()) @map("acknowledged_at")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+
+  staff    Staff           @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  document CompanyDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, documentId])
+  @@map("staff_document_acknowledgments")
+}
+
 model User {
-  id               String    @id @default(uuid())
-  email            String    @unique
+  id               String     @id @default(uuid())
+  email            String     @unique
   password         String
-  firstName        String    @map("first_name")
-  lastName         String    @map("last_name")
+  firstName        String     @map("first_name")
+  lastName         String     @map("last_name")
   phone            String?
-  role             UserRole  @default(USER)
+  dateOfBirth      DateTime?  @map("date_of_birth") @db.Date
+  role             UserRole   @default(USER)
   status           UserStatus @default(ACTIVE)
-  emailVerified    Boolean   @default(false) @map("email_verified")
-  otpCode          String?   @map("otp_code")
-  otpExpiry        DateTime? @map("otp_expiry")
-  resetToken       String?   @map("reset_token")
-  resetTokenExpiry DateTime? @map("reset_token_expiry")
-  currentSessionId String?   @map("current_session_id")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  emailVerified    Boolean    @default(false) @map("email_verified")
+  otpCode          String?    @map("otp_code")
+  otpExpiry        DateTime?  @map("otp_expiry")
+  resetToken       String?    @map("reset_token")
+  resetTokenExpiry DateTime?  @map("reset_token_expiry")
+  currentSessionId String?    @map("current_session_id")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
 
   // PIN (transaction / security PIN) - stored hashed
-  pin                String?   @map("pin")
-  pinSetAt           DateTime? @map("pin_set_at")
-  pinFailedAttempts  Int       @default(0) @map("pin_failed_attempts")
-  pinLockedUntil     DateTime? @map("pin_locked_until")
+  pin               String?   @map("pin")
+  pinSetAt          DateTime? @map("pin_set_at")
+  pinFailedAttempts Int       @default(0) @map("pin_failed_attempts")
+  pinLockedUntil    DateTime? @map("pin_locked_until")
 
-  adminRoleId      String?    @map("admin_role_id")
+  adminRoleId String? @map("admin_role_id")
 
   // Relations
-  addresses       Address[]
-  bookings        Booking[]
-  wallet          Wallet?
-  reviews         Review[]
-  refreshTokens   RefreshToken[]
-  referralCode    ReferralCode?
-  referrals       Referral[]     @relation("ReferrerUser")
-  referredBy      Referral?      @relation("ReferredUser")
-  referralCampaignUsages ReferralCampaignCodeUsage[]
-  discountUsages  DiscountUsage[] @relation("UserDiscountUsages")
-  adminRole       AdminRole?     @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
-  influencer      Influencer?
+  addresses                  Address[]
+  bookings                   Booking[]
+  wallet                     Wallet?
+  reviews                    Review[]
+  refreshTokens              RefreshToken[]
+  referralCode               ReferralCode?
+  referrals                  Referral[]                  @relation("ReferrerUser")
+  referredBy                 Referral?                   @relation("ReferredUser")
+  referralCampaignUsages     ReferralCampaignCodeUsage[]
+  discountUsages             DiscountUsage[]             @relation("UserDiscountUsages")
+  adminRole                  AdminRole?                  @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
+  influencer                 Influencer?
+  shopOrders                 ShopOrder[]
+  beauticianProfile          BeauticianProfile?
+  assignedBookings           Booking[]                   @relation("AssignedBeautician")
+  jobOffers                  JobOffer[]
+  offerLettersGenerated      OfferLetter[]               @relation("OfferLetterGeneratedBy")
+  employmentApprovalsGranted EmploymentApproval[]        @relation("EmploymentApprovalApprovedBy")
+  attendanceCorrections      AttendanceRecord[]          @relation("AttendanceAdjustedBy")
+  beauticianServicesAssigned BeauticianService[]         @relation("BeauticianServiceAssignedBy")
+  profileReviewsPerformed    BeauticianProfile[]         @relation("ProfileReviewedBy")
+  payoutRequests             PayoutRequest[]             @relation("UserPayoutRequests")
+  payoutsProcessed           PayoutRequest[]             @relation("PayoutProcessedBy")
+  fcmTokens                  FcmToken[]
+  beauticianLocationHistory  BeauticianLocationHistory[] @relation("BeauticianLocationHistory")
+  roleAssignments            UserRoleAssignment[]        @relation("UserRoleAssignments")
+  roleAssignmentsGranted     UserRoleAssignment[]        @relation("RoleAssignedBy")
+  staff                      Staff?
+  customerProfile            Customer?
+  createdAnnouncements       Announcement[]              @relation("AnnouncementCreatedBy")
+  createdDirectives          Directive[]                 @relation("DirectiveCreatedBy")
 
   @@index([role])
   @@index([status])
+  @@index([firstName, lastName, dateOfBirth])
   @@map("users")
+}
+
+model UserRoleAssignment {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  role         UserRole
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+  assignedById String?  @map("assigned_by_id")
+
+  user       User  @relation("UserRoleAssignments", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy User? @relation("RoleAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, role])
+  @@index([userId])
+  @@map("user_role_assignments")
 }
 
 model RefreshToken {
@@ -172,34 +535,123 @@ model RefreshToken {
 }
 
 model Address {
-  id           String   @id @default(uuid())
-  userId       String   @map("user_id")
-  label        String?  // e.g., "Home", "Office"
-  fullAddress  String   @map("full_address")
-  streetAddress String? @map("street_address")
-  city         String?
-  state        String?
-  country      String   @default("Nigeria")
-  placeId      String?  @map("place_id")
-  addressComponents Json? @map("address_components")
-  isDefault    Boolean  @default(false) @map("is_default")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  label             String? // e.g., "Home", "Office"
+  fullAddress       String    @map("full_address")
+  streetAddress     String?   @map("street_address")
+  city              String?
+  state             String?
+  country           String    @default("Nigeria")
+  placeId           String?   @map("place_id")
+  addressComponents Json?     @map("address_components")
+  latitude          Decimal?  @db.Decimal(10, 7)
+  longitude         Decimal?  @db.Decimal(10, 7)
+  isDefault         Boolean   @default(false) @map("is_default")
+  deletedAt         DateTime? @map("deleted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bookings Booking[]
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings   Booking[]
+  shopOrders ShopOrder[]
 
   @@index([userId])
+  @@index([userId, deletedAt])
   @@map("addresses")
 }
 
-model ServiceCategory {
+model ProductCategory {
   id          String   @id @default(uuid())
   name        String   @unique
   description String?
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
+
+  products Product[]
+
+  @@map("product_categories")
+}
+
+model Product {
+  id          String        @id @default(uuid())
+  categoryId  String        @map("category_id")
+  name        String
+  description String?
+  price       Decimal       @db.Decimal(10, 2)
+  stock       Int           @default(0)
+  status      ProductStatus @default(ACTIVE)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  category ProductCategory @relation(fields: [categoryId], references: [id])
+  images   ProductImage[]
+
+  @@index([status])
+  @@index([categoryId])
+  @@map("products")
+}
+
+model ProductImage {
+  id        String   @id @default(uuid())
+  productId String   @map("product_id")
+  url       String
+  publicId  String   @map("public_id")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+model DeliveryRegion {
+  id          String   @id @default(uuid())
+  name        String
+  state       String   @unique
+  deliveryFee Decimal  @map("delivery_fee") @db.Decimal(10, 2)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("delivery_regions")
+}
+
+model ShopOrder {
+  id                      String          @id @default(uuid())
+  orderCode               String          @unique @map("order_code")
+  userId                  String          @map("user_id")
+  addressId               String          @map("address_id")
+  items                   Json
+  deliveryAddressSnapshot Json            @map("delivery_address_snapshot")
+  subtotal                Decimal         @db.Decimal(10, 2)
+  deliveryFee             Decimal         @map("delivery_fee") @db.Decimal(10, 2)
+  totalAmount             Decimal         @map("total_amount") @db.Decimal(10, 2)
+  status                  ShopOrderStatus @default(CONFIRMED)
+  idempotencyKey          String?         @map("idempotency_key")
+  notes                   String?
+  createdAt               DateTime        @default(now()) @map("created_at")
+  updatedAt               DateTime        @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id])
+  address Address @relation(fields: [addressId], references: [id])
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([status])
+  @@map("shop_orders")
+}
+
+model ServiceCategory {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  description   String?
+  imageUrl      String?  @map("image_url")
+  imagePublicId String?  @map("image_public_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   // Relations
   services Service[]
@@ -208,64 +660,219 @@ model ServiceCategory {
 }
 
 model Service {
-  id          String        @id @default(uuid())
-  categoryId  String        @map("category_id")
-  name        String
-  description String?
-  walkInPrice Decimal       @db.Decimal(10, 2) @map("walk_in_price")
-  homeServicePrice Decimal  @db.Decimal(10, 2) @map("home_service_price")
-  isWalkInAvailable Boolean @default(true) @map("is_walk_in_available")
-  isHomeServiceAvailable Boolean @default(true) @map("is_home_service_available")
-  duration    Int           // Duration in minutes
-  imageUrl    String?       @map("image_url")
-  imagePublicId String?     @map("image_public_id")
-  status      ServiceStatus @default(ACTIVE)
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  id                     String        @id @default(uuid())
+  categoryId             String        @map("category_id")
+  name                   String
+  description            String?
+  walkInPrice            Decimal       @map("walk_in_price") @db.Decimal(10, 2)
+  homeServicePrice       Decimal       @map("home_service_price") @db.Decimal(10, 2)
+  isWalkInAvailable      Boolean       @default(true) @map("is_walk_in_available")
+  isHomeServiceAvailable Boolean       @default(true) @map("is_home_service_available")
+  duration               Int // Duration in minutes
+  imageUrl               String?       @map("image_url")
+  imagePublicId          String?       @map("image_public_id")
+  status                 ServiceStatus @default(ACTIVE)
+  createdAt              DateTime      @default(now()) @map("created_at")
+  updatedAt              DateTime      @updatedAt @map("updated_at")
 
   // Relations
-  category ServiceCategory @relation(fields: [categoryId], references: [id])
-  reviews  Review[]
+  category               ServiceCategory        @relation(fields: [categoryId], references: [id])
+  reviews                Review[]
+  branchServices         BranchService[]
+  beauticianServices     BeauticianService[]
+  commissionRateOverride ServiceCommissionRate?
+  salonBookingLines      SalonBookingService[]
 
   @@map("services")
 }
 
+/// Optional per-service beautician commission override.
+/// Missing row → use HomeServiceSettings.commissionRate (platform default for all).
+model ServiceCommissionRate {
+  id             String   @id @default(uuid())
+  serviceId      String   @unique @map("service_id")
+  commissionRate Decimal  @map("commission_rate") @db.Decimal(5, 4)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_commission_rates")
+}
+
+// ─── Salon customer tracking (lightweight, no auth required) ───
+// Deliberately separate from `User` — most walk-in/salon customers never need
+// a password-bearing account at all. `userId` is only ever set if a customer
+// later chooses to claim a real login to see their booking history; until
+// then this just exists to de-duplicate repeat visits by phone number.
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String   @unique
+  email     String?
+  userId    String?  @unique @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  salonBookings SalonBooking[]
+
+  @@map("customers")
+}
+
 model Booking {
-  id               String        @id @default(uuid())
-  userId           String        @map("user_id")
+  id                       String                   @id @default(uuid())
+  userId                   String                   @map("user_id")
   // services is a JSON array: [{serviceId, name, price, quantity, duration, notes?, serviceMode?}]
-  services         Json          @map("services")
-  addressId        String?       @map("address_id")  // null for WALK_IN-only bookings
-  bookingDate      DateTime      @map("booking_date")
-  bookingTime      String        @map("booking_time") // Format: "HH:mm"
-  bookingType      BookingType   @default(HOME_SERVICE) @map("booking_type")
-  reservationCode  String        @unique @map("reservation_code")
-  reservationUsed  Boolean       @default(false) @map("reservation_used")
-  guestName        String?       @map("guest_name")   // null = booking for self
-  guestPhone       String?       @map("guest_phone")  // null = booking for self
-  guestEmail       String?       @map("guest_email")  // if set, notification email sent to guest
-  idempotencyKey   String?       @map("idempotency_key")
-  status           BookingStatus @default(PENDING)
-  paymentMethod    PaymentMethod @map("payment_method")
-  totalAmount      Decimal       @db.Decimal(10, 2) @map("total_amount")
-  notes            String?
-  cancelReason     String?       @map("cancel_reason")
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
+  services                 Json                     @map("services")
+  addressId                String?                  @map("address_id") // null for WALK_IN-only bookings
+  // Temporary / current-location alternative to a saved addressId (HOME_SERVICE)
+  tempLatitude             Decimal?                 @map("temp_latitude") @db.Decimal(10, 7)
+  tempLongitude            Decimal?                 @map("temp_longitude") @db.Decimal(10, 7)
+  tempFullAddress          String?                  @map("temp_full_address") // human-readable string
+  branchId                 String?                  @map("branch_id")
+  bookingDate              DateTime                 @map("booking_date")
+  bookingTime              String                   @map("booking_time") // Format: "HH:mm"
+  bookingType              BookingType              @default(HOME_SERVICE) @map("booking_type")
+  reservationCode          String                   @unique @map("reservation_code")
+  reservationUsed          Boolean                  @default(false) @map("reservation_used")
+  guestName                String?                  @map("guest_name") // null = booking for self
+  guestPhone               String?                  @map("guest_phone") // null = booking for self
+  guestEmail               String?                  @map("guest_email") // if set, notification email sent to guest
+  idempotencyKey           String?                  @map("idempotency_key")
+  status                   BookingStatus            @default(PENDING)
+  paymentMethod            PaymentMethod            @map("payment_method")
+  totalAmount              Decimal                  @map("total_amount") @db.Decimal(10, 2)
+  notes                    String?
+  cancelReason             String?                  @map("cancel_reason")
+  assignedBeauticianUserId String?                  @map("assigned_beautician_user_id")
+  arrivalVerifiedAt        DateTime?                @map("arrival_verified_at")
+  serviceStartedAt         DateTime?                @map("service_started_at")
+  serviceCompletedAt       DateTime?                @map("service_completed_at")
+  beauticianArrivalLat     Decimal?                 @map("beautician_arrival_lat") @db.Decimal(10, 7)
+  beauticianArrivalLng     Decimal?                 @map("beautician_arrival_lng") @db.Decimal(10, 7)
+  customerRating           Int?                     @map("customer_rating")
+  customerReview           String?                  @map("customer_review")
+  matchingAttempt          Int                      @default(1) @map("matching_attempt")
+  matchingStartedAt        DateTime?                @map("matching_started_at")
+  matchingExhaustedAt      DateTime?                @map("matching_exhausted_at")
+  matchingExhaustedReason  MatchingExhaustedReason? @map("matching_exhausted_reason")
+  dispatchStatus           DispatchStatus?          @map("dispatch_status")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
 
   // Relations
-  user    User     @relation(fields: [userId], references: [id])
-  address Address? @relation(fields: [addressId], references: [id])
-  review  Review?
-  discountUsage DiscountUsage?
+  user               User                        @relation(fields: [userId], references: [id])
+  address            Address?                    @relation(fields: [addressId], references: [id])
+  branch             StaffLocation?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedBeautician User?                       @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
+  review             Review?
+  discountUsage      DiscountUsage?
+  jobOffers          JobOffer[]
+  dispatchEvents     DispatchEvent[]
+  locationHistory    BeauticianLocationHistory[]
+  commsSession       BookingCommsSession?
 
+  @@unique([userId, idempotencyKey])
   @@index([reservationCode])
   @@index([userId])
   @@index([status])
   @@index([bookingDate])
   @@index([userId, status])
-  @@unique([userId, idempotencyKey])
+  @@index([assignedBeauticianUserId])
   @@map("bookings")
+}
+
+// ─── In-salon staff bookings (Front Desk / walk-in) ───
+// Deliberately separate from the marketplace `Booking` model above, which is
+// tied to customer app accounts, GPS dispatch, and beautician job-matching —
+// none of which applies when Front Desk directly books a walk-in customer
+// and assigns an on-site Stylist. This is the SRS's Sales & Bookings module.
+
+model SalonBooking {
+  id              String             @id @default(uuid())
+  branchId        String             @map("branch_id")
+  customerId      String?            @map("customer_id")
+  customerName    String             @map("customer_name")
+  customerPhone   String?            @map("customer_phone")
+  assignedStaffId String?            @map("assigned_staff_id")
+  createdById     String?            @map("created_by_id")
+  bookingDate     DateTime           @map("booking_date") @db.Date
+  bookingTime     String             @map("booking_time") // "HH:mm"
+  status          SalonBookingStatus @default(SCHEDULED)
+  totalAmount     Decimal            @default(0) @map("total_amount") @db.Decimal(10, 2)
+  notes           String?
+  cancelReason    String?            @map("cancel_reason")
+  completedAt     DateTime?          @map("completed_at")
+  cancelledAt     DateTime?          @map("cancelled_at")
+  reservationCode String?            @unique @map("reservation_code")
+  reservationUsed Boolean            @default(false) @map("reservation_used")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+
+  branch         StaffLocation               @relation(fields: [branchId], references: [id])
+  customer       Customer?                   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  assignedStaff  Staff?                      @relation("SalonBookingAssignedStaff", fields: [assignedStaffId], references: [id])
+  createdBy      Staff?                      @relation("SalonBookingCreatedBy", fields: [createdById], references: [id])
+  services       SalonBookingService[]
+  inventoryItems SalonBookingInventoryItem[]
+  commission     SalonBookingCommission?
+
+  @@index([branchId, bookingDate])
+  @@index([assignedStaffId, status])
+  @@map("salon_bookings")
+}
+
+// Services included in a booking — price is snapshotted at booking time so a
+// later change to Service.walkInPrice never retroactively alters a past bill.
+model SalonBookingService {
+  id        String  @id @default(uuid())
+  bookingId String  @map("booking_id")
+  serviceId String  @map("service_id")
+  price     Decimal @db.Decimal(10, 2)
+  quantity  Int     @default(1)
+
+  booking SalonBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  service Service      @relation(fields: [serviceId], references: [id])
+
+  @@index([bookingId])
+  @@map("salon_booking_services")
+}
+
+// Inventory items used or sold as part of a booking. unitPrice is only set
+// for sellable (category = FOR_SALE) items and is what feeds totalAmount;
+// non-sellable items still deduct stock (as CONSUMED) but don't bill the
+// customer.
+model SalonBookingInventoryItem {
+  id        String   @id @default(uuid())
+  bookingId String   @map("booking_id")
+  itemId    String   @map("item_id")
+  quantity  Int
+  unitPrice Decimal? @map("unit_price") @db.Decimal(10, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  booking SalonBooking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  item    InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@index([bookingId])
+  @@map("salon_booking_inventory_items")
+}
+
+// One row per completed booking, enforced by the unique constraint on
+// bookingId — mirrors the idempotency rule from the SRS's Commission module.
+model SalonBookingCommission {
+  id           String   @id @default(uuid())
+  bookingId    String   @unique @map("booking_id")
+  staffId      String   @map("staff_id")
+  amount       Decimal  @db.Decimal(10, 2)
+  rateApplied  Decimal  @map("rate_applied") @db.Decimal(5, 4)
+  calculatedAt DateTime @default(now()) @map("calculated_at")
+
+  booking SalonBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  staff   Staff        @relation("SalonBookingCommissionStaff", fields: [staffId], references: [id])
+
+  @@index([staffId, calculatedAt])
+  @@map("salon_booking_commissions")
 }
 
 model Wallet {
@@ -283,22 +890,23 @@ model Wallet {
 }
 
 model Transaction {
-  id                String            @id @default(uuid())
-  walletId          String            @map("wallet_id")
-  type              TransactionType
-  amount            Decimal           @db.Decimal(10, 2)
-  status            TransactionStatus @default(PENDING)
-  paymentMethod     TransactionPaymentMethod @default(WALLET) @map("payment_method")
-  reference         String            @unique // Payment gateway reference or internal ref
-  description       String?
-  metadata          Json?             // Store additional payment details
-  createdAt         DateTime          @default(now()) @map("created_at")
-  updatedAt         DateTime          @updatedAt @map("updated_at")
+  id            String                   @id @default(uuid())
+  walletId      String                   @map("wallet_id")
+  type          TransactionType
+  amount        Decimal                  @db.Decimal(10, 2)
+  status        TransactionStatus        @default(PENDING)
+  paymentMethod TransactionPaymentMethod @default(WALLET) @map("payment_method")
+  reference     String                   @unique // Payment gateway reference or internal ref
+  description   String?
+  metadata      Json? // Store additional payment details
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
 
   // Relations
-  wallet           Wallet           @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  influencerReward InfluencerReward?
+  wallet                Wallet                     @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  influencerReward      InfluencerReward?
   referralCampaignUsage ReferralCampaignCodeUsage?
+  payoutRequest         PayoutRequest?
 
   @@index([walletId])
   @@index([walletId, status])
@@ -310,7 +918,7 @@ model Review {
   userId    String       @map("user_id")
   serviceId String       @map("service_id")
   bookingId String       @unique @map("booking_id")
-  rating    Int          // 1-5
+  rating    Int // 1-5
   comment   String?
   status    ReviewStatus @default(PENDING)
   createdAt DateTime     @default(now()) @map("created_at")
@@ -333,9 +941,9 @@ model BusinessSettings {
   email              String
   phone              String
   address            String
-  slotDuration       Int      @default(30) @map("slot_duration")        // Booking slot length in minutes
+  slotDuration       Int      @default(30) @map("slot_duration") // Booking slot length in minutes
   advanceBookingDays Int      @default(30) @map("advance_booking_days") // How many days ahead bookings allowed
-  minNoticeHours     Int      @default(2) @map("min_notice_hours")      // Minimum hours before a booking
+  minNoticeHours     Int      @default(2) @map("min_notice_hours") // Minimum hours before a booking
   maxBookingsPerDay  Int      @default(10) @map("max_bookings_per_day")
   bookingPolicy      String?  @map("booking_policy")
   cancellationPolicy String?  @map("cancellation_policy")
@@ -348,8 +956,8 @@ model BusinessSettings {
 model BusinessHours {
   id        String   @id @default(uuid())
   dayOfWeek Int      @unique @map("day_of_week") // 0=Sunday, 1=Monday ... 6=Saturday
-  openTime  String   @map("open_time")            // Format: "HH:mm"
-  closeTime String   @map("close_time")           // Format: "HH:mm"
+  openTime  String   @map("open_time") // Format: "HH:mm"
+  closeTime String   @map("close_time") // Format: "HH:mm"
   isOpen    Boolean  @default(true) @map("is_open")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -359,11 +967,11 @@ model BusinessHours {
 
 model BusinessException {
   id        String   @id @default(uuid())
-  date      DateTime @unique                      // Specific calendar date
+  date      DateTime @unique // Specific calendar date
   isClosed  Boolean  @default(true) @map("is_closed")
-  openTime  String?  @map("open_time")            // Override open time (only if not closed)
-  closeTime String?  @map("close_time")           // Override close time (only if not closed)
-  reason    String?                               // e.g. "Christmas Holiday"
+  openTime  String?  @map("open_time") // Override open time (only if not closed)
+  closeTime String?  @map("close_time") // Override close time (only if not closed)
+  reason    String? // e.g. "Christmas Holiday"
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -371,38 +979,38 @@ model BusinessException {
 }
 
 model Influencer {
-  id          String    @id @default(uuid())
-  userId      String    @unique @map("user_id")  // linked user account
-  notes       String?   // internal admin notes
-  isActive    Boolean   @default(true) @map("is_active")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id") // linked user account
+  notes     String? // internal admin notes
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  discountCodes    DiscountCode[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  discountCodes     DiscountCode[]
   influencerRewards InfluencerReward[]
 
   @@map("influencers")
 }
 
 model DiscountCode {
-  id              String       @id @default(uuid())
-  code            String       @unique              // e.g. "SUMMER20" — case-insensitive at app level
-  name            String                            // e.g. "Summer Sale"
-  percentage      Float                             // e.g. 20.0 (represents 20%)
-  type            DiscountType @default(GENERAL) @map("type")
-  influencerId    String?      @map("influencer_id")   // null for GENERAL codes
-  isActive        Boolean      @default(true) @map("is_active")
-  startsAt        DateTime?    @map("starts_at")    // null = active immediately
-  expiresAt       DateTime?    @map("expires_at")   // null = never expires
-  maxUses         Int?         @map("max_uses")     // null = unlimited
-  usedCount       Int          @default(0) @map("used_count")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
+  id           String       @id @default(uuid())
+  code         String       @unique // e.g. "SUMMER20" — case-insensitive at app level
+  name         String // e.g. "Summer Sale"
+  percentage   Float // e.g. 20.0 (represents 20%)
+  type         DiscountType @default(GENERAL) @map("type")
+  influencerId String?      @map("influencer_id") // null for GENERAL codes
+  isActive     Boolean      @default(true) @map("is_active")
+  startsAt     DateTime?    @map("starts_at") // null = active immediately
+  expiresAt    DateTime?    @map("expires_at") // null = never expires
+  maxUses      Int?         @map("max_uses") // null = unlimited
+  usedCount    Int          @default(0) @map("used_count")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
 
   // Relations
-  influencer Influencer?   @relation(fields: [influencerId], references: [id], onDelete: SetNull)
+  influencer Influencer?     @relation(fields: [influencerId], references: [id], onDelete: SetNull)
   usages     DiscountUsage[]
 
   @@index([influencerId])
@@ -414,7 +1022,7 @@ model DiscountUsage {
   discountCodeId String   @map("discount_code_id")
   userId         String   @map("user_id")
   bookingId      String   @unique @map("booking_id")
-  discountAmount Decimal  @db.Decimal(10, 2) @map("discount_amount")
+  discountAmount Decimal  @map("discount_amount") @db.Decimal(10, 2)
   createdAt      DateTime @default(now()) @map("created_at")
 
   // Relations
@@ -432,8 +1040,8 @@ model InfluencerRewardSettings {
   id                String             @id @default(uuid())
   isActive          Boolean            @default(false) @map("is_active")
   rewardType        ReferralRewardType @default(FIXED) @map("reward_type")
-  rewardValue       Decimal            @default(0) @db.Decimal(10, 2) @map("reward_value")
-  minPurchaseAmount Decimal            @default(0) @db.Decimal(10, 2) @map("min_purchase_amount")
+  rewardValue       Decimal            @default(0) @map("reward_value") @db.Decimal(10, 2)
+  minPurchaseAmount Decimal            @default(0) @map("min_purchase_amount") @db.Decimal(10, 2)
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
 
@@ -445,14 +1053,14 @@ model InfluencerReward {
   influencerId        String         @map("influencer_id")
   usageId             String         @unique @map("usage_id")
   walletTransactionId String?        @unique @map("wallet_transaction_id")
-  rewardAmount        Decimal        @db.Decimal(10, 2) @map("reward_amount")
+  rewardAmount        Decimal        @map("reward_amount") @db.Decimal(10, 2)
   status              ReferralStatus @default(REWARDED)
   createdAt           DateTime       @default(now()) @map("created_at")
   updatedAt           DateTime       @updatedAt @map("updated_at")
 
   // Relations
-  influencer       Influencer    @relation(fields: [influencerId], references: [id])
-  usage            DiscountUsage @relation(fields: [usageId], references: [id], onDelete: Cascade)
+  influencer        Influencer    @relation(fields: [influencerId], references: [id])
+  usage             DiscountUsage @relation(fields: [usageId], references: [id], onDelete: Cascade)
   walletTransaction Transaction?  @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
 
   @@index([influencerId])
@@ -465,8 +1073,8 @@ model ReferralSettings {
   id               String             @id @default(uuid())
   isActive         Boolean            @default(false) @map("is_active")
   rewardType       ReferralRewardType @default(FIXED) @map("reward_type")
-  rewardValue      Decimal            @db.Decimal(10, 2) @map("reward_value")
-  minDepositAmount Decimal            @default(0) @db.Decimal(10, 2) @map("min_deposit_amount")
+  rewardValue      Decimal            @map("reward_value") @db.Decimal(10, 2)
+  minDepositAmount Decimal            @default(0) @map("min_deposit_amount") @db.Decimal(10, 2)
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
@@ -478,7 +1086,7 @@ model ReferralCode {
   userId      String   @unique @map("user_id")
   code        String   @unique
   totalUses   Int      @default(0) @map("total_uses")
-  totalEarned Decimal  @default(0) @db.Decimal(10, 2) @map("total_earned")
+  totalEarned Decimal  @default(0) @map("total_earned") @db.Decimal(10, 2)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -495,7 +1103,7 @@ model Referral {
   referredId   String         @unique @map("referred_id") // one referral per user
   code         String
   status       ReferralStatus @default(PENDING)
-  rewardAmount Decimal?       @db.Decimal(10, 2) @map("reward_amount")
+  rewardAmount Decimal?       @map("reward_amount") @db.Decimal(10, 2)
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
@@ -510,18 +1118,18 @@ model Referral {
 }
 
 model ReferralCampaignCode {
-  id                String   @id @default(uuid())
-  code              String   @unique
+  id                String    @id @default(uuid())
+  code              String    @unique
   name              String
   description       String?
-  signupBonusAmount Decimal  @db.Decimal(10, 2) @map("signup_bonus_amount")
-  isActive          Boolean  @default(true) @map("is_active")
+  signupBonusAmount Decimal   @map("signup_bonus_amount") @db.Decimal(10, 2)
+  isActive          Boolean   @default(true) @map("is_active")
   startsAt          DateTime? @map("starts_at")
   expiresAt         DateTime? @map("expires_at")
-  maxUses           Int?     @map("max_uses")
-  usedCount         Int      @default(0) @map("used_count")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  maxUses           Int?      @map("max_uses")
+  usedCount         Int       @default(0) @map("used_count")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   // Relations
   usages ReferralCampaignCodeUsage[]
@@ -535,7 +1143,7 @@ model ReferralCampaignCodeUsage {
   campaignCodeId String   @map("campaign_code_id")
   userId         String   @unique @map("user_id")
   transactionId  String?  @unique @map("transaction_id")
-  bonusAmount    Decimal  @db.Decimal(10, 2) @map("bonus_amount")
+  bonusAmount    Decimal  @map("bonus_amount") @db.Decimal(10, 2)
   createdAt      DateTime @default(now()) @map("created_at")
 
   // Relations
@@ -564,8 +1172,8 @@ model AdminRole {
 }
 
 model AdminRolePermission {
-  id          String    @id @default(uuid())
-  adminRoleId String    @map("admin_role_id")
+  id          String @id @default(uuid())
+  adminRoleId String @map("admin_role_id")
   permission  String
 
   adminRole AdminRole @relation(fields: [adminRoleId], references: [id], onDelete: Cascade)
@@ -577,22 +1185,35 @@ model AdminRolePermission {
 // ─── Job Postings ─────────────────────────────────────────────────────────────
 
 model JobPosting {
-  id               String    @id @default(uuid())
+  id               String           @id @default(uuid())
   title            String
   type             JobType
-  location         String
-  description      String    @db.Text
-  responsibilities Json                       // string[] — array of bullet points
-  isActive         Boolean   @default(false) @map("is_active")
-  closingDate      DateTime? @map("closing_date")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  location         String // display-only text (e.g. "Lagos, Nigeria") — separate from branchId
+  branchId         String?          @map("branch_id") // nullable = open to any/all branches
+  department       String?
+  description      String           @db.Text
+  responsibilities Json
+  status           JobPostingStatus @default(DRAFT)
+  closingDate      DateTime?        @map("closing_date")
+  closedReason     String?          @map("closed_reason") // required when closing with active candidates (override case)
+  salaryMin        Decimal?         @map("salary_min") @db.Decimal(10, 2)
+  salaryMax        Decimal?         @map("salary_max") @db.Decimal(10, 2)
+  salaryNote       String?          @map("salary_note") // e.g. "negotiable", "+ commission"
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
 
+  branch       StaffLocation? @relation("JobPostingBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  applications Application[]  @relation("ApplicationJobPosting")
+  offerLetters OfferLetter[]
+
+  @@index([status])
+  @@index([branchId])
   @@map("job_postings")
 }
 
 model Staff {
   id                      String                @id @default(uuid())
+  userId                  String?               @unique @map("user_id")
   name                    String
   staffCode               String                @unique @map("staff_code")
   currentRole             String                @map("current_role")
@@ -604,30 +1225,108 @@ model Staff {
   reasonForExit           String?               @map("reason_for_exit")
   exitDate                DateTime?             @map("exit_date")
   archivedAt              DateTime?             @map("archived_at")
-  birthdayLastEmailedYear Int?                 @map("birthday_last_emailed_year")
-  createdAt               DateTime              @default(now()) @map("created_at")
-  updatedAt               DateTime              @updatedAt @map("updated_at")
+  birthdayLastEmailedYear Int?                  @map("birthday_last_emailed_year")
 
-  location  StaffLocation            @relation(fields: [locationId], references: [id])
-  histories StaffEmploymentHistory[]
+  commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 4) // overrides the service's own rate when set; percentage as decimal e.g. 0.15 = 15%
+
+
+  salaryOnlyFirstMonth Boolean @default(false) @map("salary_only_first_month")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  location      StaffLocation            @relation(fields: [locationId], references: [id])
+  managedBranch StaffLocation?           @relation("BranchManager")
+  histories     StaffEmploymentHistory[]
+  codeHistory   StaffCodeHistory[]
+  user          User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  onboardingItems StaffOnboardingItem[]
+
+  documentAcknowledgments StaffDocumentAcknowledgment[]
+
+  responsibilities      String?            @map("responsibilities")
+  reportingToId         String?            @map("reporting_to_id")
+  reportingTo           Staff?             @relation("StaffReportingLine", fields: [reportingToId], references: [id], onDelete: SetNull)
+  directReports         Staff[]            @relation("StaffReportingLine")
+  receivedAnnouncements Announcement[]     @relation("AnnouncementTargetStaff")
+  announcementReads     AnnouncementRead[]
+  directives            Directive[]
+
+  attendanceRecords           AttendanceRecord[]
+  lateGracePeriodOverride     Int?                     @map("late_grace_period_override")
+  leaveRequests               LeaveRequest[]
+  leaveRequestsToApprove      LeaveRequest[]           @relation("LeaveRequestApprover")
+  approvalRequestsSubmitted   ApprovalRequest[]        @relation("ApprovalSubmittedBy")
+  approvalRequestsToAction    ApprovalRequest[]        @relation("ApprovalCurrentApprover")
+  approvalActionsTaken        ApprovalAction[]         @relation("ApprovalActionActor")
+  inventoryLogEntries         InventoryLogEntry[]
+  stockAdjustmentRequests     StockAdjustmentRequest[]
+  disciplinaryActionsReceived DisciplinaryAction[]     @relation("DisciplinaryActionSubject")
+  disciplinaryActionsIssued   DisciplinaryAction[]     @relation("DisciplinaryActionIssuedBy")
+  salonBookingsAssigned       SalonBooking[]           @relation("SalonBookingAssignedStaff")
+  salonBookingsCreated        SalonBooking[]           @relation("SalonBookingCreatedBy")
+  salonBookingCommissions     SalonBookingCommission[] @relation("SalonBookingCommissionStaff")
+  interviewsConducted         Application[]            @relation("ApplicationInterviewer")
+
+  passportPhotoUrl         String? @map("passport_photo_url")
+  emergencyContactName     String? @map("emergency_contact_name")
+  emergencyContactPhone    String? @map("emergency_contact_phone")
+  emergencyContactRelation String? @map("emergency_contact_relation")
+  guarantorName            String? @map("guarantor_name")
+  guarantorOccupation      String? @map("guarantor_occupation")
+  guarantorPhone           String? @map("guarantor_phone")
+  guarantorAddress         String? @map("guarantor_address")
+
+  address               String? @map("address")
+  referenceName         String? @map("reference_name")
+  referencePhone        String? @map("reference_phone")
+  referenceRelationship String? @map("reference_relationship")
+
+  inventoryMovements     StockMovement[]
+  llowStockAlertsResolved LowStockAlert[]
+  expiryAlertsResolved   ExpiryAlert[]
+  transfersRequested     StockTransfer[] @relation("TransferRequestedBy")
+  transfersApproved      StockTransfer[] @relation("TransferApprovedBy")
+  productSales           ProductSale[]
 
   @@index([employmentStatus])
   @@index([locationId])
   @@map("staff")
 }
 
+// Every staff code a staff member has ever held — the `code` unique
+// constraint means a retired code (from a branch transfer) can never be
+// reissued to anyone else. `activeUntil: null` marks the currently-live
+// code; a transfer closes the old row and inserts a new one.
+model StaffCodeHistory {
+  id          String    @id @default(uuid())
+  staffId     String    @map("staff_id")
+  code        String    @unique
+  branchId    String    @map("branch_id")
+  activeFrom  DateTime  @default(now()) @map("active_from")
+  activeUntil DateTime? @map("active_until")
+  reason      String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  staff  Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  branch StaffLocation @relation(fields: [branchId], references: [id])
+
+  @@index([staffId, activeFrom])
+  @@map("staff_code_history")
+}
+
 model StaffEmploymentHistory {
-  id               String              @id @default(uuid())
-  staffId          String              @map("staff_id")
-  roleTitle        String              @map("role_title")
-  locationId       String              @map("location_id")
-  employmentType   StaffEmploymentType @default(FULL_TIME) @map("employment_type")
-  startDate        DateTime            @map("start_date")
-  endDate          DateTime?           @map("end_date")
-  reasonForChange  String?             @map("reason_for_change")
-  notes            String?
-  createdAt        DateTime            @default(now()) @map("created_at")
-  updatedAt        DateTime            @updatedAt @map("updated_at")
+  id              String              @id @default(uuid())
+  staffId         String              @map("staff_id")
+  roleTitle       String              @map("role_title")
+  locationId      String              @map("location_id")
+  employmentType  StaffEmploymentType @default(FULL_TIME) @map("employment_type")
+  startDate       DateTime            @map("start_date")
+  endDate         DateTime?           @map("end_date")
+  reasonForChange String?             @map("reason_for_change")
+  notes           String?
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
 
   staff    Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
   location StaffLocation @relation(fields: [locationId], references: [id])
@@ -637,17 +1336,160 @@ model StaffEmploymentHistory {
   @@map("staff_employment_history")
 }
 
+model BranchService {
+  id          String   @id @default(uuid())
+  branchId    String   @map("branch_id")
+  serviceId   String   @map("service_id")
+  isAvailable Boolean  @default(true) @map("is_available")
+  walkInPrice Decimal? @map("walk_in_price") @db.Decimal(10, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  branch  StaffLocation @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  service Service       @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, serviceId])
+  @@index([branchId])
+  @@index([serviceId])
+  @@map("branch_services")
+}
+
 model StaffLocation {
   id        String   @id @default(uuid())
   name      String   @unique
+  code      String   @unique
+  address   String
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  staff     Staff[]
-  histories StaffEmploymentHistory[]
+  // GPS fields for Attendance clock-in/out validation (bundled in ahead of the Attendance build)
+  gpsLat               Decimal? @map("gps_lat") @db.Decimal(10, 7)
+  gpsLng               Decimal? @map("gps_lng") @db.Decimal(10, 7)
+  approvedRadiusMeters Int?     @map("approved_radius_meters")
+
+  lateGracePeriodMinutes Int @default(10) @map("late_grace_period_minutes")
+
+  // Branch Manager — max one active manager per branch, enforced by the unique
+  // constraint below (a staff member can only be the designated manager of one
+  // branch at a time; unset before reassigning them elsewhere).
+  managerId String? @unique @map("manager_id")
+  manager   Staff?  @relation("BranchManager", fields: [managerId], references: [id], onDelete: SetNull)
+
+  staff                 Staff[]
+  histories             StaffEmploymentHistory[]
+  codeHistory           StaffCodeHistory[]
+  branchServices        BranchService[]
+  interviewApplications Application[]            @relation("ApplicationInterviewLocation")
+  jobPostings           JobPosting[]             @relation("JobPostingBranch")
+  offerLetters          OfferLetter[]            @relation("OfferLetterBranch")
+
+  bookings              Booking[]
+  targetedAnnouncements Announcement[]
+  attendanceRecords     AttendanceRecord[]
+  inventoryLogEntries   InventoryLogEntry[]
+  approvalRequests      ApprovalRequest[]
+  salonBookings         SalonBooking[]
+
+  staffSequence  Int             @default(0) @map("staff_sequence")
+  inventoryItems InventoryItem[]
+  // stockTransfers StockTransfer[]
+
+  incomingTransfers  StockTransfer[]
+  productSales       ProductSale[]
 
   @@map("staff_locations")
+}
+
+// One row per thing awaiting approval, regardless of what kind of thing it is —
+// requestType tells you which domain table (LeaveRequest, future
+// InventoryAdjustment, etc.) owns the business data; this table owns the
+// approval workflow itself: who it's currently sitting with, and its status.
+model ApprovalRequest {
+  id                String              @id @default(uuid())
+  requestType       ApprovalRequestType @map("request_type")
+  branchId          String?             @map("branch_id")
+submittedById     String?             @map("submitted_by_id") // null = admin-initiated with no linked staff record
+  currentApproverId String?             @map("current_approver_id")
+  status            ApprovalStatus      @default(PENDING)
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+
+  branch          StaffLocation? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  submittedBy     Staff?         @relation("ApprovalSubmittedBy", fields: [submittedById], references: [id])
+  currentApprover Staff?         @relation("ApprovalCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
+
+  actions                ApprovalAction[]
+  leaveRequest           LeaveRequest?
+  stockAdjustmentRequest StockAdjustmentRequest?
+  stockTransfer          StockTransfer?
+
+  @@index([currentApproverId, status])
+  @@index([requestType, status])
+  @@map("approval_requests")
+}
+
+// Full stage-by-stage history for an ApprovalRequest — every submit, approve,
+// reject, reassignment, and info-request is a row here, so "who saw this and
+// when" is always answerable, never just the current state.
+model ApprovalAction {
+  id                String             @id @default(uuid())
+  approvalRequestId String             @map("approval_request_id")
+  actorId           String?            @map("actor_id") // null = system-initiated
+  action            ApprovalActionType
+  fromApproverId    String?            @map("from_approver_id")
+  toApproverId      String?            @map("to_approver_id")
+  comment           String?
+  actedAt           DateTime           @default(now()) @map("acted_at")
+
+  approvalRequest ApprovalRequest @relation(fields: [approvalRequestId], references: [id], onDelete: Cascade)
+  actor           Staff?          @relation("ApprovalActionActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([approvalRequestId])
+  @@map("approval_actions")
+}
+
+model LeaveRequest {
+  id                String             @id @default(uuid())
+  staffId           String             @map("staff_id")
+  type              LeaveRequestType
+  startDate         DateTime           @map("start_date") @db.Date
+  endDate           DateTime           @map("end_date") @db.Date
+  startTime         String?            @map("start_time")
+  endTime           String?            @map("end_time")
+  reason            String
+  status            LeaveRequestStatus @default(PENDING)
+  approverId        String?            @map("approver_id")
+  approvedAt        DateTime?          @map("approved_at")
+  rejectionReason   String?            @map("rejection_reason")
+  approvalRequestId String?            @unique @map("approval_request_id")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  staff           Staff            @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  approver        Staff?           @relation("LeaveRequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  approvalRequest ApprovalRequest? @relation(fields: [approvalRequestId], references: [id], onDelete: SetNull)
+
+  @@index([staffId, status])
+  @@index([approverId, status])
+  @@map("leave_requests")
+}
+
+model DisciplinaryAction {
+  id        String                   @id @default(uuid())
+  staffId   String                   @map("staff_id")
+  actorId   String?                  @map("actor_id")
+  type      DisciplinaryActionType
+  reason    String
+  status    DisciplinaryActionStatus @default(ACTIVE)
+  createdAt DateTime                 @default(now()) @map("created_at")
+  updatedAt DateTime                 @updatedAt @map("updated_at")
+
+  staff Staff  @relation("DisciplinaryActionSubject", fields: [staffId], references: [id], onDelete: Cascade)
+  actor Staff? @relation("DisciplinaryActionIssuedBy", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([staffId, createdAt])
+  @@map("disciplinary_actions")
 }
 
 model WaitlistEntry {
@@ -658,4 +1500,617 @@ model WaitlistEntry {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("waitlist_entries")
+}
+
+enum AnnouncementTarget {
+  ALL
+  BRANCH
+  INDIVIDUAL
+}
+
+model Announcement {
+  id               String             @id @default(uuid())
+  title            String
+  body             String
+  target           AnnouncementTarget
+  targetLocationId String?            @map("target_location_id")
+  targetStaffId    String?            @map("target_staff_id")
+  createdById      String?            @map("created_by_id")
+  createdAt        DateTime           @default(now()) @map("created_at")
+
+  targetLocation StaffLocation?     @relation(fields: [targetLocationId], references: [id], onDelete: Cascade)
+  targetStaff    Staff?             @relation("AnnouncementTargetStaff", fields: [targetStaffId], references: [id], onDelete: Cascade)
+  createdBy      User?              @relation("AnnouncementCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  reads          AnnouncementRead[]
+
+  @@index([target])
+  @@map("announcements")
+}
+
+model AnnouncementRead {
+  id             String   @id @default(uuid())
+  announcementId String   @map("announcement_id")
+  staffId        String   @map("staff_id")
+  readAt         DateTime @default(now()) @map("read_at")
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  staff        Staff        @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, staffId])
+  @@map("announcement_reads")
+}
+
+enum DirectiveStatus {
+  PENDING
+  ACKNOWLEDGED
+  COMPLETED
+}
+
+model Directive {
+  id            String          @id @default(uuid())
+  title         String
+  body          String
+  status        DirectiveStatus @default(PENDING)
+  targetStaffId String          @map("target_staff_id")
+  createdById   String?         @map("created_by_id")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  respondedAt   DateTime?       @map("responded_at")
+
+  targetStaff Staff @relation(fields: [targetStaffId], references: [id], onDelete: Cascade)
+  createdBy   User? @relation("DirectiveCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([targetStaffId, status])
+  @@map("directives")
+}
+
+model AttendanceRecord {
+  id         String    @id @default(uuid())
+  staffId    String    @map("staff_id")
+  locationId String    @map("location_id")
+  date       DateTime  @db.Date
+  checkInAt  DateTime  @map("check_in_at")
+  checkOutAt DateTime? @map("check_out_at")
+
+  checkInLat  Decimal? @map("check_in_lat") @db.Decimal(10, 7)
+  checkInLng  Decimal? @map("check_in_lng") @db.Decimal(10, 7)
+  checkOutLat Decimal? @map("check_out_lat") @db.Decimal(10, 7)
+  checkOutLng Decimal? @map("check_out_lng") @db.Decimal(10, 7)
+
+  status                AttendanceStatus @default(PRESENT)
+  lateMinutes           Int?             @map("late_minutes")
+  overtimeMinutes       Int?             @map("overtime_minutes")
+  earlyDepartureMinutes Int?             @map("early_departure_minutes")
+
+  isManuallyAdjusted Boolean @default(false) @map("is_manually_adjusted")
+  adjustmentReason   String? @map("adjustment_reason")
+  adjustedById       String? @map("adjusted_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  staff      Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  location   StaffLocation @relation(fields: [locationId], references: [id])
+  adjustedBy User?         @relation("AttendanceAdjustedBy", fields: [adjustedById], references: [id], onDelete: SetNull)
+
+  @@unique([staffId, date])
+  @@index([locationId, date])
+  @@map("attendance_records")
+}
+
+enum InventoryEntryType {
+  RECEIVED
+  SOLD
+}
+
+model InventoryLogEntry {
+  id          String             @id @default(uuid())
+  locationId  String             @map("location_id")
+  staffId     String             @map("staff_id")
+  productName String             @map("product_name")
+  type        InventoryEntryType
+  quantity    Int
+  note        String?
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  staff    Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  location StaffLocation @relation(fields: [locationId], references: [id])
+
+  @@index([locationId, productName])
+  @@map("inventory_log_entries")
+}
+
+// ─── Beautician Provider App ───────────────────────────────────────────────────
+
+model BeauticianProfile {
+  id                       String              @id @default(uuid())
+  userId                   String              @unique @map("user_id")
+  bio                      String?
+  profilePhotoUrl          String?             @map("profile_photo_url")
+  /// Public portfolio / work showcase URL collected at KYC initiate (https only).
+  portfolioUrl             String?             @map("portfolio_url")
+  specialties              String[]            @default([])
+  yearsOfExperience        Int?                @map("years_of_experience")
+  certifications           String[]            @default([])
+  currentLat               Decimal?            @map("current_lat") @db.Decimal(10, 7)
+  currentLng               Decimal?            @map("current_lng") @db.Decimal(10, 7)
+  lastLocationUpdate       DateTime?           @map("last_location_update")
+  maxTravelRadiusKm        Decimal?            @map("max_travel_radius_km") @db.Decimal(6, 2)
+  availabilityStatus       AvailabilityStatus  @default(OFFLINE) @map("availability_status")
+  kycStatus                KycStatus           @default(PENDING) @map("kyc_status")
+  kycVerifiedAt            DateTime?           @map("kyc_verified_at")
+  qoreIdCustomerId         String?             @map("qore_id_customer_id")
+  qoreIdSessionId          String?             @map("qore_id_session_id")
+  profileStatus            ProfileReviewStatus @default(NOT_SUBMITTED) @map("profile_status")
+  profileSubmittedAt       DateTime?           @map("profile_submitted_at")
+  profileReviewedAt        DateTime?           @map("profile_reviewed_at")
+  profileReviewedById      String?             @map("profile_reviewed_by_id")
+  reviewNotes              String?             @map("review_notes")
+  /// Cloudflare R2 object key for the KYC intro video (1 min, highly compressed).
+  /// Content-Type and size live on the R2 object; submission time ≈ profile updatedAt after confirm.
+  kycVideoKey              String?             @map("kyc_video_key")
+  ratingAverage            Decimal             @default(0) @map("rating_average") @db.Decimal(3, 2)
+  totalJobsCompleted       Int                 @default(0) @map("total_jobs_completed")
+  totalEarnings            Decimal             @default(0) @map("total_earnings") @db.Decimal(12, 2)
+  commissionRateOverride   Decimal?            @map("commission_rate_override") @db.Decimal(5, 4)
+  payoutBankCode           String?             @map("payout_bank_code")
+  payoutAccountNumber      String?             @map("payout_account_number")
+  payoutAccountName        String?             @map("payout_account_name")
+  paystackRecipientCode    String?             @map("paystack_recipient_code")
+  payoutBankVerifiedAt     DateTime?           @map("payout_bank_verified_at")
+  isActive                 Boolean             @default(true) @map("is_active")
+  dispatchSuspended        Boolean             @default(false) @map("dispatch_suspended")
+  /// When set with dispatchSuspended, auto-lift at this time (timed probation).
+  dispatchSuspendedUntil   DateTime?           @map("dispatch_suspended_until")
+  /// Admin-facing reason shared in beautician suspension email.
+  dispatchSuspensionReason String?             @map("dispatch_suspension_reason")
+  createdAt                DateTime            @default(now()) @map("created_at")
+  updatedAt                DateTime            @updatedAt @map("updated_at")
+
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profileReviewedBy User?               @relation("ProfileReviewedBy", fields: [profileReviewedById], references: [id], onDelete: SetNull)
+  assignedServices  BeauticianService[]
+
+  @@index([kycStatus])
+  @@index([profileStatus])
+  @@index([availabilityStatus])
+  @@index([isActive])
+  @@index([dispatchSuspended])
+  @@index([dispatchSuspendedUntil])
+  @@map("beautician_profiles")
+}
+
+model BeauticianService {
+  id                  String   @id @default(uuid())
+  beauticianProfileId String   @map("beautician_profile_id")
+  serviceId           String   @map("service_id")
+  assignedById        String   @map("assigned_by_id")
+  assignedAt          DateTime @default(now()) @map("assigned_at")
+
+  beauticianProfile BeauticianProfile @relation(fields: [beauticianProfileId], references: [id], onDelete: Cascade)
+  service           Service           @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  assignedBy        User              @relation("BeauticianServiceAssignedBy", fields: [assignedById], references: [id])
+
+  @@unique([beauticianProfileId, serviceId])
+  @@index([beauticianProfileId])
+  @@index([serviceId])
+  @@map("beautician_services")
+}
+
+model JobOffer {
+  id                 String         @id @default(uuid())
+  bookingId          String         @map("booking_id")
+  beauticianUserId   String         @map("beautician_user_id")
+  status             JobOfferStatus @default(OFFERED)
+  offeredAt          DateTime       @default(now()) @map("offered_at")
+  respondedAt        DateTime?      @map("responded_at")
+  expiresAt          DateTime       @map("expires_at")
+  distanceKmAtOffer  Decimal?       @map("distance_km_at_offer") @db.Decimal(8, 2)
+  estEarningsAtOffer Decimal?       @map("est_earnings_at_offer") @db.Decimal(10, 2)
+  tier               Int?           @db.SmallInt
+  scoreSnapshot      Json?          @map("score_snapshot")
+  declineReason      String?        @map("decline_reason")
+
+  booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  beautician User    @relation(fields: [beauticianUserId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([beauticianUserId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("job_offers")
+}
+
+model BookingCommsSession {
+  id               String                    @id @default(uuid())
+  bookingId        String                    @unique @map("booking_id")
+  streamChannelId  String                    @map("stream_channel_id")
+  streamCallCid    String?                   @map("stream_call_cid")
+  customerUserId   String                    @map("customer_user_id")
+  beauticianUserId String                    @map("beautician_user_id")
+  status           BookingCommsSessionStatus
+  openedAt         DateTime                  @map("opened_at")
+  closedAt         DateTime?                 @map("closed_at")
+  closeReason      BookingCommsCloseReason?  @map("close_reason")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+
+  booking Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  events  BookingCommsEvent[]
+
+  @@index([customerUserId])
+  @@index([beauticianUserId])
+  @@index([status])
+  @@index([openedAt])
+  @@index([closedAt])
+  @@map("booking_comms_sessions")
+}
+
+model BookingCommsEvent {
+  id            String                @id @default(uuid())
+  sessionId     String                @map("session_id")
+  eventType     BookingCommsEventType @map("event_type")
+  actorUserId   String?               @map("actor_user_id")
+  streamEventId String                @unique @map("stream_event_id")
+  payload       Json?
+  createdAt     DateTime              @default(now()) @map("created_at")
+
+  session BookingCommsSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("booking_comms_events")
+}
+
+model DispatchEvent {
+  id             String   @id @default(uuid())
+  bookingId      String   @map("booking_id")
+  eventType      String   @map("event_type")
+  payload        Json?
+  idempotencyKey String?  @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, createdAt])
+  @@map("dispatch_events")
+}
+
+model DispatchConfig {
+  id        String   @id @default(uuid())
+  region    String   @default("default")
+  key       String
+  value     String
+  valueType String   @default("string") @map("value_type")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([region, key])
+  @@map("dispatch_config")
+}
+
+model HomeServiceSettings {
+  id                               String     @id @default(uuid())
+  commissionRate                   Decimal    @default(0.70) @map("commission_rate") @db.Decimal(5, 4)
+  kycAutoApprove                   Boolean    @default(true) @map("kyc_auto_approve")
+  arrivalVerificationExpiryMinutes Int        @default(15) @map("arrival_verification_expiry_minutes")
+  serviceCompletionBufferMinutes   Int        @default(60) @map("service_completion_buffer_minutes")
+  payoutMode                       PayoutMode @default(MANUAL) @map("payout_mode")
+  /// Platform-wide max total payout amount per calendar day (Africa/Lagos). Null = unlimited.
+  dailyPayoutLimit                 Decimal?   @map("daily_payout_limit") @db.Decimal(14, 2)
+  arrivalGeoFenceMeters            Int        @default(250) @map("arrival_geo_fence_meters")
+  noShowPenaltyEnabled             Boolean    @default(true) @map("no_show_penalty_enabled")
+  noShowSuspendThreshold           Int        @default(3) @map("no_show_suspend_threshold")
+  noShowWindowDays                 Int        @default(30) @map("no_show_window_days")
+  createdAt                        DateTime   @default(now()) @map("created_at")
+  updatedAt                        DateTime   @updatedAt @map("updated_at")
+
+  @@map("home_service_settings")
+}
+
+model PayoutRequest {
+  id                        String              @id @default(uuid())
+  userId                    String              @map("user_id")
+  amount                    Decimal             @db.Decimal(10, 2)
+  status                    PayoutRequestStatus @default(PENDING)
+  bankCode                  String              @map("bank_code")
+  accountNumber             String              @map("account_number")
+  accountName               String?             @map("account_name")
+  processedById             String?             @map("processed_by_id")
+  processedAt               DateTime?           @map("processed_at")
+  rejectionReason           String?             @map("rejection_reason")
+  transactionId             String?             @unique @map("transaction_id")
+  paystackTransferReference String?             @unique @map("paystack_transfer_reference")
+  paystackTransferCode      String?             @map("paystack_transfer_code")
+  createdAt                 DateTime            @default(now()) @map("created_at")
+  updatedAt                 DateTime            @updatedAt @map("updated_at")
+
+  user        User         @relation("UserPayoutRequests", fields: [userId], references: [id], onDelete: Cascade)
+  processedBy User?        @relation("PayoutProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([userId, status])
+  @@map("payout_requests")
+}
+
+model FcmToken {
+  id         String      @id @default(uuid())
+  userId     String      @map("user_id")
+  token      String
+  platform   FcmPlatform
+  lastUsedAt DateTime    @default(now()) @map("last_used_at")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@map("fcm_tokens")
+}
+
+model BeauticianLocationHistory {
+  id               String   @id @default(uuid())
+  beauticianUserId String   @map("beautician_user_id")
+  lat              Decimal  @db.Decimal(10, 7)
+  lng              Decimal  @db.Decimal(10, 7)
+  accuracy         Decimal? @db.Decimal(8, 2)
+  bookingId        String?  @map("booking_id")
+  recordedAt       DateTime @default(now()) @map("recorded_at")
+
+  beautician User     @relation("BeauticianLocationHistory", fields: [beauticianUserId], references: [id], onDelete: Cascade)
+  booking    Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([beauticianUserId, recordedAt])
+  @@index([bookingId])
+  @@map("beautician_location_history")
+}
+
+model Application {
+  id                      String              @id @default(uuid())
+  applicationCode         String              @unique
+  jobId                   String?             @map("job_id")
+  job                     JobPosting?         @relation("ApplicationJobPosting", fields: [jobId], references: [id], onDelete: SetNull)
+  appliedRole             String?
+  firstName               String
+  middleName              String?
+  lastName                String
+  nin                     String
+  dateOfBirth             String?
+  gender                  String?
+  phone                   String
+  address                 String
+  email                   String
+  yearsOfExperience       String?
+  previousEmployer        String?
+  previousEmployerAddress String?
+  previousEmployerPhone   String?
+  coverNote               String
+  preferredLocationId     String?
+  preferredBranchText     String?
+  cvUrl                   String?
+  portfolioUrl            String?
+  status                  ApplicationStatus   @default(SUBMITTED)
+  interviewScheduledAt    DateTime?
+  interviewMode           InterviewMode?
+  interviewLocationId     String?
+  interviewLocation       StaffLocation?      @relation("ApplicationInterviewLocation", fields: [interviewLocationId], references: [id], onDelete: SetNull)
+  interviewMeetingUrl     String?
+  interviewerName         String?
+  interviewNote           String?
+  interviewOutcome        InterviewOutcome?
+  interviewerId           String?
+  interviewer             Staff?              @relation("ApplicationInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
+  offerLetter             OfferLetter?
+  employmentApproval      EmploymentApproval?
+  notSelectedReason       String?
+  otpHash                 String?
+  otpExpiresAt            DateTime?
+  staffId                 String?
+  employedAt              DateTime?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  @@index([status])
+  @@index([email])
+  @@index([nin])
+}
+
+model OfferLetter {
+  id            String  @id @default(uuid())
+  applicationId String  @unique @map("application_id")
+  jobPostingId  String? @map("job_posting_id")
+  role          String
+  branchId      String? @map("branch_id")
+
+  baseSalary       Decimal  @map("base_salary") @db.Decimal(10, 2)
+  allowances       Decimal? @db.Decimal(10, 2)
+  compensationNote String?  @map("compensation_note")
+  effectiveDate    DateTime @map("effective_date")
+
+  templateUsed  String?           @map("template_used")
+  status        OfferLetterStatus @default(SENT)
+  generatedById String            @map("generated_by_id")
+  generatedAt   DateTime          @default(now()) @map("generated_at")
+  sentAt        DateTime?         @map("sent_at")
+  respondedAt   DateTime?         @map("responded_at")
+  declineReason String?           @map("decline_reason")
+
+  application Application    @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  jobPosting  JobPosting?    @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
+  branch      StaffLocation? @relation("OfferLetterBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  generatedBy User           @relation("OfferLetterGeneratedBy", fields: [generatedById], references: [id])
+
+  @@index([status])
+  @@map("offer_letters")
+}
+
+model EmploymentApproval {
+  id            String   @id @default(uuid())
+  applicationId String   @unique @map("application_id")
+  approvedById  String   @map("approved_by_id")
+  approvedAt    DateTime @default(now()) @map("approved_at")
+  notes         String?
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  approvedBy  User        @relation("EmploymentApprovalApprovedBy", fields: [approvedById], references: [id])
+
+  @@map("employment_approvals")
+}
+
+model InventoryItem {
+  id                String            @id @default(uuid())
+  name              String
+  category          InventoryCategory
+  branchId          String            @map("branch_id")
+  unit              String? // e.g. "pcs", "bottle", "ml"
+  currentQuantity   Int               @default(0) @map("current_quantity")
+  lowStockThreshold Int               @default(5) @map("low_stock_threshold")
+  expiryDate        DateTime?         @map("expiry_date") @db.Date
+  isActive          Boolean           @default(true) @map("is_active")
+  price             Decimal?          @map("price") @db.Decimal(10, 2) // required (enforced in service layer) when category = FOR_SALE
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  branch             StaffLocation               @relation(fields: [branchId], references: [id])
+  movements          StockMovement[]
+  lowStockAlerts     LowStockAlert[]
+  expiryAlerts       ExpiryAlert[]
+  saleItems          ProductSaleItem[]
+  transfersOut       StockTransfer[]             @relation("TransferFromItem")
+  adjustmentRequests StockAdjustmentRequest[]
+  salonBookingLines  SalonBookingInventoryItem[]
+
+  @@unique([branchId, name, category])
+  @@index([branchId, category])
+  @@map("inventory_items")
+}
+
+// A stock adjustment awaiting approval — the actual InventoryItem.currentQuantity
+// mutation only happens once the linked ApprovalRequest reaches APPROVED (see
+// InventoryService.approveStockAdjustment), not at request time. `status`
+// mirrors the ApprovalRequest's status for fast filtering without a join.
+model StockAdjustmentRequest {
+  id                String         @id @default(uuid())
+  itemId            String         @map("item_id")
+  quantityDelta     Int            @map("quantity_delta")
+  reason            String
+  requestedById     String?        @map("requested_by_id") // null = admin-initiated with no linked staff record
+  approvalRequestId String         @unique @map("approval_request_id")
+  status            ApprovalStatus @default(PENDING)
+  appliedAt         DateTime?      @map("applied_at")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  item            InventoryItem   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  requestedBy     Staff?          @relation(fields: [requestedById], references: [id])
+  approvalRequest ApprovalRequest @relation(fields: [approvalRequestId], references: [id], onDelete: Cascade)
+
+  @@index([itemId, status])
+  @@map("stock_adjustment_requests")
+}
+
+// A standalone product sale — walk-in customer buying a FOR_SALE item with
+// no service attached. Distinct from SalonBooking's "products used/sold"
+// lines, which are always tied to a service appointment; this is for a pure
+// retail transaction (e.g. someone just wants a bottle of shampoo).
+model ProductSale {
+  id            String   @id @default(uuid())
+  branchId      String   @map("branch_id")
+  soldById      String?  @map("sold_by_id") // null = admin-initiated with no linked staff record
+  customerName  String?  @map("customer_name")
+  customerPhone String?  @map("customer_phone")
+  totalAmount   Decimal  @map("total_amount") @db.Decimal(10, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  branch StaffLocation     @relation(fields: [branchId], references: [id])
+  soldBy Staff?            @relation(fields: [soldById], references: [id], onDelete: SetNull)
+  items  ProductSaleItem[]
+
+  @@index([branchId, createdAt])
+  @@map("product_sales")
+}
+
+model ProductSaleItem {
+  id        String  @id @default(uuid())
+  saleId    String  @map("sale_id")
+  itemId    String  @map("item_id")
+  quantity  Int
+  unitPrice Decimal @map("unit_price") @db.Decimal(10, 2)
+
+  sale ProductSale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  item InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@map("product_sale_items")
+}
+
+model StockMovement {
+  id            String            @id @default(uuid())
+  itemId        String            @map("item_id")
+  type          StockMovementType
+  quantityDelta Int               @map("quantity_delta") // positive or negative
+  referenceId   String?           @map("reference_id") // links to a Sale, Transfer, or AdjustmentRequest
+ performedById String?           @map("performed_by_id") // null = admin-initiated with no linked staff record
+  reason        String? // required for ADJUSTMENT
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  performedBy Staff?        @relation(fields: [performedById], references: [id])
+
+  @@index([itemId, createdAt])
+  @@map("stock_movements")
+}
+
+model LowStockAlert {
+  id           String             @id @default(uuid())
+  itemId       String             @map("item_id")
+  triggeredAt  DateTime           @default(now()) @map("triggered_at")
+  currentStage LowStockAlertStage @default(SUPERVISOR) @map("current_stage")
+  escalatedAt  DateTime?          @map("escalated_at")
+  resolvedAt   DateTime?          @map("resolved_at")
+  resolvedById String?            @map("resolved_by_id")
+
+  item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  resolvedBy Staff?        @relation(fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([itemId, resolvedAt])
+  @@map("low_stock_alerts")
+}
+
+model ExpiryAlert {
+  id          String              @id @default(uuid())
+  itemId      String              @map("item_id")
+  severity    ExpiryAlertSeverity
+  triggeredAt DateTime            @default(now()) @map("triggered_at")
+  resolvedAt  DateTime?           @map("resolved_at")
+  resolvedById String?            @map("resolved_by_id")
+
+  item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  resolvedBy Staff?        @relation(fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([itemId, resolvedAt])
+  @@map("expiry_alerts")
+}
+
+model StockTransfer {
+  id                String              @id @default(uuid())
+  fromItemId        String              @map("from_item_id")
+  toBranchId        String              @map("to_branch_id")
+  quantity          Int
+  status            StockTransferStatus @default(PENDING)
+  requestedById     String              @map("requested_by_id")
+  approvedById      String?             @map("approved_by_id")
+  approvedAt        DateTime?           @map("approved_at")
+  completedAt       DateTime?           @map("completed_at")
+  rejectionReason   String?             @map("rejection_reason")
+  approvalRequestId String?             @unique @map("approval_request_id")
+  createdAt         DateTime            @default(now()) @map("created_at")
+
+  fromItem        InventoryItem    @relation("TransferFromItem", fields: [fromItemId], references: [id])
+  toBranch        StaffLocation    @relation(fields: [toBranchId], references: [id])
+  requestedBy     Staff            @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  approvedBy      Staff?           @relation("TransferApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvalRequest ApprovalRequest? @relation(fields: [approvalRequestId], references: [id], onDelete: SetNull)
+
+  @@map("stock_transfers")
 }

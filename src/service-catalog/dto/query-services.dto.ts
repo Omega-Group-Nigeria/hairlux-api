@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsEnum } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsUUID } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingType } from '@prisma/client';
 
@@ -37,4 +37,13 @@ export class QueryServicesDto {
   @IsOptional()
   @IsEnum(BookingType)
   bookingType?: BookingType;
+
+  @ApiPropertyOptional({
+    description:
+      'Branch ID — scopes services to branch availability and resolves walkInPrice only',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 }

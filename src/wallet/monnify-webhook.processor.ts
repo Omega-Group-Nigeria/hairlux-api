@@ -12,6 +12,7 @@ import { MailService } from '../mail/mail.service';
 import { RedisService } from '../redis/redis.service';
 import { ReferralService } from '../referral/referral.service';
 import { BookingService } from '../booking/booking.service';
+import { WalletPushNotifier } from '../notifications/wallet/wallet-push.notifier';
 
 type TransactionWithWallet = Transaction & {
   wallet: Pick<Wallet, 'id' | 'userId'>;
@@ -43,6 +44,7 @@ export class MonnifyWebhookProcessor {
     private redis: RedisService,
     private referralService: ReferralService,
     private bookingService: BookingService,
+    private walletPushNotifier: WalletPushNotifier,
   ) {}
 
   @Process('deposit-webhook')
@@ -166,20 +168,24 @@ export class MonnifyWebhookProcessor {
       );
     }
 
-    // Send deposit success email (non-fatal)
+    // Notify user (email + push) — non-fatal; only after first-time credit
     try {
       const wallet = await this.prisma.wallet.findUnique({
         where: { id: transaction.walletId },
-        include: { user: { select: { email: true, firstName: true } } },
+        include: {
+          user: { select: { id: true, email: true, firstName: true } },
+        },
       });
       if (wallet?.user) {
+        const amount = Number(transaction.amount);
+        const newBalance = Number(wallet.balance);
         await this.mailService.sendDepositSuccessEmail(
           wallet.user.email,
           wallet.user.firstName,
           {
-            amount: Number(transaction.amount),
+            amount,
             reference: transaction.reference,
-            newBalance: Number(wallet.balance),
+            newBalance,
             date: new Date().toLocaleString('en-NG', {
               dateStyle: 'long',
               timeStyle: 'short',
@@ -187,10 +193,16 @@ export class MonnifyWebhookProcessor {
             }),
           },
         );
+        this.walletPushNotifier.notifyDepositSuccess({
+          userId: wallet.user.id,
+          amount,
+          reference: transaction.reference,
+          newBalance,
+        });
       }
-    } catch (mailError) {
+    } catch (notifyError) {
       this.logger.warn(
-        `Deposit email failed (non-fatal): ${mailError instanceof Error ? mailError.message : String(mailError)}`,
+        `Deposit notify failed (non-fatal): ${notifyError instanceof Error ? notifyError.message : String(notifyError)}`,
       );
     }
 

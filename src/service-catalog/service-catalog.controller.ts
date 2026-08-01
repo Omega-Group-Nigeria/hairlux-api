@@ -74,6 +74,8 @@ export class ServiceCatalogController {
               id: '123e4567-e89b-12d3-a456-426614174000',
               name: 'Hair Services',
               description: 'Professional hair styling and treatments',
+              imageUrl:
+                'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/hair-services.webp',
               createdAt: '2026-01-15T10:30:00.000Z',
               updatedAt: '2026-01-15T10:30:00.000Z',
             },
@@ -122,6 +124,8 @@ export class ServiceCatalogController {
             id: '123e4567-e89b-12d3-a456-426614174000',
             name: 'Hair Services',
             description: 'Professional hair styling and treatments',
+            imageUrl:
+              'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/hair-services.webp',
             serviceCount: 5,
             createdAt: '2024-01-15T10:30:00.000Z',
             updatedAt: '2024-01-15T10:30:00.000Z',
@@ -130,6 +134,8 @@ export class ServiceCatalogController {
             id: '123e4567-e89b-12d3-a456-426614174002',
             name: 'Nail Services',
             description: 'Manicure, pedicure, and nail art',
+            imageUrl:
+              'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/nail-services.webp',
             serviceCount: 3,
             createdAt: '2024-01-15T10:30:00.000Z',
             updatedAt: '2024-01-15T10:30:00.000Z',
@@ -190,6 +196,8 @@ export class ServiceCatalogController {
             id: '123e4567-e89b-12d3-a456-426614174000',
             name: 'Hair Services',
             description: 'Professional hair styling and treatments',
+            imageUrl:
+              'https://res.cloudinary.com/demo/image/upload/v1234567890/hairlux/service-categories/hair-services.webp',
             createdAt: '2026-01-15T10:30:00.000Z',
             updatedAt: '2026-01-15T10:30:00.000Z',
           },
@@ -211,9 +219,13 @@ export class ServiceCatalogController {
   })
   async findOne(
     @Param('id') id: string,
-    @Query('bookingType') bookingType?: BookingType,
+    @Query() queryDto: QueryServicesDto,
   ) {
-    const service = await this.serviceCatalogService.findOne(id, bookingType);
+    const service = await this.serviceCatalogService.findOne(
+      id,
+      queryDto.bookingType,
+      queryDto.branchId,
+    );
     return {
       success: true,
       message: 'Service retrieved successfully',

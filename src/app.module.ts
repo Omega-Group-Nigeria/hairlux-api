@@ -22,6 +22,19 @@ import { JobsModule } from './jobs/jobs.module';
 import { RolesModule } from './roles/roles.module';
 import { StaffModule } from './staff/staff.module';
 import { WaitlistModule } from './waitlist/waitlist.module';
+import { ShopModule } from './shop/shop.module';
+import { BranchModule } from './branch/branch.module';
+import { CommonModule } from './common/common.module';
+import { BeauticianModule } from './beautician/beautician.module';
+import { CommsModule } from './comms/comms.module';
+import { NinModule } from './nin/nin.module';
+import { ApplicationModule } from './application/application.module';
+import { StorageModule } from './storage/storage.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { LeaveModule } from './leave/leave.module';
+import { InventoryModule } from './inventory/inventory.module';
+import { SalonBookingModule } from './salon-booking/salon-booking.module';
+import { ProductSaleModule } from './product-sale/product-sale.module'; 
 
 @Module({
   imports: [
@@ -79,6 +92,21 @@ import { WaitlistModule } from './waitlist/waitlist.module';
     RolesModule,
     StaffModule,
     WaitlistModule,
+    ShopModule,
+    BranchModule,
+    CommonModule,
+    BeauticianModule,
+    CommsModule,
+    NinModule,
+    ApplicationModule,
+    StorageModule,
+    AttendanceModule,
+    LeaveModule,
+    InventoryModule,
+    SalonBookingModule,
+    ProductSaleModule,
+    ProductSaleModule,
+    
   ],
   controllers: [AppController],
   providers: [

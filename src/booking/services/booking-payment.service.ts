@@ -29,18 +29,24 @@ import {
 import { InitializeBookingPaymentDto } from '../dto/initialize-booking-payment.dto';
 import { VerifyBookingPaymentDto } from '../dto/verify-booking-payment.dto';
 import {
-  BookingServiceRecord,
-  buildBookingServiceRecord,
+  bookingUserReadInclude,
   calculateBookingServicesTotal,
-  formatBookingAddress,
   formatBookingResponse,
   normalizeBookingServices,
-  resolvePriceForBookingType,
   toBookingServicesJson,
   toEmailServiceLines,
 } from '../utils/booking.utils';
-import { BookingWalletService } from './booking-wallet.service';
+import {
+  buildBookingLocationCreateData,
+  hasTemporaryServiceLocation,
+  resolveBookingAddressLabel,
+} from '../utils/booking-location.utils';
+import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
+import { BookingLinePricingService } from './booking-line-pricing.service';
+import { HomeServiceBookingService } from '../../beautician/home-service-booking/home-service-booking.service';
+import { bookingNeedsBeauticianAssignment } from '../../beautician/matching/utils/booking-assignment.utils';
+import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 
 @Injectable()
 export class BookingPaymentService {
@@ -50,8 +56,11 @@ export class BookingPaymentService {
     private mailService: MailService,
     private redis: RedisService,
     private discountService: DiscountService,
-    private bookingWalletService: BookingWalletService,
+    private walletDebitService: WalletDebitService,
     private reservationService: ReservationService,
+    private bookingLinePricingService: BookingLinePricingService,
+    private homeServiceBookingService: HomeServiceBookingService,
+    private bookingPushNotifier: BookingPushNotifier,
   ) {}
 
   private resolveServiceMode(
@@ -116,7 +125,7 @@ export class BookingPaymentService {
     return this.prisma.booking.findFirst({
       where: { userId, idempotencyKey },
       include: {
-        address: true,
+        ...bookingUserReadInclude,
         discountUsage: {
           include: {
             discountCode: true,
@@ -130,6 +139,7 @@ export class BookingPaymentService {
     booking: Prisma.BookingGetPayload<{
       include: {
         address: true;
+        branch: { select: { id: true; name: true; address: true } };
         discountUsage: { include: { discountCode: true } };
       };
     }>,
@@ -171,15 +181,15 @@ export class BookingPaymentService {
 
   private buildVerifyResponseFromBooking(
     booking: Prisma.BookingGetPayload<{
-      include: { address: true };
+      include: {
+        address: true;
+        branch: { select: { id: true; name: true; address: true } };
+      };
     }>,
     reservationCode: string,
   ) {
     return {
-      booking: {
-        ...formatBookingResponse(booking),
-        address: formatBookingAddress(booking.address),
-      },
+      booking: formatBookingResponse(booking),
       reservationCode,
       message: 'Booking payment already verified',
     };
@@ -330,12 +340,16 @@ export class BookingPaymentService {
       date,
       time,
       addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
       bookingType,
       guestName,
       guestPhone,
       guestEmail,
       paymentMethod,
       discountCode,
+      branchId,
       idempotencyKey: rawIdempotencyKey,
     } = createBookingDto;
 
@@ -354,16 +368,33 @@ export class BookingPaymentService {
         this.resolveServiceMode(item, bookingType) === BookingType.HOME_SERVICE,
     );
 
+    const locationData = buildBookingLocationCreateData({
+      addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
+    });
+
     let address: Awaited<
       ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
     if (hasHomeService) {
-      address = await this.prisma.address.findFirst({
-        where: { id: addressId, userId },
-      });
+      if (locationData.addressId) {
+        address = await this.prisma.address.findFirst({
+          where: {
+            id: locationData.addressId,
+            userId,
+            deletedAt: null,
+          },
+        });
 
-      if (!address) {
-        throw new NotFoundException('Address not found');
+        if (!address) {
+          throw new NotFoundException('Address not found');
+        }
+      } else if (!hasTemporaryServiceLocation(locationData)) {
+        throw new BadRequestException(
+          'addressId or temporary location (tempLatitude, tempLongitude, tempFullAddress) is required for HOME_SERVICE bookings',
+        );
       }
     }
 
@@ -374,34 +405,14 @@ export class BookingPaymentService {
 
     const bookingDate = new Date(`${date}T${time}`);
 
-    const serviceRecords: BookingServiceRecord[] = [];
-
-    for (const item of services) {
-      const service = await this.prisma.service.findUnique({
-        where: { id: item.serviceId },
+    const serviceRecords =
+      await this.bookingLinePricingService.buildServiceRecords({
+        services,
+        bookingType,
+        branchId,
+        resolveServiceMode: (item, fallback) =>
+          this.resolveServiceMode(item, fallback),
       });
-
-      if (!service) {
-        throw new NotFoundException(`Service ${item.serviceId} not found`);
-      }
-
-      if (service.status !== 'ACTIVE') {
-        throw new BadRequestException(
-          `Service "${service.name}" is not available`,
-        );
-      }
-
-      const serviceMode = this.resolveServiceMode(item, bookingType);
-
-      serviceRecords.push(
-        buildBookingServiceRecord({
-          service,
-          unitPrice: resolvePriceForBookingType(service, serviceMode),
-          item,
-          serviceMode,
-        }),
-      );
-    }
 
     const effectiveBookingType =
       this.deriveBookingTypeFromServiceRecords(serviceRecords);
@@ -429,6 +440,10 @@ export class BookingPaymentService {
     }
 
     const serviceNames = serviceRecords.map((s) => s.name).join(', ');
+    const initialStatus = this.homeServiceBookingService.resolveInitialStatus(
+      effectiveBookingType,
+      serviceRecords,
+    );
 
     try {
       if (paymentMethod === PaymentMethod.WALLET) {
@@ -441,7 +456,11 @@ export class BookingPaymentService {
               data: {
                 userId,
                 services: toBookingServicesJson(serviceRecords),
-                addressId: addressId ?? null,
+                addressId: locationData.addressId,
+                tempLatitude: locationData.tempLatitude,
+                tempLongitude: locationData.tempLongitude,
+                tempFullAddress: locationData.tempFullAddress,
+                branchId: branchId ?? null,
                 bookingDate,
                 bookingTime: time,
                 bookingType: effectiveBookingType,
@@ -452,18 +471,18 @@ export class BookingPaymentService {
                 guestEmail: guestEmail ?? null,
                 totalAmount: finalAmount,
                 paymentMethod: PaymentMethod.WALLET,
-                status: BookingStatus.CONFIRMED,
+                status: initialStatus,
               },
-              include: {
-                address: true,
-              },
+              include: bookingUserReadInclude,
             });
 
-            await this.bookingWalletService.debitWalletAndRecordTx(tx, {
+            await this.walletDebitService.debitWalletAndRecordTx(tx, {
               userId,
               amount: finalAmount,
               reference: `BOOK-${booking.id}-${Date.now()}`,
               description: `Payment for: ${serviceNames}${validatedDiscount ? ` (${validatedDiscount.percentage}% discount applied)` : ''}`,
+              insufficientBalanceMessage:
+                'Insufficient wallet balance to complete this booking',
             });
 
             let influencerRewardUserId: string | null = null;
@@ -496,8 +515,17 @@ export class BookingPaymentService {
 
         const { booking, influencerRewardUserId } = walletResult;
 
-        const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
+        const addressStr = resolveBookingAddressLabel({
+          address,
+          tempLatitude: locationData.tempLatitude,
+          tempLongitude: locationData.tempLongitude,
+          tempFullAddress: locationData.tempFullAddress,
+        });
         const emailServices = toEmailServiceLines(serviceRecords);
+        const isHomeService = bookingNeedsBeauticianAssignment(
+          effectiveBookingType,
+          serviceRecords,
+        );
 
         if (user) {
           void this.mailService.sendBookingConfirmationEmail(
@@ -512,8 +540,14 @@ export class BookingPaymentService {
               paymentMethod: 'WALLET',
               bookingIds: [booking.id],
               reservationCode: booking.reservationCode,
+              isHomeService,
             },
           );
+          this.bookingPushNotifier.notifyConfirmed({
+            userId,
+            bookingId: booking.id,
+            reservationCode: booking.reservationCode,
+          });
         }
 
         if (guestEmail && guestName && user) {
@@ -536,6 +570,10 @@ export class BookingPaymentService {
             : []),
         ]);
 
+        if (initialStatus === BookingStatus.PENDING_ASSIGNMENT) {
+          void this.homeServiceBookingService.triggerMatching(booking.id);
+        }
+
         return {
           booking: {
             ...formatBookingResponse(booking),
@@ -553,7 +591,10 @@ export class BookingPaymentService {
               }
             : undefined,
           paymentMethod: PaymentMethod.WALLET,
-          message: 'Payment successful. Booking confirmed.',
+          message:
+            this.homeServiceBookingService.getPaymentConfirmationMessage(
+              initialStatus,
+            ),
         };
       }
 
@@ -566,7 +607,11 @@ export class BookingPaymentService {
             data: {
               userId,
               services: toBookingServicesJson(serviceRecords),
-              addressId: addressId ?? null,
+              addressId: locationData.addressId,
+              tempLatitude: locationData.tempLatitude,
+              tempLongitude: locationData.tempLongitude,
+              tempFullAddress: locationData.tempFullAddress,
+              branchId: branchId ?? null,
               bookingDate,
               bookingTime: time,
               bookingType: effectiveBookingType,
@@ -579,9 +624,7 @@ export class BookingPaymentService {
               paymentMethod: PaymentMethod.CASH,
               status: BookingStatus.PENDING,
             },
-            include: {
-              address: true,
-            },
+            include: bookingUserReadInclude,
           });
 
           if (validatedDiscount) {
@@ -603,8 +646,17 @@ export class BookingPaymentService {
         });
       });
 
-      const addressStr = address ? address.fullAddress : 'In-store (Walk-in)';
+      const addressStr = resolveBookingAddressLabel({
+        address,
+        tempLatitude: locationData.tempLatitude,
+        tempLongitude: locationData.tempLongitude,
+        tempFullAddress: locationData.tempFullAddress,
+      });
       const emailServices = toEmailServiceLines(serviceRecords);
+      const isHomeService = bookingNeedsBeauticianAssignment(
+        effectiveBookingType,
+        serviceRecords,
+      );
 
       if (user) {
         void this.mailService.sendBookingConfirmationEmail(
@@ -619,8 +671,14 @@ export class BookingPaymentService {
             paymentMethod: 'CASH',
             bookingIds: [booking.id],
             reservationCode: booking.reservationCode,
+            isHomeService,
           },
         );
+        this.bookingPushNotifier.notifyConfirmed({
+          userId,
+          bookingId: booking.id,
+          reservationCode: booking.reservationCode,
+        });
       }
 
       if (guestEmail && guestName && user) {
@@ -690,28 +748,190 @@ export class BookingPaymentService {
     });
   }
 
+  private computePaymentSplit(finalAmount: number, walletBalance: number) {
+    const walletContribution = Math.min(walletBalance, finalAmount);
+    const requiredExternalAmount = Math.max(
+      0,
+      Math.round((finalAmount - walletContribution) * 100) / 100,
+    );
+
+    return { walletContribution, requiredExternalAmount };
+  }
+
+  private async lockTransactionForUpdate(
+    tx: Prisma.TransactionClient,
+    transactionId: string,
+  ) {
+    await tx.$executeRaw(
+      Prisma.sql`SELECT id FROM transactions WHERE id = ${transactionId} FOR UPDATE`,
+    );
+  }
+
+  private isGatewayPaymentConfirmed(
+    metadata: Record<string, any>,
+  ): boolean {
+    return metadata.gatewayPaymentStatus === 'PAID';
+  }
+
+  private isPrismaClientError(err: unknown): boolean {
+    if (typeof err !== 'object' || err === null || !('code' in err)) {
+      return false;
+    }
+
+    const code = (err as { code?: unknown }).code;
+    return typeof code === 'string' && code.startsWith('P');
+  }
+
+  private isRetryableFulfillmentError(err: unknown): boolean {
+    if (
+      err instanceof BadRequestException ||
+      err instanceof NotFoundException ||
+      err instanceof ConflictException
+    ) {
+      return false;
+    }
+
+    return this.isPrismaClientError(err);
+  }
+
+  private async withBookingFulfillmentRetry<T>(
+    operation: () => Promise<T>,
+    maxAttempts = 3,
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (err) {
+        if (!this.isRetryableFulfillmentError(err)) {
+          throw err;
+        }
+        lastError = err;
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Booking fulfillment failed after retries');
+  }
+
+  private async confirmGatewayPaymentOnIntent(
+    paymentIntentId: string,
+    verification: { responseBody: Record<string, any> },
+    metadata: Record<string, any>,
+  ) {
+    if (this.isGatewayPaymentConfirmed(metadata)) {
+      return;
+    }
+
+    const paidAmount = Number(verification.responseBody.amountPaid);
+    await this.prisma.transaction.updateMany({
+      where: {
+        id: paymentIntentId,
+        status: TransactionStatus.PENDING,
+      },
+      data: {
+        metadata: {
+          ...metadata,
+          gatewayPaymentStatus: 'PAID',
+          gatewayAmountPaid: paidAmount,
+          gatewayVerifiedAt: new Date().toISOString(),
+          paymentStatus: verification.responseBody.paymentStatus,
+          ...verification.responseBody,
+        } as any,
+      },
+    });
+  }
+
+  private async recordFulfillmentFailure(
+    paymentIntentId: string,
+    metadata: Record<string, any>,
+    error: unknown,
+  ) {
+    const message = error instanceof Error ? error.message : String(error);
+    const attempts = Number(metadata.bookingFulfillmentAttempts ?? 0) + 1;
+
+    try {
+      await this.prisma.transaction.update({
+        where: { id: paymentIntentId },
+        data: {
+          metadata: {
+            ...metadata,
+            gatewayPaymentStatus: metadata.gatewayPaymentStatus ?? 'PAID',
+            lastBookingFulfillmentError: message,
+            lastBookingFulfillmentAttemptAt: new Date().toISOString(),
+            bookingFulfillmentAttempts: attempts,
+          } as any,
+        },
+      });
+    } catch {
+      // Non-fatal: payment confirmation must not be lost because audit write failed.
+    }
+  }
+
+  private throwPaymentReceivedBookingPending(
+    bookingPaymentReference: string,
+    message: string,
+    retryable = true,
+  ): never {
+    throw new ConflictException({
+      message,
+      paymentReceived: true,
+      bookingCreated: false,
+      bookingPaymentReference,
+      retryable,
+    });
+  }
+
   private async prepareBookingPaymentContext(
     userId: string,
     payload: BookingPaymentPayloadDto,
   ) {
-    const { services, date, time, addressId, bookingType, discountCode } =
-      payload;
+    const {
+      services,
+      date,
+      time,
+      addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
+      bookingType,
+      discountCode,
+      branchId,
+    } = payload;
 
     const hasHomeService = services.some(
       (item) =>
         this.resolveServiceMode(item, bookingType) === BookingType.HOME_SERVICE,
     );
 
+    const locationData = buildBookingLocationCreateData({
+      addressId,
+      tempLatitude,
+      tempLongitude,
+      tempFullAddress,
+    });
+
     let address: Awaited<
       ReturnType<typeof this.prisma.address.findFirst>
     > | null = null;
     if (hasHomeService) {
-      address = await this.prisma.address.findFirst({
-        where: { id: addressId, userId },
-      });
+      if (locationData.addressId) {
+        address = await this.prisma.address.findFirst({
+          where: {
+            id: locationData.addressId,
+            userId,
+            deletedAt: null,
+          },
+        });
 
-      if (!address) {
-        throw new NotFoundException('Address not found');
+        if (!address) {
+          throw new NotFoundException('Address not found');
+        }
+      } else if (!hasTemporaryServiceLocation(locationData)) {
+        throw new BadRequestException(
+          'addressId or temporary location (tempLatitude, tempLongitude, tempFullAddress) is required for HOME_SERVICE bookings',
+        );
       }
     }
 
@@ -726,34 +946,14 @@ export class BookingPaymentService {
 
     const bookingDate = new Date(`${date}T${time}`);
 
-    const serviceRecords: BookingServiceRecord[] = [];
-
-    for (const item of services) {
-      const service = await this.prisma.service.findUnique({
-        where: { id: item.serviceId },
+    const serviceRecords =
+      await this.bookingLinePricingService.buildServiceRecords({
+        services,
+        bookingType,
+        branchId,
+        resolveServiceMode: (item, fallback) =>
+          this.resolveServiceMode(item, fallback),
       });
-
-      if (!service) {
-        throw new NotFoundException(`Service ${item.serviceId} not found`);
-      }
-
-      if (service.status !== 'ACTIVE') {
-        throw new BadRequestException(
-          `Service "${service.name}" is not available`,
-        );
-      }
-
-      const serviceMode = this.resolveServiceMode(item, bookingType);
-
-      serviceRecords.push(
-        buildBookingServiceRecord({
-          service,
-          unitPrice: resolvePriceForBookingType(service, serviceMode),
-          item,
-          serviceMode,
-        }),
-      );
-    }
 
     const effectiveBookingType =
       this.deriveBookingTypeFromServiceRecords(serviceRecords);
@@ -783,8 +983,10 @@ export class BookingPaymentService {
     return {
       user,
       address,
+      locationData,
       bookingType: effectiveBookingType,
       bookingDate,
+      branchId: branchId ?? null,
       serviceRecords,
       totalAmount,
       finalAmount,
@@ -810,11 +1012,8 @@ export class BookingPaymentService {
 
     const wallet = await this.getOrCreateWallet(userId);
     const walletBalance = Number(wallet.balance);
-    const walletContribution = Math.min(walletBalance, context.finalAmount);
-    const requiredExternalAmount = Math.max(
-      0,
-      Math.round((context.finalAmount - walletContribution) * 100) / 100,
-    );
+    const { walletContribution, requiredExternalAmount } =
+      this.computePaymentSplit(context.finalAmount, walletBalance);
 
     if (requiredExternalAmount <= 0) {
       throw new BadRequestException(
@@ -822,7 +1021,10 @@ export class BookingPaymentService {
       );
     }
 
-    if (Math.abs(Number(dto.amount) - requiredExternalAmount) > 0.001) {
+    if (
+      dto.amount !== undefined &&
+      Math.abs(Number(dto.amount) - requiredExternalAmount) > 0.001
+    ) {
       throw new BadRequestException(
         `Amount mismatch. Expected wallet shortfall ${requiredExternalAmount}, got ${dto.amount}`,
       );
@@ -944,6 +1146,7 @@ export class BookingPaymentService {
 
     if (
       status === TransactionStatus.PENDING &&
+      !this.isGatewayPaymentConfirmed(metadata) &&
       expiresAt &&
       expiresAt.getTime() <= Date.now()
     ) {
@@ -969,15 +1172,12 @@ export class BookingPaymentService {
     ) {
       const existingBooking = await this.prisma.booking.findFirst({
         where: { id: String(metadata.bookingId), userId },
-        include: { address: true },
+        include: bookingUserReadInclude,
       });
 
       if (existingBooking) {
         return {
-          booking: {
-            ...formatBookingResponse(existingBooking),
-            address: formatBookingAddress(existingBooking.address),
-          },
+          booking: formatBookingResponse(existingBooking),
           reservationCode: String(
             metadata.reservationCode ?? existingBooking.reservationCode,
           ),
@@ -1006,37 +1206,64 @@ export class BookingPaymentService {
       );
     }
 
-    const verification = await this.monnifyService.verifyPayment(
-      String(monnifyTransactionReference),
-    );
+    let activeMetadata = { ...metadata };
+    let verification: { responseBody: Record<string, any> };
 
-    if (verification.responseBody.paymentStatus !== 'PAID') {
-      await this.prisma.transaction.update({
-        where: { id: paymentIntent.id },
-        data: {
-          status: TransactionStatus.FAILED,
-          metadata: {
-            ...metadata,
-            paymentStatus: verification.responseBody.paymentStatus,
-          } as any,
+    if (this.isGatewayPaymentConfirmed(activeMetadata)) {
+      verification = {
+        responseBody: {
+          paymentStatus: 'PAID',
+          amountPaid:
+            activeMetadata.gatewayAmountPaid ?? Number(paymentIntent.amount),
         },
-      });
-
-      throw new BadRequestException(
-        `Payment not completed. Status: ${verification.responseBody.paymentStatus}`,
+      };
+    } else {
+      verification = await this.monnifyService.verifyPayment(
+        String(monnifyTransactionReference),
       );
+
+      if (verification.responseBody.paymentStatus !== 'PAID') {
+        await this.prisma.transaction.update({
+          where: { id: paymentIntent.id },
+          data: {
+            status: TransactionStatus.FAILED,
+            metadata: {
+              ...activeMetadata,
+              paymentStatus: verification.responseBody.paymentStatus,
+            } as any,
+          },
+        });
+
+        throw new BadRequestException(
+          `Payment not completed. Status: ${verification.responseBody.paymentStatus}`,
+        );
+      }
+
+      const paidAmount = Number(verification.responseBody.amountPaid);
+      const expectedAmount = Number(paymentIntent.amount);
+      if (
+        !Number.isFinite(paidAmount) ||
+        Math.abs(paidAmount - expectedAmount) > 0.001
+      ) {
+        throw new BadRequestException('Payment amount mismatch');
+      }
+
+      await this.confirmGatewayPaymentOnIntent(
+        paymentIntent.id,
+        verification,
+        activeMetadata,
+      );
+      activeMetadata = {
+        ...activeMetadata,
+        gatewayPaymentStatus: 'PAID',
+        gatewayAmountPaid: paidAmount,
+        gatewayVerifiedAt: new Date().toISOString(),
+        paymentStatus: verification.responseBody.paymentStatus,
+        ...verification.responseBody,
+      };
     }
 
-    const paidAmount = Number(verification.responseBody.amountPaid);
-    const expectedAmount = Number(paymentIntent.amount);
-    if (
-      !Number.isFinite(paidAmount) ||
-      Math.abs(paidAmount - expectedAmount) > 0.001
-    ) {
-      throw new BadRequestException('Payment amount mismatch');
-    }
-
-    const payload = metadata.bookingPayload as
+    const payload = activeMetadata.bookingPayload as
       | BookingPaymentPayloadDto
       | undefined;
     if (!payload) {
@@ -1044,18 +1271,46 @@ export class BookingPaymentService {
     }
 
     const context = await this.prepareBookingPaymentContext(userId, payload);
-    const expectedWalletContribution = Number(metadata.walletContribution ?? 0);
+    const expectedAmount = Number(paymentIntent.amount);
+    const expectedWalletContribution = Number(
+      activeMetadata.walletContribution ?? 0,
+    );
     const expectedTotalFromParts =
       Math.round((expectedAmount + expectedWalletContribution) * 100) / 100;
     if (Math.abs(context.finalAmount - expectedTotalFromParts) > 0.001) {
-      throw new BadRequestException(
-        `Current booking amount (${context.finalAmount}) no longer matches initialized split (${expectedTotalFromParts})`,
-      );
+      throw new BadRequestException({
+        message: `Current booking amount (${context.finalAmount}) no longer matches initialized split (${expectedTotalFromParts})`,
+        paymentReceived: true,
+        bookingCreated: false,
+        retryable: false,
+        bookingPaymentReference: dto.bookingPaymentReference,
+      });
     }
 
-    const addressLabel = context.address
-      ? context.address.fullAddress
-      : 'In-store (Walk-in)';
+    const wallet = await this.getOrCreateWallet(userId);
+    const currentWalletBalance = Number(wallet.balance);
+    if (expectedWalletContribution > currentWalletBalance) {
+      throw new BadRequestException({
+        message: `Wallet balance changed before verification. Needed ${expectedWalletContribution}, available ${currentWalletBalance}`,
+        paymentReceived: true,
+        bookingCreated: false,
+        retryable: true,
+        bookingPaymentReference: dto.bookingPaymentReference,
+      });
+    }
+
+    const walletDebitReference = `BOOK-WAL-${dto.bookingPaymentReference}`;
+
+    const addressLabel = resolveBookingAddressLabel({
+      address: context.address,
+      tempLatitude: context.locationData.tempLatitude,
+      tempLongitude: context.locationData.tempLongitude,
+      tempFullAddress: context.locationData.tempFullAddress,
+    });
+    const initialStatus = this.homeServiceBookingService.resolveInitialStatus(
+      context.bookingType,
+      context.serviceRecords,
+    );
     let result: {
       booking: Prisma.BookingGetPayload<{ include: { address: true } }> | null;
       reservationCode: string;
@@ -1063,11 +1318,14 @@ export class BookingPaymentService {
     };
 
     try {
-      result = await this.withReservationCodeRetry(async () => {
+      result = await this.withBookingFulfillmentRetry(async () =>
+        this.withReservationCodeRetry(async () => {
         const reservationCode =
           await this.reservationService.generateReservationCode();
 
         return this.prisma.$transaction(async (tx) => {
+          await this.lockTransactionForUpdate(tx, paymentIntent.id);
+
           const lockedIntent = await tx.transaction.findUnique({
             where: { id: paymentIntent.id },
           });
@@ -1097,28 +1355,22 @@ export class BookingPaymentService {
             };
           }
 
+          if (lockedIntent?.status !== TransactionStatus.PENDING) {
+            throw new ConflictException('Booking payment is no longer pending');
+          }
+
           if (walletContributionToDebit > 0) {
-            const wallet = await tx.wallet.findUnique({
-              where: { id: paymentIntent.walletId },
-            });
-
-            if (!wallet) {
-              throw new NotFoundException('Wallet not found');
-            }
-
-            if (Number(wallet.balance) < walletContributionToDebit) {
-              throw new BadRequestException(
-                `Wallet balance changed before verification. Needed ${walletContributionToDebit}, available ${Number(wallet.balance)}`,
-              );
-            }
-
-            await tx.wallet.update({
-              where: { id: paymentIntent.walletId },
-              data: {
-                balance: {
-                  decrement: walletContributionToDebit,
-                },
+            await this.walletDebitService.debitWalletAndRecordTx(tx, {
+              userId,
+              amount: walletContributionToDebit,
+              reference: walletDebitReference,
+              description: `Wallet contribution for booking payment ${dto.bookingPaymentReference}`,
+              metadata: {
+                purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
+                bookingPaymentReference: dto.bookingPaymentReference,
               },
+              insufficientBalanceMessage:
+                `Wallet balance changed before verification. Needed ${walletContributionToDebit}`,
             });
           }
 
@@ -1126,7 +1378,11 @@ export class BookingPaymentService {
             data: {
               userId,
               services: toBookingServicesJson(context.serviceRecords),
-              addressId: payload.addressId ?? null,
+              addressId: context.locationData.addressId,
+              tempLatitude: context.locationData.tempLatitude,
+              tempLongitude: context.locationData.tempLongitude,
+              tempFullAddress: context.locationData.tempFullAddress,
+              branchId: context.branchId,
               bookingDate: context.bookingDate,
               bookingTime: payload.time,
               bookingType: context.bookingType,
@@ -1137,28 +1393,24 @@ export class BookingPaymentService {
               guestEmail: payload.guestEmail ?? null,
               totalAmount: context.finalAmount,
               paymentMethod: PaymentMethod.MONNIFY,
-              status: BookingStatus.CONFIRMED,
+              status: initialStatus,
               notes:
                 `Paid online via MONNIFY (${dto.bookingPaymentReference})` +
                 (addressLabel ? ` | ${addressLabel}` : ''),
             },
-            include: {
-              address: true,
-            },
+            include: bookingUserReadInclude,
           });
 
           let influencerRewardUserId: string | null = null;
 
           if (walletContributionToDebit > 0) {
-            await tx.transaction.create({
-              data: {
+            await tx.transaction.updateMany({
+              where: {
                 walletId: paymentIntent.walletId,
-                amount: walletContributionToDebit,
+                reference: walletDebitReference,
                 type: TransactionType.DEBIT,
-                paymentMethod: 'WALLET',
-                reference: `BOOK-WAL-${booking.id}`,
-                description: `Wallet contribution for booking payment ${dto.bookingPaymentReference}`,
-                status: TransactionStatus.COMPLETED,
+              },
+              data: {
                 metadata: {
                   purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
                   bookingId: booking.id,
@@ -1191,8 +1443,11 @@ export class BookingPaymentService {
               );
           }
 
-          await tx.transaction.update({
-            where: { id: paymentIntent.id },
+          const finalized = await tx.transaction.updateMany({
+            where: {
+              id: paymentIntent.id,
+              status: TransactionStatus.PENDING,
+            },
             data: {
               status: TransactionStatus.COMPLETED,
               metadata: {
@@ -1208,13 +1463,18 @@ export class BookingPaymentService {
             },
           });
 
+          if (finalized.count === 0) {
+            throw new ConflictException('Booking payment already processed');
+          }
+
           return {
             booking,
             reservationCode,
             influencerRewardUserId,
           };
         });
-      });
+      }),
+      );
     } catch (err) {
       if (idempotencyKey && this.isUniqueConstraintError(err, 'idempotencyKey')) {
         const existing = await this.findBookingByIdempotencyKey(
@@ -1228,6 +1488,32 @@ export class BookingPaymentService {
           );
         }
       }
+
+      if (this.isGatewayPaymentConfirmed(activeMetadata)) {
+        await this.recordFulfillmentFailure(
+          paymentIntent.id,
+          activeMetadata,
+          err,
+        );
+
+        if (err instanceof ConflictException) {
+          const response = err.getResponse();
+          if (
+            typeof response === 'string' &&
+            response === 'Booking payment already processed'
+          ) {
+            throw err;
+          }
+        }
+
+        if (!(err instanceof BadRequestException)) {
+          this.throwPaymentReceivedBookingPending(
+            dto.bookingPaymentReference,
+            'Your payment was received, but booking creation is still pending. Please retry verification shortly.',
+          );
+        }
+      }
+
       throw err;
     }
 
@@ -1236,6 +1522,10 @@ export class BookingPaymentService {
     }
 
     const emailServices = toEmailServiceLines(context.serviceRecords);
+    const isHomeService = bookingNeedsBeauticianAssignment(
+      context.bookingType,
+      context.serviceRecords,
+    );
 
     void this.mailService.sendBookingConfirmationEmail(
       context.user.email,
@@ -1249,8 +1539,14 @@ export class BookingPaymentService {
         paymentMethod: 'MONNIFY',
         bookingIds: [result.booking.id],
         reservationCode: result.reservationCode,
+        isHomeService,
       },
     );
+    this.bookingPushNotifier.notifyConfirmed({
+      userId,
+      bookingId: result.booking.id,
+      reservationCode: result.reservationCode,
+    });
 
     if (payload.guestEmail && payload.guestName) {
       void this.mailService.sendGuestBookingEmail(
@@ -1277,13 +1573,19 @@ export class BookingPaymentService {
       void this.redis.del(`wallet:balance:${result.influencerRewardUserId}`);
     }
 
+    if (
+      result.booking &&
+      initialStatus === BookingStatus.PENDING_ASSIGNMENT
+    ) {
+      void this.homeServiceBookingService.triggerMatching(result.booking.id);
+    }
+
     return {
-      booking: {
-        ...formatBookingResponse(result.booking),
-        address: formatBookingAddress(result.booking.address),
-      },
+      booking: formatBookingResponse(result.booking),
       reservationCode: result.reservationCode,
-      message: 'Booking payment verified and booking created',
+      message: this.homeServiceBookingService.getPaymentConfirmationMessage(
+        initialStatus,
+      ),
     };
   }
 
@@ -1318,7 +1620,7 @@ export class BookingPaymentService {
       status: 'processed',
       bookingPaymentReference,
       reservationCode: result.reservationCode,
-      bookingId: result.booking.id,
+      bookingId: String((result.booking as Record<string, unknown>).id),
     };
   }
 
@@ -1357,6 +1659,12 @@ export class BookingPaymentService {
         })
       : null;
 
+    const gatewayPaymentConfirmed = this.isGatewayPaymentConfirmed(metadata);
+    const bookingPending =
+      gatewayPaymentConfirmed &&
+      paymentIntent.status === TransactionStatus.PENDING &&
+      !linkedBooking;
+
     return {
       bookingPaymentReference,
       provider: metadata.provider ?? 'monnify',
@@ -1365,6 +1673,13 @@ export class BookingPaymentService {
       gatewayReference: metadata.monnifyTransactionReference ?? null,
       paymentReference: metadata.monnifyPaymentReference ?? null,
       expiresAt: metadata.expiresAt ?? null,
+      gatewayPaymentConfirmed,
+      bookingPending,
+      canRetryVerification: bookingPending,
+      lastBookingFulfillmentError:
+        typeof metadata.lastBookingFulfillmentError === 'string'
+          ? metadata.lastBookingFulfillmentError
+          : null,
       booking: linkedBooking
         ? {
             ...linkedBooking,

@@ -13,8 +13,20 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { BookingType, ServiceStatus } from '@prisma/client';
 import { RedisService } from '../redis/redis.service';
+import { BranchCatalogService } from '../branch/services/branch-catalog.service';
+import { resolveBranchWalkInPrice } from '../branch/utils/branch-pricing.utils';
 
 const TTL = 300; // 5 minutes
+const CATEGORY_IMAGE_FOLDER = 'hairlux/service-categories';
+
+const categorySelect = {
+  id: true,
+  name: true,
+  description: true,
+  imageUrl: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 @Injectable()
 export class ServiceCatalogService {
@@ -22,6 +34,7 @@ export class ServiceCatalogService {
     private prisma: PrismaService,
     private cloudinary: CloudinaryService,
     private redis: RedisService,
+    private branchCatalogService: BranchCatalogService,
   ) {}
 
   private mapPublicService(
@@ -79,7 +92,7 @@ export class ServiceCatalogService {
     const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
 
-    const { categoryId, search, status, bookingType } = queryDto;
+    const { categoryId, search, status, bookingType, branchId } = queryDto;
 
     // Build where clause
     const where: {
@@ -109,48 +122,54 @@ export class ServiceCatalogService {
       where.isHomeServiceAvailable = true;
     }
 
+    let assignmentMap: Map<
+      string,
+      { serviceId: string; isAvailable: boolean; walkInPrice: unknown }
+    > | null = null;
+
+    if (branchId) {
+      await this.branchCatalogService.assertOpenBranch(branchId);
+      assignmentMap =
+        await this.branchCatalogService.getAvailableAssignmentsMap(branchId);
+    }
+
     const services = await this.prisma.service.findMany({
       where,
       include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
+        category: { select: categorySelect },
       },
       orderBy: {
         name: 'asc',
       },
     });
 
-    const result = services.map((service) =>
-      this.mapPublicService(service, bookingType),
+    const scopedServices = branchId
+      ? services.filter((service) => assignmentMap?.has(service.id))
+      : services;
+
+    const result = scopedServices.map((service) =>
+      this.mapPublicService(
+        this.applyBranchWalkInPrice(service, assignmentMap?.get(service.id)),
+        bookingType,
+      ),
     );
     await this.redis.set(cacheKey, result, TTL);
     return result;
   }
 
-  async findOne(id: string, bookingType?: BookingType) {
-    const cacheKey = `services:one:${id}:${bookingType ?? 'all'}`;
+  async findOne(
+    id: string,
+    bookingType?: BookingType,
+    branchId?: string,
+  ) {
+    const cacheKey = `services:one:${id}:${bookingType ?? 'all'}:${branchId ?? 'global'}`;
     const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
 
     const service = await this.prisma.service.findUnique({
       where: { id },
       include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
+        category: { select: categorySelect },
       },
     });
 
@@ -174,9 +193,46 @@ export class ServiceCatalogService {
       throw new NotFoundException('Service not available for HOME_SERVICE');
     }
 
-    const publicService = this.mapPublicService(service, bookingType);
+    let assignment:
+      | { serviceId: string; isAvailable: boolean; walkInPrice: unknown }
+      | undefined;
+
+    if (branchId) {
+      await this.branchCatalogService.assertOpenBranch(branchId);
+      assignment =
+        (await this.branchCatalogService.getAssignmentForService(
+          branchId,
+          id,
+        )) ?? undefined;
+
+      if (!assignment?.isAvailable) {
+        throw new NotFoundException('Service not found');
+      }
+    }
+
+    const publicService = this.mapPublicService(
+      this.applyBranchWalkInPrice(service, assignment),
+      bookingType,
+    );
     await this.redis.set(cacheKey, publicService, TTL);
     return publicService;
+  }
+
+  private applyBranchWalkInPrice<T extends { walkInPrice: unknown }>(
+    service: T,
+    assignment?: { walkInPrice: unknown } | null,
+  ): T {
+    if (!assignment) {
+      return service;
+    }
+
+    return {
+      ...service,
+      walkInPrice: resolveBranchWalkInPrice(
+        service as T & { walkInPrice: { toNumber: () => number } | number },
+        assignment as { walkInPrice: { toNumber: () => number } | number | null },
+      ),
+    };
   }
 
   async findAllCategories() {
@@ -192,6 +248,7 @@ export class ServiceCatalogService {
         id: true,
         name: true,
         description: true,
+        imageUrl: true,
         createdAt: true,
         updatedAt: true,
         _count: {
@@ -210,6 +267,7 @@ export class ServiceCatalogService {
       id: category.id,
       name: category.name,
       description: category.description,
+      imageUrl: category.imageUrl,
       createdAt: category.createdAt,
       updatedAt: category.updatedAt,
       serviceCount: category._count.services,
@@ -279,15 +337,7 @@ export class ServiceCatalogService {
         status: ServiceStatus.ACTIVE,
       },
       include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
+        category: { select: categorySelect },
       },
     });
 
@@ -363,15 +413,7 @@ export class ServiceCatalogService {
         ...(imageUrl && { imageUrl, imagePublicId }),
       },
       include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
+        category: { select: categorySelect },
       },
     });
 
@@ -396,15 +438,7 @@ export class ServiceCatalogService {
       where: { id },
       data: { status },
       include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
+        category: { select: categorySelect },
       },
     });
 
@@ -439,7 +473,14 @@ export class ServiceCatalogService {
     return { message: 'Service deleted successfully' };
   }
 
-  async createCategory(dto: CreateCategoryDto) {
+  async createCategory(
+    dto: CreateCategoryDto,
+    imageFile: Express.Multer.File,
+  ) {
+    if (!imageFile) {
+      throw new BadRequestException('A category image is required.');
+    }
+
     const existing = await this.prisma.serviceCategory.findFirst({
       where: { name: { equals: dto.name, mode: 'insensitive' } },
     });
@@ -447,10 +488,17 @@ export class ServiceCatalogService {
       throw new ConflictException('Category with this name already exists');
     }
 
+    const { secureUrl, publicId } = await this.cloudinary.uploadImage(
+      imageFile.buffer,
+      CATEGORY_IMAGE_FOLDER,
+    );
+
     const category = await this.prisma.serviceCategory.create({
       data: {
         name: dto.name,
         description: dto.description,
+        imageUrl: secureUrl,
+        imagePublicId: publicId,
       },
     });
 
@@ -461,7 +509,11 @@ export class ServiceCatalogService {
     return category;
   }
 
-  async updateCategory(id: string, dto: UpdateCategoryDto) {
+  async updateCategory(
+    id: string,
+    dto: UpdateCategoryDto,
+    imageFile?: Express.Multer.File,
+  ) {
     const existing = await this.prisma.serviceCategory.findUnique({
       where: { id },
     });
@@ -479,17 +531,34 @@ export class ServiceCatalogService {
       }
     }
 
+    let imageUrl: string | undefined;
+    let imagePublicId: string | undefined;
+    if (imageFile) {
+      const uploaded = await this.cloudinary.uploadImage(
+        imageFile.buffer,
+        CATEGORY_IMAGE_FOLDER,
+      );
+      imageUrl = uploaded.secureUrl;
+      imagePublicId = uploaded.publicId;
+
+      if (existing.imagePublicId) {
+        await this.cloudinary.deleteImage(existing.imagePublicId);
+      }
+    }
+
     const category = await this.prisma.serviceCategory.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.description !== undefined && { description: dto.description }),
+        ...(imageUrl && { imageUrl, imagePublicId }),
       },
     });
 
     await Promise.all([
       this.redis.del('categories:all'),
       this.redis.delByPattern('services:list:*'),
+      this.redis.delByPattern('services:one:*'),
     ]);
     return category;
   }
@@ -508,6 +577,10 @@ export class ServiceCatalogService {
     }
 
     await this.prisma.serviceCategory.delete({ where: { id } });
+
+    if (existing.imagePublicId) {
+      await this.cloudinary.deleteImage(existing.imagePublicId);
+    }
 
     await Promise.all([
       this.redis.del('categories:all'),

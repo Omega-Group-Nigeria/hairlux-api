@@ -1,13 +1,16 @@
 import {
   IsBoolean,
+  IsLatitude,
+  IsLongitude,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AddressComponentsDto } from './shared-address-components.dto';
 
 const trimString = ({ value }: { value: unknown }) =>
@@ -35,6 +38,30 @@ export class UpdateAddressDto {
   @IsNotEmpty({ message: 'fullAddress should not be empty' })
   @MaxLength(255)
   fullAddress?: string;
+
+  @ApiProperty({
+    example: 6.4474,
+    description: 'Latitude from maps pin / place (required on every update)',
+  })
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 7 },
+    { message: 'latitude must be a number with at most 7 decimal places' },
+  )
+  @IsLatitude({ message: 'latitude must be a valid latitude (-90 to 90)' })
+  latitude: number;
+
+  @ApiProperty({
+    example: 3.4721,
+    description: 'Longitude from maps pin / place (required on every update)',
+  })
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 7 },
+    { message: 'longitude must be a number with at most 7 decimal places' },
+  )
+  @IsLongitude({ message: 'longitude must be a valid longitude (-180 to 180)' })
+  longitude: number;
 
   @ApiPropertyOptional({
     example: '12 Admiralty Way',
