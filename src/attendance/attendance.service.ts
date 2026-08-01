@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AttendanceStatus, Prisma, LeaveRequestType } from '@prisma/client';
+import { AttendanceStatus, LeaveRequestType, Prisma } from '@prisma/client';
 import { LeaveService } from 'src/leave/leave.service';
 import { haversineDistanceMeters } from '../common/utils/geo.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -60,6 +60,7 @@ export class AttendanceService {
 
         let status: AttendanceStatus = AttendanceStatus.PRESENT;
         let lateMinutes: number | null = null;
+        let latePenaltyAmount: number | null = null;
 
         if (holidayException?.isClosed) {
             status = AttendanceStatus.PUBLIC_HOLIDAY;
@@ -91,6 +92,7 @@ export class AttendanceService {
                     if (!approvedPermission) {
                         status = AttendanceStatus.LATE;
                         lateMinutes = Math.round((now.getTime() - scheduledStart.getTime()) / 60000);
+                        latePenaltyAmount = await this.calculateLatePenalty(lateMinutes, graceMinutes);
                     }
                 }
             }
@@ -106,8 +108,42 @@ export class AttendanceService {
                 checkInLng: dto.lng,
                 status,
                 lateMinutes,
+                latePenaltyAmount,
             },
         });
+    }
+
+    /**
+     * Charges only for minutes beyond the grace period, not the full
+     * lateMinutes figure (which is measured from scheduled start, grace
+     * period included) — otherwise the grace period wouldn't actually mean
+     * anything. Returns null when the feature is off or nothing's owed.
+     */
+    private async calculateLatePenalty(lateMinutes: number, graceMinutes: number): Promise<number | null> {
+        const settings = await this.getLatePenaltySettings();
+        if (!settings?.isActive) return null;
+
+        const penalizedMinutes = Math.max(0, lateMinutes - graceMinutes);
+        if (penalizedMinutes === 0) return null;
+
+        return penalizedMinutes * Number(settings.amountPerMinute);
+    }
+
+    async getLatePenaltySettings() {
+        return this.prisma.latePenaltySettings.findFirst();
+    }
+
+    async upsertLatePenaltySettings(dto: { isActive?: boolean; amountPerMinute?: number }) {
+        const existing = await this.prisma.latePenaltySettings.findFirst();
+
+        return existing
+            ? this.prisma.latePenaltySettings.update({ where: { id: existing.id }, data: dto })
+            : this.prisma.latePenaltySettings.create({
+                data: {
+                    isActive: dto.isActive ?? false,
+                    amountPerMinute: dto.amountPerMinute ?? 0,
+                },
+            });
     }
 
     async clockOut(staffId: string, dto: ClockOutDto) {

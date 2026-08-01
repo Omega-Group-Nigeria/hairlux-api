@@ -7,6 +7,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { AttendanceService } from './attendance.service';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
+import { UpdateLatePenaltySettingsDto } from './dto/update-late-penalty-settings.dto';
 
 @ApiTags('Admin - Attendance')
 @ApiBearerAuth('JWT-auth')
@@ -15,6 +16,23 @@ import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminAttendanceController {
     constructor(private readonly attendanceService: AttendanceService) { }
+
+    @Get('late-penalty-settings')
+    @ApiOperation({
+        summary: 'Get the late-penalty settings',
+        description: 'Grace-period minutes live on Branches (and per-staff overrides) — this only covers the per-minute charge beyond that.',
+    })
+    async getLatePenaltySettings() {
+        const data = await this.attendanceService.getLatePenaltySettings();
+        return { success: true, message: 'Late penalty settings retrieved successfully', data };
+    }
+
+    @Patch('late-penalty-settings')
+    @ApiOperation({ summary: 'Update the late-penalty settings' })
+    async updateLatePenaltySettings(@Body() dto: UpdateLatePenaltySettingsDto) {
+        const data = await this.attendanceService.upsertLatePenaltySettings(dto);
+        return { success: true, message: 'Late penalty settings updated successfully', data };
+    }
 
     @Get()
     @ApiOperation({ summary: 'List attendance records, filterable by staff/branch/date range' })
