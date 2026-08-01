@@ -31,12 +31,12 @@ import { PERMISSIONS } from '../common/constants/permissions';
 import { CompanyDocumentService } from './company-document.service';
 import { AddEmploymentHistoryDto } from './dto/add-employment-history.dto';
 import { ArchiveStaffDto } from './dto/archive-staff.dto';
+import { AssignRoleDto } from './dto/assign-role.dto';
 import { CreateStaffLocationDto } from './dto/create-staff-location.dto';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { QueryStaffLocationsDto } from './dto/query-staff-locations.dto';
 import { QueryStaffDto } from './dto/query-staff.dto';
 import { QueryUpcomingBirthdaysDto } from './dto/query-upcoming-birthdays.dto';
-import { SetAdminAccessDto } from './dto/set-admin-access.dto';
 import { TransferBranchDto } from './dto/transfer-branch.dto';
 import { UpdateEmploymentHistoryDto } from './dto/update-employment-history.dto';
 import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
@@ -458,33 +458,38 @@ export class AdminStaffController {
     return { success: true, message: 'Staff code history retrieved successfully', data };
   }
 
-  @Get(':id/admin-access')
-  @ApiOperation({ summary: "Check whether a staff member's account currently has admin portal access" })
+  @Get(':id/role-assignment')
+  @ApiOperation({ summary: "Get a staff member's current role assignment — permission set and whether it includes admin portal login" })
   @ApiParam({ name: 'id', description: 'Staff ID' })
   @Permission(PERMISSIONS.STAFF_READ)
-  async getAdminAccess(@Param('id', ParseUUIDPipe) id: string) {
-    const data = await this.staffService.getAdminAccessStatus(id);
-    return { success: true, message: 'Admin access status retrieved successfully', data };
+  async getRoleAssignment(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.staffService.getRoleAssignment(id);
+    return { success: true, message: 'Role assignment retrieved successfully', data };
   }
 
-  @Patch(':id/admin-access')
+  @Patch(':id/role-assignment')
   @ApiOperation({
-    summary: 'Grant or revoke admin portal access for a staff member',
-    description: 'Additive — adds/removes an ADMIN role assignment without touching their base role, so granting admin access never costs them staff-portal access.',
+    summary: 'Assign a permission role to a staff member',
+    description: 'Sets their AdminRole (permission set), applied in both portals wherever permissions are checked. Admin dashboard login is a separate, explicit flag on this same call — a role can be assigned purely for staff-portal elevation with no admin-portal access at all.',
   })
   @ApiParam({ name: 'id', description: 'Staff ID' })
   @Roles(UserRole.SUPER_ADMIN)
-  async setAdminAccess(
+  async assignRole(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: SetAdminAccessDto,
+    @Body() dto: AssignRoleDto,
     @Req() req: any,
   ) {
-    const data = await this.staffService.setAdminAccess(id, dto.grant, req.user.id);
-    return {
-      success: true,
-      message: dto.grant ? 'Admin access granted successfully' : 'Admin access revoked successfully',
-      data,
-    };
+    const data = await this.staffService.assignRole(id, dto.adminRoleId, dto.grantPortalLogin, req.user.id);
+    return { success: true, message: 'Role assigned successfully', data };
+  }
+
+  @Delete(':id/role-assignment')
+  @ApiOperation({ summary: 'Remove a staff member\'s role assignment — clears their permission set and any admin portal login' })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Roles(UserRole.SUPER_ADMIN)
+  async removeRole(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.staffService.removeRole(id);
+    return { success: true, message: 'Role assignment removed successfully', data };
   }
 
 

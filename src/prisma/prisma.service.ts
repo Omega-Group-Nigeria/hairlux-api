@@ -320,6 +320,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.staffCodeHistory;
   }
 
+  get expiryAlert() {
+    return this.client.expiryAlert;
+  }
+
+  get productSale() {
+    return this.client.productSale;
+  }
+
+  get productSaleItem() {
+    return this.client.productSaleItem;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
@@ -339,5 +351,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   get stockTransfer() {
     return this.client.stockTransfer;
   }
+
+  
 
 }

@@ -90,6 +90,12 @@ export const PERMISSIONS = {
   APPLICATION_READ: 'application:read',
   APPLICATION_MANAGE_STATUS: 'application:manage_status',
   APPLICATION_CONVERT: 'application:convert',
+
+  // ── Staff Portal (module visibility — read by staff-portal, not admin endpoints) ──
+  STAFF_PORTAL_INVENTORY: 'staff-portal:inventory', // See the Inventory module
+  STAFF_PORTAL_BOOKINGS: 'staff-portal:bookings', // See the Bookings module
+  STAFF_PORTAL_SALES: 'staff-portal:sales', // See the Sell Products module
+  STAFF_PORTAL_APPROVALS: 'staff-portal:approvals', // See My Approvals (in addition to branch managers, who always see it)
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -209,6 +215,20 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
+    group: 'Applications',
+    permissions: [
+      { key: PERMISSIONS.APPLICATION_READ, label: 'View job applications' },
+      {
+        key: PERMISSIONS.APPLICATION_MANAGE_STATUS,
+        label: 'Move applications through the review pipeline (shortlist, reject, interview, etc.)',
+      },
+      {
+        key: PERMISSIONS.APPLICATION_CONVERT,
+        label: 'Convert an accepted application into a staff record',
+      },
+    ],
+  },
+  {
     group: 'Influencers',
     permissions: [
       { key: PERMISSIONS.INFLUENCERS_READ, label: 'View influencers & stats' },
@@ -297,6 +317,28 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.ROLES_UPDATE, label: 'Edit role permissions' },
       { key: PERMISSIONS.ROLES_DELETE, label: 'Delete admin roles' },
       { key: PERMISSIONS.ROLES_ASSIGN, label: 'Assign roles to admin users' },
+    ],
+  },
+
+  {
+    group: 'Staff Portal',
+    permissions: [
+      {
+        key: PERMISSIONS.STAFF_PORTAL_INVENTORY,
+        label: 'See the Inventory module on the staff dashboard',
+      },
+      {
+        key: PERMISSIONS.STAFF_PORTAL_BOOKINGS,
+        label: 'See the Bookings module on the staff dashboard',
+      },
+      {
+        key: PERMISSIONS.STAFF_PORTAL_SALES,
+        label: 'See the Sell Products module on the staff dashboard',
+      },
+      {
+        key: PERMISSIONS.STAFF_PORTAL_APPROVALS,
+        label: 'See My Approvals on the staff dashboard (branch managers always see this regardless)',
+      },
     ],
   },
 ];

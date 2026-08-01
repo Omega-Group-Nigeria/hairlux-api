@@ -34,6 +34,7 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { LeaveModule } from './leave/leave.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SalonBookingModule } from './salon-booking/salon-booking.module';
+import { ProductSaleModule } from './product-sale/product-sale.module'; 
 
 @Module({
   imports: [
@@ -103,6 +104,8 @@ import { SalonBookingModule } from './salon-booking/salon-booking.module';
     LeaveModule,
     InventoryModule,
     SalonBookingModule,
+    ProductSaleModule,
+    ProductSaleModule,
     
   ],
   controllers: [AppController],

@@ -19,6 +19,7 @@ import { RequestTransferDto } from './dto/request-transfer.dto';
 import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
 
 const ESCALATION_WINDOW_HOURS = 6;
+const EXPIRY_WARNING_DAYS = 30; // items expiring within this many days get an EXPIRING_SOON alert
 const STAGE_ORDER: LowStockAlertStage[] = [
     LowStockAlertStage.SUPERVISOR,
     LowStockAlertStage.OPERATIONS,
@@ -145,7 +146,7 @@ export class InventoryService {
     }
 
     /** The actual stock mutation — only ever called once an adjustment is approved (or by an elevated Admin submitting one, which auto-approves). */
-    private async applyAdjustment(itemId: string, quantityDelta: number, reason: string, staffId: string) {
+    private async applyAdjustment(itemId: string, quantityDelta: number, reason: string, staffId: string | undefined) {
         const item = await this.findOne(itemId);
         const newQuantity = item.currentQuantity + quantityDelta;
 
@@ -182,7 +183,7 @@ export class InventoryService {
      * immediately, still going through the same ApprovalRequest/Action audit
      * trail as a regular request, just pre-approved by the same actor.
      */
-    async requestStockAdjustment(itemId: string, dto: AdjustStockDto, staffId: string, isElevated: boolean) {
+    async requestStockAdjustment(itemId: string, dto: AdjustStockDto, staffId: string | undefined, isElevated: boolean) {
         const item = await this.findOne(itemId);
 
         const approvalRequest = await this.approvalService.create({
@@ -208,7 +209,7 @@ export class InventoryService {
         return adjustmentRequest;
     }
 
-    async approveStockAdjustment(requestId: string, actorId: string, isElevated: boolean) {
+    async approveStockAdjustment(requestId: string, actorId: string | undefined, isElevated: boolean) {
         const request = await this.prisma.stockAdjustmentRequest.findUnique({ where: { id: requestId } });
         if (!request) throw new NotFoundException('Stock adjustment request not found');
         if (request.status !== 'PENDING') {
@@ -227,7 +228,7 @@ export class InventoryService {
         });
     }
 
-    async rejectStockAdjustment(requestId: string, actorId: string, isElevated: boolean, reason: string) {
+    async rejectStockAdjustment(requestId: string, actorId: string | undefined, isElevated: boolean, reason: string) {
         const request = await this.prisma.stockAdjustmentRequest.findUnique({ where: { id: requestId } });
         if (!request) throw new NotFoundException('Stock adjustment request not found');
         if (request.status !== 'PENDING') {
@@ -242,7 +243,7 @@ export class InventoryService {
         });
     }
 
-    async reassignStockAdjustment(requestId: string, actorId: string, isElevated: boolean, toApproverId: string, reason: string) {
+    async reassignStockAdjustment(requestId: string, actorId: string | undefined, isElevated: boolean, toApproverId: string, reason: string) {
         const request = await this.prisma.stockAdjustmentRequest.findUnique({ where: { id: requestId } });
         if (!request) throw new NotFoundException('Stock adjustment request not found');
         if (request.status !== 'PENDING') {
@@ -332,7 +333,7 @@ export class InventoryService {
         });
     }
 
-    async resolveAlert(alertId: string, staffId: string) {
+    async resolveAlert(alertId: string, staffId: string | undefined) {
         const alert = await this.prisma.lowStockAlert.findUnique({ where: { id: alertId } });
         if (!alert) throw new NotFoundException('Alert not found');
         if (alert.resolvedAt) throw new BadRequestException('Alert already resolved');
@@ -341,6 +342,71 @@ export class InventoryService {
             where: { id: alertId },
             data: { resolvedAt: new Date(), resolvedById: staffId },
         });
+    }
+
+    // ── Expiry Alerts ──────────────────────────────────────────────────────
+    // Separate from low-stock alerts — a product can be well-stocked and
+    // still be sitting on a shelf past (or approaching) its expiry date.
+
+    async findExpiryAlerts(branchId?: string, resolved?: boolean) {
+        return this.prisma.expiryAlert.findMany({
+            where: {
+                ...(resolved !== undefined && { resolvedAt: resolved ? { not: null } : null }),
+                item: branchId ? { branchId } : undefined,
+            },
+            include: { item: { include: { branch: { select: { name: true } } } } },
+            orderBy: { triggeredAt: 'desc' },
+        });
+    }
+
+    async resolveExpiryAlert(alertId: string, staffId: string | undefined) {
+        const alert = await this.prisma.expiryAlert.findUnique({ where: { id: alertId } });
+        if (!alert) throw new NotFoundException('Expiry alert not found');
+        if (alert.resolvedAt) throw new BadRequestException('Alert already resolved');
+
+        return this.prisma.expiryAlert.update({
+            where: { id: alertId },
+            data: { resolvedAt: new Date(), resolvedById: staffId },
+        });
+    }
+
+    /**
+     * Runs once daily — checks every item with an expiry date set and either
+     * opens or upgrades an alert. Idempotent: an item with an already-open
+     * alert at the correct severity is left alone (no duplicate spam); one
+     * approaching expiry that's since actually expired gets upgraded from
+     * EXPIRING_SOON to EXPIRED rather than getting a second alert.
+     */
+    @Cron(CronExpression.EVERY_DAY_AT_6AM)
+    async checkExpiringItems() {
+        const now = new Date();
+        const warningCutoff = new Date(now.getTime() + EXPIRY_WARNING_DAYS * 24 * 60 * 60 * 1000);
+
+        const candidates = await this.prisma.inventoryItem.findMany({
+            where: { expiryDate: { not: null, lte: warningCutoff }, currentQuantity: { gt: 0 } },
+        });
+
+        let opened = 0;
+        for (const item of candidates) {
+            if (!item.expiryDate) continue;
+            const severity = item.expiryDate <= now ? 'EXPIRED' : 'EXPIRING_SOON';
+
+            const openAlert = await this.prisma.expiryAlert.findFirst({
+                where: { itemId: item.id, resolvedAt: null },
+            });
+
+            if (!openAlert) {
+                await this.prisma.expiryAlert.create({ data: { itemId: item.id, severity } });
+                opened += 1;
+            } else if (openAlert.severity !== severity && severity === 'EXPIRED') {
+                // Upgrade in place rather than opening a second alert for the same item.
+                await this.prisma.expiryAlert.update({ where: { id: openAlert.id }, data: { severity } });
+            }
+        }
+
+        if (opened) {
+            this.logger.log(`Opened ${opened} new expiry alert(s)`);
+        }
     }
 
     /** Runs every 30 minutes; escalates any alert that's sat unresolved past the 6-hour window at its current stage. */
@@ -432,7 +498,7 @@ export class InventoryService {
         });
     }
 
-    async approveTransfer(transferId: string, actorId: string, isElevated: boolean) {
+    async approveTransfer(transferId: string, actorId: string | undefined, isElevated: boolean) {
         const transfer = await this.prisma.stockTransfer.findUnique({
             where: { id: transferId },
             include: { fromItem: true },
@@ -521,7 +587,7 @@ export class InventoryService {
         return this.prisma.stockTransfer.findUnique({ where: { id: transferId } });
     }
 
-    async rejectTransfer(transferId: string, actorId: string, isElevated: boolean, dto: RejectTransferDto) {
+    async rejectTransfer(transferId: string, actorId: string | undefined, isElevated: boolean, dto: RejectTransferDto) {
         const transfer = await this.prisma.stockTransfer.findUnique({ where: { id: transferId } });
         if (!transfer) throw new NotFoundException('Transfer not found');
         if (transfer.status !== StockTransferStatus.PENDING) {
@@ -538,7 +604,7 @@ export class InventoryService {
         });
     }
 
-    async reassignTransfer(transferId: string, actorId: string, isElevated: boolean, toApproverId: string, reason: string) {
+    async reassignTransfer(transferId: string, actorId: string | undefined, isElevated: boolean, toApproverId: string, reason: string) {
         const transfer = await this.prisma.stockTransfer.findUnique({ where: { id: transferId } });
         if (!transfer) throw new NotFoundException('Transfer not found');
         if (transfer.status !== StockTransferStatus.PENDING) {

@@ -712,6 +712,14 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
           include: { location: true },
         },
         reportingTo: { select: { id: true, name: true, currentRole: true } },
+        managedBranch: { select: { id: true, name: true } },
+        user: {
+          select: {
+            adminRole: {
+              select: { id: true, name: true, permissions: { select: { permission: true } } },
+            },
+          },
+        },
       } as unknown as QueryArgs,
     });
 
@@ -719,8 +727,29 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException('No staff record linked to this account');
     }
 
+    // Flatten for convenience — frontend reads staff.permissions directly
+    // rather than digging through user.adminRole.permissions[].permission.
+    const rawPermissions = (staff as unknown as { user?: { adminRole?: { permissions?: { permission: string }[] } | null } }).user?.adminRole?.permissions;
+    (staff as unknown as { permissions: string[] }).permissions = (rawPermissions ?? []).map((p) => p.permission);
+
     await this.redis.set(cacheKey, staff, TTL);
     return this.attachApprovedPhotoUrl(staff as unknown as { id: string; passportPhotoUrl?: string | null });
+  }
+
+  /**
+   * Same as findByUserId(), but returns null instead of throwing when the
+   * account has no linked Staff record. For admin-elevated actions (adjust
+   * stock, complete a booking, etc.) where attribution to a staff member is
+   * nice-to-have but not required — a pure admin account with no Staff
+   * profile should still be able to perform these, not get blocked by an
+   * audit-trail field that was never meant to gate the action itself.
+   */
+  async findByUserIdOrNull(userId: string) {
+    try {
+      return await this.findByUserId(userId);
+    } catch {
+      return null;
+    }
   }
 
   async findAll(queryDto: QueryStaffDto) {
@@ -1114,48 +1143,97 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Whether this staff member's linked User account currently has admin
-   * portal access — via the additive UserRoleAssignment mechanism (their
-   * base role stays whatever it was, e.g. STAFF, so granting admin access
-   * never costs them staff-portal access). Distinct from the legacy
-   * "Users > Admin Users" path, which set `User.role` directly and predates
-   * this toggle — this only reports/manages the additive assignment.
+   * A staff member's current role assignment — the permission set (AdminRole)
+   * applies wherever anything checks permissions, in *either* portal. Admin
+   * portal login capability (User.role === 'ADMIN') is a separate, explicit
+   * flag on top of that — assigning a role doesn't by itself grant a login;
+   * see assignRole()'s grantPortalLogin param.
    */
-  async getAdminAccessStatus(staffId: string) {
+  async getRoleAssignment(staffId: string) {
     const staff = await this.staffModel.findUnique({ where: { id: staffId }, select: { userId: true } }) as unknown as { userId: string | null } | null;
     if (!staff) throw new NotFoundException('Staff record not found');
-    if (!staff.userId) return { hasAdminAccess: false, linkedToUserAccount: false };
+    if (!staff.userId) {
+      return { linkedToUserAccount: false, adminRoleId: null, adminRoleName: null, permissions: [] as string[], hasAdminPortalLogin: false };
+    }
 
-    const assignment = await this.prisma.userRoleAssignment.findFirst({
-      where: { userId: staff.userId, role: { in: ['ADMIN', 'SUPER_ADMIN'] } },
-    });
-    return { hasAdminAccess: !!assignment, linkedToUserAccount: true };
+    const user = await this.prisma.user.findUnique({
+      where: { id: staff.userId },
+      select: {
+        role: true,
+        adminRoleId: true,
+        adminRole: { select: { id: true, name: true, permissions: { select: { permission: true } } } },
+      },
+    }) as unknown as {
+      role: string;
+      adminRoleId: string | null;
+      adminRole: { id: string; name: string; permissions: { permission: string }[] } | null;
+    } | null;
+
+    return {
+      linkedToUserAccount: true,
+      adminRoleId: user?.adminRoleId ?? null,
+      adminRoleName: user?.adminRole?.name ?? null,
+      permissions: (user?.adminRole?.permissions ?? []).map((p) => p.permission),
+      hasAdminPortalLogin: user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN',
+    };
   }
 
-  async setAdminAccess(staffId: string, grant: boolean, actorId?: string) {
+  /**
+   * Assigns a permission set to a staff member. `grantPortalLogin` is
+   * independent of the role itself — a Supervisor role can be assigned
+   * purely for staff-portal elevation (no admin dashboard access at all),
+   * or with portal login on top, entirely by this flag.
+   */
+  async assignRole(staffId: string, adminRoleId: string, grantPortalLogin: boolean, actorId?: string) {
     const staff = await this.staffModel.findUnique({ where: { id: staffId }, select: { userId: true, name: true } }) as unknown as { userId: string | null; name: string } | null;
     if (!staff) throw new NotFoundException('Staff record not found');
     if (!staff.userId) {
-      throw new BadRequestException(`${staff.name} has no linked login account yet, so admin access cannot be granted. They need to complete account setup first.`);
+      throw new BadRequestException(`${staff.name} has no linked login account yet, so a role cannot be assigned. They need to complete account setup first.`);
     }
 
-    if (grant) {
-      const existing = await this.prisma.userRoleAssignment.findFirst({
-        where: { userId: staff.userId, role: 'ADMIN' },
+    const role = await this.prisma.adminRole.findUnique({ where: { id: adminRoleId } });
+    if (!role) throw new NotFoundException('The specified admin role does not exist');
+    if (!role.isActive) throw new BadRequestException(`Admin role "${role.name}" is inactive`);
+
+    await this.prisma.user.update({
+      where: { id: staff.userId },
+      data: { adminRoleId, role: grantPortalLogin ? 'ADMIN' : 'STAFF' },
+    });
+
+    // Preserve staff-portal access when granting portal login: the base
+    // `role` field just became ADMIN, so without an explicit STAFF
+    // UserRoleAssignment the multi-role backend guards would no longer see
+    // them as STAFF. convertToStaff already grants one at hire, but ensure
+    // it exists regardless (e.g. staff created before this feature).
+    if (grantPortalLogin) {
+      const existingStaffAssignment = await this.prisma.userRoleAssignment.findFirst({
+        where: { userId: staff.userId, role: 'STAFF' },
       });
-      if (!existing) {
+      if (!existingStaffAssignment) {
         await this.prisma.userRoleAssignment.create({
-          data: { userId: staff.userId, role: 'ADMIN', assignedById: actorId ?? null },
+          data: { userId: staff.userId, role: 'STAFF', assignedById: actorId ?? null },
         });
       }
-    } else {
-      await this.prisma.userRoleAssignment.deleteMany({
-        where: { userId: staff.userId, role: { in: ['ADMIN', 'SUPER_ADMIN'] } },
-      });
     }
 
     await this.invalidateCache(staffId);
-    return this.getAdminAccessStatus(staffId);
+    return this.getRoleAssignment(staffId);
+  }
+
+  async removeRole(staffId: string) {
+    const staff = await this.staffModel.findUnique({ where: { id: staffId }, select: { userId: true, name: true } }) as unknown as { userId: string | null; name: string } | null;
+    if (!staff) throw new NotFoundException('Staff record not found');
+    if (!staff.userId) {
+      throw new BadRequestException(`${staff.name} has no linked login account.`);
+    }
+
+    await this.prisma.user.update({
+      where: { id: staff.userId },
+      data: { adminRoleId: null, role: 'STAFF' },
+    });
+
+    await this.invalidateCache(staffId);
+    return this.getRoleAssignment(staffId);
   }
 
   async getDisciplinaryActions(staffId: string) {

@@ -63,6 +63,13 @@ export class StaffSalonBookingController {
         return { success: true, message: 'Commission summary retrieved successfully', data };
     }
 
+    @Get('customers/search')
+    @ApiOperation({ summary: 'Look up existing customers by name or phone, for prefilling a new booking' })
+    async searchCustomers(@Query('q') q?: string) {
+        const data = await this.salonBookingService.searchCustomers(q ?? '');
+        return { success: true, message: 'Customers retrieved successfully', data };
+    }
+
     @Get(':id')
     @ApiOperation({ summary: 'Get a single booking' })
     @ApiParam({ name: 'id' })
