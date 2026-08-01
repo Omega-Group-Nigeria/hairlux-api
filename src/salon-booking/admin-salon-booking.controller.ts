@@ -26,8 +26,8 @@ export class AdminSalonBookingController {
     @Post()
     @ApiOperation({ summary: 'Create a walk-in / in-salon booking' })
     async create(@Req() req: any, @Body() dto: CreateSalonBookingDto) {
-        const staff = await this.staffService.findByUserId(req.user.id);
-        const data = await this.salonBookingService.create(dto, staff.id);
+        const staff = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.salonBookingService.create(dto, staff?.id);
         return { success: true, message: 'Booking created successfully', data };
     }
     @Get()
@@ -43,6 +43,13 @@ export class AdminSalonBookingController {
     async findByReservationCode(@Param('code') code: string) {
         const data = await this.salonBookingService.findByReservationCode(code);
         return { success: true, message: 'Reservation found', data };
+    }
+
+    @Get('customers/search')
+    @ApiOperation({ summary: 'Look up existing customers by name or phone, for prefilling a new booking' })
+    async searchCustomers(@Query('q') q?: string) {
+        const data = await this.salonBookingService.searchCustomers(q ?? '');
+        return { success: true, message: 'Customers retrieved successfully', data };
     }
 
     @Get(':id')
@@ -84,8 +91,8 @@ export class AdminSalonBookingController {
     })
     @ApiParam({ name: 'id' })
     async complete(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
-        const staff = await this.staffService.findByUserId(req.user.id);
-        const data = await this.salonBookingService.complete(id, staff.id);
+        const staff = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.salonBookingService.complete(id, staff?.id);
         return { success: true, message: 'Booking completed successfully', data };
     }
 

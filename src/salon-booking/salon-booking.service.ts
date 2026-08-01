@@ -27,7 +27,7 @@ export class SalonBookingService {
         private inventoryService: InventoryService,
     ) { }
 
-    async create(dto: CreateSalonBookingDto, createdById: string) {
+    async create(dto: CreateSalonBookingDto, createdById: string | undefined) {
         if (!dto.branchId) {
             throw new BadRequestException('branchId is required');
         }
@@ -51,9 +51,10 @@ export class SalonBookingService {
             inventoryLines = await this.resolveInventoryLines(dto.branchId, dto.inventoryItems);
         }
 
+        const servicePrices = await this.resolveServicePrices(dto.branchId, serviceIds);
         const serviceLines = dto.services.map((line) => {
             const service = services.find((s) => s.id === line.serviceId)!;
-            return { serviceId: service.id, price: Number(service.walkInPrice), quantity: line.quantity ?? 1 };
+            return { serviceId: service.id, price: servicePrices.get(service.id) ?? Number(service.walkInPrice), quantity: line.quantity ?? 1 };
         });
 
         const totalAmount = this.computeTotal(serviceLines, inventoryLines);
@@ -84,6 +85,67 @@ export class SalonBookingService {
     }
 
     /** Matches by phone (the de-dup key) — repeat visits reuse the same Customer row. */
+    /**
+     * Looks up existing customers by name or phone, for the "look this
+     * person up instead of retyping their details" flow when starting a
+     * new booking. Searches both the lightweight Customer table (people
+     * who've had a walk-in before, may or may not have an app account) and
+     * real User accounts (role USER — people with an app account who may
+     * never have walked in before). A Customer already linked to a User is
+     * deduplicated so it doesn't show up twice.
+     */
+    async searchCustomers(query: string) {
+        const q = query.trim();
+        if (!q) return [];
+
+        const customers = await this.prisma.customer.findMany({
+            where: {
+                OR: [
+                    { name: { contains: q, mode: 'insensitive' } },
+                    { phone: { contains: q } },
+                ],
+            },
+            take: 10,
+        });
+
+        const users = await this.prisma.user.findMany({
+            where: {
+                role: 'USER',
+                OR: [
+                    { firstName: { contains: q, mode: 'insensitive' } },
+                    { lastName: { contains: q, mode: 'insensitive' } },
+                    { phone: { contains: q } },
+                ],
+            },
+            take: 10,
+            select: { id: true, firstName: true, lastName: true, phone: true, email: true },
+        });
+
+        const linkedUserIds = new Set(customers.filter((c) => c.userId).map((c) => c.userId));
+
+        const fromCustomers = customers.map((c) => ({
+            source: 'customer' as const,
+            customerId: c.id,
+            userId: c.userId,
+            name: c.name,
+            phone: c.phone,
+            email: c.email,
+        }));
+
+        const fromUsers = users
+            .filter((u) => !linkedUserIds.has(u.id))
+            .map((u) => ({
+                source: 'user' as const,
+                customerId: null,
+                userId: u.id,
+                name: `${u.firstName} ${u.lastName}`.trim(),
+                phone: u.phone,
+                email: u.email,
+            }));
+
+        return [...fromCustomers, ...fromUsers].slice(0, 15);
+    }
+
     private async findOrCreateCustomer(name: string, phone: string, email?: string) {
         const existing = await this.prisma.customer.findUnique({ where: { phone } });
         if (existing) return existing;
@@ -115,9 +177,10 @@ export class SalonBookingService {
             throw new BadRequestException('One or more services were not found');
         }
 
+        const servicePrices = await this.resolveServicePrices(dto.branchId, serviceIds);
         const serviceLines = dto.services.map((line) => {
             const service = services.find((s) => s.id === line.serviceId)!;
-            return { serviceId: service.id, price: Number(service.walkInPrice), quantity: line.quantity ?? 1 };
+            return { serviceId: service.id, price: servicePrices.get(service.id) ?? Number(service.walkInPrice), quantity: line.quantity ?? 1 };
         });
         const totalAmount = this.computeTotal(serviceLines, []);
 
@@ -273,6 +336,30 @@ export class SalonBookingService {
         };
     }
 
+    /**
+     * Resolves the effective walk-in price per service for a given branch —
+     * the branch's BranchService.walkInPrice override when one exists,
+     * otherwise the service's own base walkInPrice. This is the same
+     * override mechanism ServiceCatalogService applies for display; booking
+     * creation must use it too, or a branch's price override never actually
+     * gets charged.
+     */
+    private async resolveServicePrices(branchId: string, serviceIds: string[]): Promise<Map<string, number>> {
+        const overrides = await this.prisma.branchService.findMany({
+            where: { branchId, serviceId: { in: serviceIds } },
+            select: { serviceId: true, walkInPrice: true },
+        });
+        const overrideMap = new Map(overrides.map((o) => [o.serviceId, o.walkInPrice != null ? Number(o.walkInPrice) : null]));
+
+        const services = await this.prisma.service.findMany({ where: { id: { in: serviceIds } } });
+        const priceMap = new Map<string, number>();
+        for (const service of services) {
+            const override = overrideMap.get(service.id);
+            priceMap.set(service.id, override != null ? override : Number(service.walkInPrice));
+        }
+        return priceMap;
+    }
+
     private async resolveInventoryLines(branchId: string, lines: { itemId: string; quantity: number }[]) {
         const itemIds = lines.map((l) => l.itemId);
         const items = await this.prisma.inventoryItem.findMany({ where: { id: { in: itemIds } } });
@@ -377,7 +464,7 @@ export class SalonBookingService {
      * calculation — mirrors the SRS's "Completed is the one event both react
      * to" rule for the marketplace Booking model.
      */
-    async complete(id: string, actorId: string) {
+    async complete(id: string, actorId: string | undefined) {
         const booking = await this.prisma.salonBooking.findUnique({
             where: { id },
             include: { inventoryItems: { include: { item: true } }, services: true, assignedStaff: true },

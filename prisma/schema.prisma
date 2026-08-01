@@ -370,6 +370,11 @@ enum LowStockAlertStage {
   MANAGEMENT
 }
 
+enum ExpiryAlertSeverity {
+  EXPIRING_SOON // within the warning window, not yet past expiry
+  EXPIRED // past its expiry date
+}
+
 // ─── Shared Approval Chain (reusable across Leave, Inventory, Payroll, etc.) ───
 
 enum ApprovalRequestType {
@@ -1223,6 +1228,9 @@ model Staff {
   birthdayLastEmailedYear Int?                  @map("birthday_last_emailed_year")
 
   commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 4) // overrides the service's own rate when set; percentage as decimal e.g. 0.15 = 15%
+
+
+  salaryOnlyFirstMonth Boolean @default(false) @map("salary_only_first_month")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
@@ -1275,9 +1283,11 @@ model Staff {
   referenceRelationship String? @map("reference_relationship")
 
   inventoryMovements     StockMovement[]
-  lowStockAlertsResolved LowStockAlert[]
+  llowStockAlertsResolved LowStockAlert[]
+  expiryAlertsResolved   ExpiryAlert[]
   transfersRequested     StockTransfer[] @relation("TransferRequestedBy")
   transfersApproved      StockTransfer[] @relation("TransferApprovedBy")
+  productSales           ProductSale[]
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -1386,6 +1396,7 @@ model StaffLocation {
   // stockTransfers StockTransfer[]
 
   incomingTransfers  StockTransfer[]
+  productSales       ProductSale[]
 
   @@map("staff_locations")
 }
@@ -1398,14 +1409,14 @@ model ApprovalRequest {
   id                String              @id @default(uuid())
   requestType       ApprovalRequestType @map("request_type")
   branchId          String?             @map("branch_id")
-  submittedById     String              @map("submitted_by_id")
+submittedById     String?             @map("submitted_by_id") // null = admin-initiated with no linked staff record
   currentApproverId String?             @map("current_approver_id")
   status            ApprovalStatus      @default(PENDING)
   createdAt         DateTime            @default(now()) @map("created_at")
   updatedAt         DateTime            @updatedAt @map("updated_at")
 
   branch          StaffLocation? @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  submittedBy     Staff          @relation("ApprovalSubmittedBy", fields: [submittedById], references: [id])
+  submittedBy     Staff?         @relation("ApprovalSubmittedBy", fields: [submittedById], references: [id])
   currentApprover Staff?         @relation("ApprovalCurrentApprover", fields: [currentApproverId], references: [id], onDelete: SetNull)
 
   actions                ApprovalAction[]
@@ -1964,6 +1975,8 @@ model InventoryItem {
   branch             StaffLocation               @relation(fields: [branchId], references: [id])
   movements          StockMovement[]
   lowStockAlerts     LowStockAlert[]
+  expiryAlerts       ExpiryAlert[]
+  saleItems          ProductSaleItem[]
   transfersOut       StockTransfer[]             @relation("TransferFromItem")
   adjustmentRequests StockAdjustmentRequest[]
   salonBookingLines  SalonBookingInventoryItem[]
@@ -1982,7 +1995,7 @@ model StockAdjustmentRequest {
   itemId            String         @map("item_id")
   quantityDelta     Int            @map("quantity_delta")
   reason            String
-  requestedById     String         @map("requested_by_id")
+  requestedById     String?        @map("requested_by_id") // null = admin-initiated with no linked staff record
   approvalRequestId String         @unique @map("approval_request_id")
   status            ApprovalStatus @default(PENDING)
   appliedAt         DateTime?      @map("applied_at")
@@ -1990,11 +2003,45 @@ model StockAdjustmentRequest {
   updatedAt         DateTime       @updatedAt @map("updated_at")
 
   item            InventoryItem   @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  requestedBy     Staff           @relation(fields: [requestedById], references: [id])
+  requestedBy     Staff?          @relation(fields: [requestedById], references: [id])
   approvalRequest ApprovalRequest @relation(fields: [approvalRequestId], references: [id], onDelete: Cascade)
 
   @@index([itemId, status])
   @@map("stock_adjustment_requests")
+}
+
+// A standalone product sale — walk-in customer buying a FOR_SALE item with
+// no service attached. Distinct from SalonBooking's "products used/sold"
+// lines, which are always tied to a service appointment; this is for a pure
+// retail transaction (e.g. someone just wants a bottle of shampoo).
+model ProductSale {
+  id            String   @id @default(uuid())
+  branchId      String   @map("branch_id")
+  soldById      String?  @map("sold_by_id") // null = admin-initiated with no linked staff record
+  customerName  String?  @map("customer_name")
+  customerPhone String?  @map("customer_phone")
+  totalAmount   Decimal  @map("total_amount") @db.Decimal(10, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  branch StaffLocation     @relation(fields: [branchId], references: [id])
+  soldBy Staff?            @relation(fields: [soldById], references: [id], onDelete: SetNull)
+  items  ProductSaleItem[]
+
+  @@index([branchId, createdAt])
+  @@map("product_sales")
+}
+
+model ProductSaleItem {
+  id        String  @id @default(uuid())
+  saleId    String  @map("sale_id")
+  itemId    String  @map("item_id")
+  quantity  Int
+  unitPrice Decimal @map("unit_price") @db.Decimal(10, 2)
+
+  sale ProductSale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  item InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@map("product_sale_items")
 }
 
 model StockMovement {
@@ -2003,12 +2050,12 @@ model StockMovement {
   type          StockMovementType
   quantityDelta Int               @map("quantity_delta") // positive or negative
   referenceId   String?           @map("reference_id") // links to a Sale, Transfer, or AdjustmentRequest
-  performedById String            @map("performed_by_id")
+ performedById String?           @map("performed_by_id") // null = admin-initiated with no linked staff record
   reason        String? // required for ADJUSTMENT
   createdAt     DateTime          @default(now()) @map("created_at")
 
   item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  performedBy Staff         @relation(fields: [performedById], references: [id])
+  performedBy Staff?        @relation(fields: [performedById], references: [id])
 
   @@index([itemId, createdAt])
   @@map("stock_movements")
@@ -2028,6 +2075,21 @@ model LowStockAlert {
 
   @@index([itemId, resolvedAt])
   @@map("low_stock_alerts")
+}
+
+model ExpiryAlert {
+  id          String              @id @default(uuid())
+  itemId      String              @map("item_id")
+  severity    ExpiryAlertSeverity
+  triggeredAt DateTime            @default(now()) @map("triggered_at")
+  resolvedAt  DateTime?           @map("resolved_at")
+  resolvedById String?            @map("resolved_by_id")
+
+  item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  resolvedBy Staff?        @relation(fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([itemId, resolvedAt])
+  @@map("expiry_alerts")
 }
 
 model StockTransfer {

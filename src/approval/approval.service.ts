@@ -14,7 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 interface CreateApprovalParams {
     requestType: ApprovalRequestType;
     branchId?: string | null;
-    submittedById: string;
+    submittedById: string | undefined;
     /** Skip default-approver resolution and route straight to this staffId. */
     initialApproverId?: string | null;
 }
@@ -120,7 +120,7 @@ export class ApprovalService {
      * reassigned up, or overriding a stalled request. Non-elevated actors
      * must be the current approver of record.
      */
-    async approve(id: string, actorId: string, isElevated: boolean, comment?: string) {
+    async approve(id: string, actorId: string | undefined, isElevated: boolean, comment?: string) {
         const request = await this.assertActionable(id, actorId, isElevated);
 
         const updated = await this.prisma.approvalRequest.update({
@@ -140,7 +140,7 @@ export class ApprovalService {
         return updated;
     }
 
-    async reject(id: string, actorId: string, isElevated: boolean, comment?: string) {
+    async reject(id: string, actorId: string | undefined, isElevated: boolean, comment?: string) {
         const request = await this.assertActionable(id, actorId, isElevated);
 
         const updated = await this.prisma.approvalRequest.update({
@@ -163,7 +163,7 @@ export class ApprovalService {
     /** Hand this request off to someone else — the manager-to-admin escalation case. */
     async reassign(
         id: string,
-        actorId: string,
+        actorId: string | undefined,
         isElevated: boolean,
         toApproverId: string,
         reason: string,
@@ -212,7 +212,7 @@ export class ApprovalService {
         return updated;
     }
 
-    private async assertActionable(id: string, actorId: string, isElevated: boolean) {
+    private async assertActionable(id: string, actorId: string | undefined, isElevated: boolean) {
         const request = await this.prisma.approvalRequest.findUnique({ where: { id } });
         if (!request) throw new NotFoundException('Approval request not found');
 
