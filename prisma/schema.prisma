@@ -1081,6 +1081,20 @@ model ReferralSettings {
   @@map("referral_settings")
 }
 
+// Grace-period minutes stay where they already lived (StaffLocation /
+// Staff.lateGracePeriodOverride) — this only adds the missing piece: what a
+// minute of lateness beyond the grace period actually costs. Singleton row,
+// same access pattern as ReferralSettings.
+model LatePenaltySettings {
+  id              String   @id @default(uuid())
+  isActive        Boolean  @default(false) @map("is_active")
+  amountPerMinute Decimal  @default(0) @map("amount_per_minute") @db.Decimal(10, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("late_penalty_settings")
+}
+
 model ReferralCode {
   id          String   @id @default(uuid())
   userId      String   @unique @map("user_id")
@@ -1229,10 +1243,9 @@ model Staff {
 
   commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 4) // overrides the service's own rate when set; percentage as decimal e.g. 0.15 = 15%
 
-
-  salaryOnlyFirstMonth Boolean @default(false) @map("salary_only_first_month")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  salaryOnlyFirstMonth Boolean  @default(false) @map("salary_only_first_month")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
   location      StaffLocation            @relation(fields: [locationId], references: [id])
   managedBranch StaffLocation?           @relation("BranchManager")
@@ -1282,12 +1295,12 @@ model Staff {
   referencePhone        String? @map("reference_phone")
   referenceRelationship String? @map("reference_relationship")
 
-  inventoryMovements     StockMovement[]
+  inventoryMovements      StockMovement[]
   llowStockAlertsResolved LowStockAlert[]
-  expiryAlertsResolved   ExpiryAlert[]
-  transfersRequested     StockTransfer[] @relation("TransferRequestedBy")
-  transfersApproved      StockTransfer[] @relation("TransferApprovedBy")
-  productSales           ProductSale[]
+  expiryAlertsResolved    ExpiryAlert[]
+  transfersRequested      StockTransfer[] @relation("TransferRequestedBy")
+  transfersApproved       StockTransfer[] @relation("TransferApprovedBy")
+  productSales            ProductSale[]
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -1395,8 +1408,8 @@ model StaffLocation {
   inventoryItems InventoryItem[]
   // stockTransfers StockTransfer[]
 
-  incomingTransfers  StockTransfer[]
-  productSales       ProductSale[]
+  incomingTransfers StockTransfer[]
+  productSales      ProductSale[]
 
   @@map("staff_locations")
 }
@@ -1409,7 +1422,7 @@ model ApprovalRequest {
   id                String              @id @default(uuid())
   requestType       ApprovalRequestType @map("request_type")
   branchId          String?             @map("branch_id")
-submittedById     String?             @map("submitted_by_id") // null = admin-initiated with no linked staff record
+  submittedById     String?             @map("submitted_by_id") // null = admin-initiated with no linked staff record
   currentApproverId String?             @map("current_approver_id")
   status            ApprovalStatus      @default(PENDING)
   createdAt         DateTime            @default(now()) @map("created_at")
@@ -1578,6 +1591,7 @@ model AttendanceRecord {
 
   status                AttendanceStatus @default(PRESENT)
   lateMinutes           Int?             @map("late_minutes")
+  latePenaltyAmount     Decimal?         @map("late_penalty_amount") @db.Decimal(10, 2) // minutes late beyond grace period × LatePenaltySettings.amountPerMinute, captured at check-in time
   overtimeMinutes       Int?             @map("overtime_minutes")
   earlyDepartureMinutes Int?             @map("early_departure_minutes")
 
@@ -2050,7 +2064,7 @@ model StockMovement {
   type          StockMovementType
   quantityDelta Int               @map("quantity_delta") // positive or negative
   referenceId   String?           @map("reference_id") // links to a Sale, Transfer, or AdjustmentRequest
- performedById String?           @map("performed_by_id") // null = admin-initiated with no linked staff record
+  performedById String?           @map("performed_by_id") // null = admin-initiated with no linked staff record
   reason        String? // required for ADJUSTMENT
   createdAt     DateTime          @default(now()) @map("created_at")
 
@@ -2078,12 +2092,12 @@ model LowStockAlert {
 }
 
 model ExpiryAlert {
-  id          String              @id @default(uuid())
-  itemId      String              @map("item_id")
-  severity    ExpiryAlertSeverity
-  triggeredAt DateTime            @default(now()) @map("triggered_at")
-  resolvedAt  DateTime?           @map("resolved_at")
-  resolvedById String?            @map("resolved_by_id")
+  id           String              @id @default(uuid())
+  itemId       String              @map("item_id")
+  severity     ExpiryAlertSeverity
+  triggeredAt  DateTime            @default(now()) @map("triggered_at")
+  resolvedAt   DateTime?           @map("resolved_at")
+  resolvedById String?             @map("resolved_by_id")
 
   item       InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   resolvedBy Staff?        @relation(fields: [resolvedById], references: [id], onDelete: SetNull)

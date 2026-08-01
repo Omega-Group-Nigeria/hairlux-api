@@ -1,3 +1,5 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsString,
   IsOptional,
@@ -6,11 +8,11 @@ import {
   IsIn,
   IsUUID,
   IsNumber,
+  IsBoolean,
+  IsInt,
   Min,
   Max,
 } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
 import {
   STAFF_EMPLOYMENT_STATUS_VALUES,
   type StaffEmploymentStatusValue,
@@ -104,5 +106,20 @@ export class UpdateStaffDto {
   @Min(0)
   @Max(1)
   commissionRate?: number;
+
+  @ApiPropertyOptional({ description: 'True if this staff member gets a base salary in their first month (plus any commission earned that same month), then moves to commission-only from month two on. Not yet used by any payroll calculation — data capture only until a Payroll module exists.' })
+  @IsOptional()
+  @IsBoolean()
+  salaryOnlyFirstMonth?: boolean;
+
+  @ApiPropertyOptional({
+    example: 15,
+    description: 'Personal grace-period override, in minutes, for late attendance — replaces the branch default for this staff member specifically. Send null to clear the override and fall back to the branch default.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  lateGracePeriodOverride?: number;
 
 }
