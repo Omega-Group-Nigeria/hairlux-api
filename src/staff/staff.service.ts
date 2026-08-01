@@ -946,6 +946,12 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         ...(dto.commissionRate !== undefined && {
           commissionRate: dto.commissionRate,
         }),
+        ...(dto.salaryOnlyFirstMonth !== undefined && {
+          salaryOnlyFirstMonth: dto.salaryOnlyFirstMonth,
+        }),
+        ...(dto.lateGracePeriodOverride !== undefined && {
+          lateGracePeriodOverride: dto.lateGracePeriodOverride,
+        }),
       },
     });
 
