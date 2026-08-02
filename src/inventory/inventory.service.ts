@@ -52,6 +52,7 @@ export class InventoryService {
                 name: dto.name,
                 category: dto.category,
                 branchId,
+                supplierId: dto.supplierId,
                 unit: dto.unit,
                 lowStockThreshold: dto.lowStockThreshold ?? 5,
                 currentQuantity: dto.initialQuantity ?? 0,
@@ -75,6 +76,7 @@ export class InventoryService {
             data: {
                 name: dto.name,
                 category: dto.category,
+                ...(dto.supplierId !== undefined && { supplierId: dto.supplierId }),
                 unit: dto.unit,
                 lowStockThreshold: dto.lowStockThreshold,
                 expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
@@ -100,7 +102,7 @@ export class InventoryService {
         // for lowStockOnly, filter in application code instead of the DB when needed.
         const items = await this.prisma.inventoryItem.findMany({
             where: branchId || category ? { isActive: true, ...(branchId && { branchId }), ...(category && { category }) } : { isActive: true },
-            include: { branch: { select: { id: true, name: true } } },
+            include: { branch: { select: { id: true, name: true } }, supplier: { select: { id: true, name: true, type: true } } },
             orderBy: { name: 'asc' },
         });
 
@@ -117,7 +119,7 @@ export class InventoryService {
     async findOne(id: string) {
         const item = await this.prisma.inventoryItem.findUnique({
             where: { id },
-            include: { branch: { select: { id: true, name: true } } },
+            include: { branch: { select: { id: true, name: true } }, supplier: { select: { id: true, name: true, type: true } } },
         });
         if (!item) throw new NotFoundException('Inventory item not found');
         return item;

@@ -342,6 +342,11 @@ enum ApplicationStatus {
   NOT_SELECTED
 }
 
+enum SupplierType {
+  SUPPLIER
+  VENDOR
+}
+
 enum InventoryCategory {
   FOR_SALE
   INTERNAL_USE
@@ -746,6 +751,11 @@ model Booking {
   notes                    String?
   cancelReason             String?                  @map("cancel_reason")
   assignedBeauticianUserId String?                  @map("assigned_beautician_user_id")
+  // Which in-house Stylist actually served the customer — set when staff
+  // verify a WALK_IN reservation in-salon. Deliberately separate from
+  // assignedBeauticianUserId (marketplace dispatch, points at a Beautician's
+  // User account) — this points at Staff, for salon walk-ins only.
+  assignedInHouseStaffId   String?                  @map("assigned_in_house_staff_id")
   arrivalVerifiedAt        DateTime?                @map("arrival_verified_at")
   serviceStartedAt         DateTime?                @map("service_started_at")
   serviceCompletedAt       DateTime?                @map("service_completed_at")
@@ -762,16 +772,17 @@ model Booking {
   updatedAt                DateTime                 @updatedAt @map("updated_at")
 
   // Relations
-  user               User                        @relation(fields: [userId], references: [id])
-  address            Address?                    @relation(fields: [addressId], references: [id])
-  branch             StaffLocation?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  assignedBeautician User?                       @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
-  review             Review?
-  discountUsage      DiscountUsage?
-  jobOffers          JobOffer[]
-  dispatchEvents     DispatchEvent[]
-  locationHistory    BeauticianLocationHistory[]
-  commsSession       BookingCommsSession?
+  user                 User                        @relation(fields: [userId], references: [id])
+  address              Address?                    @relation(fields: [addressId], references: [id])
+  branch               StaffLocation?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedBeautician   User?                       @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
+  assignedInHouseStaff Staff?                      @relation("BookingAssignedInHouseStaff", fields: [assignedInHouseStaffId], references: [id], onDelete: SetNull)
+  review               Review?
+  discountUsage        DiscountUsage?
+  jobOffers            JobOffer[]
+  dispatchEvents       DispatchEvent[]
+  locationHistory      BeauticianLocationHistory[]
+  commsSession         BookingCommsSession?
 
   @@unique([userId, idempotencyKey])
   @@index([reservationCode])
@@ -780,6 +791,7 @@ model Booking {
   @@index([bookingDate])
   @@index([userId, status])
   @@index([assignedBeauticianUserId])
+  @@index([assignedInHouseStaffId])
   @@map("bookings")
 }
 
@@ -1301,6 +1313,7 @@ model Staff {
   transfersRequested      StockTransfer[] @relation("TransferRequestedBy")
   transfersApproved       StockTransfer[] @relation("TransferApprovedBy")
   productSales            ProductSale[]
+  bookingsAsInHouseStaff  Booking[]       @relation("BookingAssignedInHouseStaff")
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -1972,11 +1985,34 @@ model EmploymentApproval {
   @@map("employment_approvals")
 }
 
+// One model covers both Suppliers and Vendors (distinguished by `type`) —
+// they share identical shape and both link to InventoryItem the same way;
+// the UI presents them as two separate lists under Contacts.
+model Supplier {
+  id            String       @id @default(uuid())
+  type          SupplierType
+  name          String
+  contactPerson String?      @map("contact_person")
+  phone         String?
+  email         String?
+  address       String?
+  notes         String?
+  isActive      Boolean      @default(true) @map("is_active")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  inventoryItems InventoryItem[]
+
+  @@index([type])
+  @@map("suppliers")
+}
+
 model InventoryItem {
   id                String            @id @default(uuid())
   name              String
   category          InventoryCategory
   branchId          String            @map("branch_id")
+  supplierId        String?           @map("supplier_id")
   unit              String? // e.g. "pcs", "bottle", "ml"
   currentQuantity   Int               @default(0) @map("current_quantity")
   lowStockThreshold Int               @default(5) @map("low_stock_threshold")
@@ -1987,6 +2023,7 @@ model InventoryItem {
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
   branch             StaffLocation               @relation(fields: [branchId], references: [id])
+  supplier           Supplier?                   @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   movements          StockMovement[]
   lowStockAlerts     LowStockAlert[]
   expiryAlerts       ExpiryAlert[]
@@ -1997,6 +2034,7 @@ model InventoryItem {
 
   @@unique([branchId, name, category])
   @@index([branchId, category])
+  @@index([supplierId])
   @@map("inventory_items")
 }
 

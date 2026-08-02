@@ -1,6 +1,6 @@
-import { IsString, IsNotEmpty, IsEnum, IsOptional, IsInt, Min, IsDateString, IsNumber } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { InventoryCategory } from '@prisma/client';
+import { IsDateString, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 
 export class UpdateInventoryItemDto {
     @ApiPropertyOptional()
@@ -13,6 +13,11 @@ export class UpdateInventoryItemDto {
     @IsOptional()
     @IsEnum(InventoryCategory)
     category?: InventoryCategory;
+
+    @ApiPropertyOptional({ description: 'Which supplier/vendor this item is sourced from. Send null to clear.', nullable: true })
+    @IsOptional()
+    @IsUUID()
+    supplierId?: string;
 
     @ApiPropertyOptional()
     @IsOptional()
