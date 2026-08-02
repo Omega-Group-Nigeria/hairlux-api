@@ -336,6 +336,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.latePenaltySettings;
   }
 
+  get supplier() {
+    return this.client.supplier;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }

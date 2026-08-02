@@ -221,7 +221,7 @@ export class ApplicationService {
 
     const dashboardUrl =
       this.configService.get<string>('APPLICANT_DASHBOARD_URL') ||
-      'https://hairlux.com.ng/login.html';
+      'https://www.hairlux.com.ng/careers.html';
 
     this.mailService.sendApplicationConfirmationEmail(application.email, application.firstName, {
       applicationCode,

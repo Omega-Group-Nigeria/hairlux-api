@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common'; 
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -7,6 +7,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { StaffService } from '../staff/staff.service';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
+import { ConfirmReservationDto } from './dto/confirm-reservation.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
 import { VerifyReservationDto } from './dto/verify-reservation.dto';
@@ -38,11 +39,44 @@ export class AdminSalonBookingController {
     }
 
     @Get('verify/:code')
-    @ApiOperation({ summary: 'Look up a reservation by code — any branch' })
+    @ApiOperation({ summary: 'Look up a reservation by code — any branch. Checks both SalonBooking and the legacy marketplace Booking table (still the live path for customer self-service bookings).' })
     @ApiParam({ name: 'code' })
     async findByReservationCode(@Param('code') code: string) {
-        const data = await this.salonBookingService.findByReservationCode(code);
+        const data = await this.salonBookingService.findReservationAnywhere(code);
         return { success: true, message: 'Reservation found', data };
+    }
+
+    @Patch('verify/:code/confirm')
+    @ApiOperation({
+        summary: 'Verify a reservation by code — any branch',
+        description: 'Works for a reservation found in either table. For SalonBooking, pass assignedStaffId. For a legacy Booking-table WALK_IN reservation, no staff assignment is needed.',
+    })
+    @ApiParam({ name: 'code' })
+    async confirmVerificationByCode(@Param('code') code: string, @Body() dto: ConfirmReservationDto) {
+        const data = await this.salonBookingService.verifyReservationAnywhere(code, dto.assignedStaffId);
+        return { success: true, message: 'Reservation verified successfully', data };
+    }
+
+    @Get('overview')
+    @ApiOperation({
+        summary: 'Combined Salon Bookings overview — summary cards + a merged list',
+        description: 'Merges SalonBooking with the legacy Booking table\'s WALK_IN entries (still the live customer self-service path), filterable by date range, branch, and source.',
+    })
+    async getOverview(
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+        @Query('branchId') branchId?: string,
+        @Query('source') source?: 'salon_booking' | 'booking' | 'all',
+    ) {
+        const data = await this.salonBookingService.getOverview({ dateFrom, dateTo, branchId, source });
+        return { success: true, message: 'Overview retrieved successfully', data };
+    }
+
+    @Get('customers')
+    @ApiOperation({ summary: 'Full paginated Customer Contacts list (Contacts module), optionally searchable by name/phone' })
+    async findAllCustomers(@Query('q') q?: string, @Query('page') page?: string, @Query('limit') limit?: string) {
+        const data = await this.salonBookingService.findAllCustomers(q, page ? Number(page) : undefined, limit ? Number(limit) : undefined);
+        return { success: true, message: 'Customers retrieved successfully', data };
     }
 
     @Get('customers/search')
@@ -58,6 +92,15 @@ export class AdminSalonBookingController {
     async findOne(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.salonBookingService.findOne(id);
         return { success: true, message: 'Booking retrieved successfully', data };
+    }
+
+    @Delete(':id')
+    @Roles(UserRole.SUPER_ADMIN)
+    @ApiOperation({ summary: 'Permanently delete a Salon Booking — Super Admin only. Cascades to its service lines, inventory lines, and commission record.' })
+    @ApiParam({ name: 'id' })
+    async deleteBooking(@Param('id', ParseUUIDPipe) id: string) {
+        const data = await this.salonBookingService.deleteBooking(id);
+        return { success: true, message: 'Booking deleted successfully', data };
     }
 
     @Post(':id/inventory-items')

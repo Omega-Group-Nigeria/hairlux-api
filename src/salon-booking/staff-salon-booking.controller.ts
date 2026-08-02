@@ -9,6 +9,7 @@ import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { VerifyReservationDto } from './dto/verify-reservation.dto';
+import { ConfirmReservationDto } from './dto/confirm-reservation.dto';
 import { SalonBookingService } from './salon-booking.service';
 
 @ApiTags('Staff - Salon Bookings')
@@ -47,12 +48,24 @@ export class StaffSalonBookingController {
     }
 
     @Get('verify/:code')
-    @ApiOperation({ summary: "Look up a reservation by code — restricted to the logged-in staff member's own branch" })
+    @ApiOperation({ summary: "Look up a reservation by code — restricted to the logged-in staff member's own branch. Checks both SalonBooking and the legacy marketplace Booking table (still the live path for customer self-service bookings)." })
     @ApiParam({ name: 'code' })
     async findByReservationCode(@Req() req: any, @Param('code') code: string) {
         const staff = await this.staffService.findByUserId(req.user.id) as unknown as { id: string; locationId: string };
-        const data = await this.salonBookingService.findByReservationCode(code, staff.locationId);
+        const data = await this.salonBookingService.findReservationAnywhere(code, staff.locationId);
         return { success: true, message: 'Reservation found', data };
+    }
+
+    @Patch('verify/:code/confirm')
+    @ApiOperation({
+        summary: 'Verify a reservation by code for your own branch',
+        description: 'Works for a reservation found in either table. For SalonBooking, pass assignedStaffId to say who is serving the customer. For a legacy Booking-table WALK_IN reservation, no staff assignment is needed — it just gets marked used.',
+    })
+    @ApiParam({ name: 'code' })
+    async confirmVerificationByCode(@Req() req: any, @Param('code') code: string, @Body() dto: ConfirmReservationDto) {
+        const staff = await this.staffService.findByUserId(req.user.id) as unknown as { id: string; locationId: string };
+        const data = await this.salonBookingService.verifyReservationAnywhere(code, dto.assignedStaffId, staff.locationId);
+        return { success: true, message: 'Reservation verified successfully', data };
     }
 
     @Get('commission')
