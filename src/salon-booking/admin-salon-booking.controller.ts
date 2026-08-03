@@ -73,9 +73,29 @@ export class AdminSalonBookingController {
     }
 
     @Get('customers')
-    @ApiOperation({ summary: 'Full paginated Customer Contacts list (Contacts module), optionally searchable by name/phone' })
-    async findAllCustomers(@Query('q') q?: string, @Query('page') page?: string, @Query('limit') limit?: string) {
-        const data = await this.salonBookingService.findAllCustomers(q, page ? Number(page) : undefined, limit ? Number(limit) : undefined);
+    @ApiOperation({ summary: 'Full paginated Customer Contacts list (Contacts module) — searchable and filterable by branch, date range, account status, minimum bookings, and minimum spend' })
+    async findAllCustomers(
+        @Query('q') q?: string,
+        @Query('branchId') branchId?: string,
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+        @Query('hasAccount') hasAccount?: string,
+        @Query('minBookings') minBookings?: string,
+        @Query('minSpend') minSpend?: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+    ) {
+        const data = await this.salonBookingService.findAllCustomers({
+            query: q,
+            branchId,
+            dateFrom,
+            dateTo,
+            hasAccount: hasAccount === undefined ? undefined : hasAccount === 'true',
+            minBookings: minBookings ? Number(minBookings) : undefined,
+            minSpend: minSpend ? Number(minSpend) : undefined,
+            page: page ? Number(page) : undefined,
+            limit: limit ? Number(limit) : undefined,
+        });
         return { success: true, message: 'Customers retrieved successfully', data };
     }
 
