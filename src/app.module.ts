@@ -34,7 +34,9 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { LeaveModule } from './leave/leave.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { SalonBookingModule } from './salon-booking/salon-booking.module';
-import { ProductSaleModule } from './product-sale/product-sale.module'; 
+import { ProductSaleModule } from './product-sale/product-sale.module';
+import { SupplierModule } from './supplier/supplier.module';
+import { PayrollModule } from './payroll/payroll.module';
 
 @Module({
   imports: [
@@ -106,6 +108,8 @@ import { ProductSaleModule } from './product-sale/product-sale.module';
     SalonBookingModule,
     ProductSaleModule,
     ProductSaleModule,
+    SupplierModule,
+    PayrollModule,
     
   ],
   controllers: [AppController],

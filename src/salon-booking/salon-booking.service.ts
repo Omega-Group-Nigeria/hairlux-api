@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { SalonBookingStatus, StockMovementType } from '@prisma/client';
 import { randomInt } from 'crypto';
+import { BookingService } from '../booking/booking.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
@@ -25,6 +26,7 @@ export class SalonBookingService {
     constructor(
         private prisma: PrismaService,
         private inventoryService: InventoryService,
+        private bookingService: BookingService,
     ) { }
 
     async create(dto: CreateSalonBookingDto, createdById: string | undefined) {
@@ -94,6 +96,109 @@ export class SalonBookingService {
      * never have walked in before). A Customer already linked to a User is
      * deduplicated so it doesn't show up twice.
      */
+    /**
+     * Full paginated Customer Contacts list, for the Contacts module — distinct
+     * from searchCustomers, which is a lightweight capped lookup used only
+     * while creating a booking.
+     */
+    async findAllCustomers(params: {
+        query?: string;
+        branchId?: string;
+        dateFrom?: string;
+        dateTo?: string;
+        hasAccount?: boolean;
+        minBookings?: number;
+        minSpend?: number;
+        page?: number;
+        limit?: number;
+    }) {
+        const { query, branchId, dateFrom, dateTo, hasAccount, minBookings, minSpend, page = 1, limit = 20 } = params;
+
+        const where: any = query
+            ? { OR: [{ name: { contains: query, mode: 'insensitive' as const } }, { phone: { contains: query } }] }
+            : {};
+
+        if (hasAccount !== undefined) {
+            where.userId = hasAccount ? { not: null } : null;
+        }
+
+        if (branchId || dateFrom || dateTo) {
+            where.salonBookings = {
+                some: {
+                    ...(branchId && { branchId }),
+                    ...((dateFrom || dateTo) && {
+                        bookingDate: {
+                            ...(dateFrom && { gte: new Date(dateFrom) }),
+                            ...(dateTo && { lte: new Date(dateTo) }),
+                        },
+                    }),
+                },
+            };
+        }
+
+        // minBookings/minSpend depend on each customer's FULL booking
+        // history (not expressible as a plain Prisma where clause without a
+        // raw aggregation query), so when either is set this fetches every
+        // DB-filterable match, computes stats, filters, and paginates in
+        // memory — applying pagination before that filtering would silently
+        // return short pages. Fine at Hairlux's actual customer volume; not
+        // something to do at a scale of hundreds of thousands of rows.
+        const needsValueFilter = minBookings !== undefined || minSpend !== undefined;
+
+        const [allMatching, dbTotal] = await Promise.all([
+            this.prisma.customer.findMany({
+                where,
+                ...(needsValueFilter ? {} : { skip: (page - 1) * limit, take: limit }),
+                orderBy: { createdAt: 'desc' },
+            }),
+            this.prisma.customer.count({ where }),
+        ]);
+
+        const customerIds = allMatching.map((c) => c.id);
+        const bookings = customerIds.length
+            ? await this.prisma.salonBooking.findMany({
+                where: { customerId: { in: customerIds } },
+                select: {
+                    customerId: true,
+                    status: true,
+                    totalAmount: true,
+                    bookingDate: true,
+                    branch: { select: { id: true, name: true } },
+                },
+            })
+            : [];
+
+        const statsByCustomer = new Map<string, { bookingCount: number; totalSpend: number; branches: Map<string, string>; lastBookingDate: Date | null }>();
+        for (const b of bookings) {
+            if (!b.customerId) continue;
+            const s = statsByCustomer.get(b.customerId) ?? { bookingCount: 0, totalSpend: 0, branches: new Map(), lastBookingDate: null };
+            s.bookingCount += 1;
+            if (b.status === 'COMPLETED') s.totalSpend += Number(b.totalAmount);
+            s.branches.set(b.branch.id, b.branch.name);
+            if (!s.lastBookingDate || b.bookingDate > s.lastBookingDate) s.lastBookingDate = b.bookingDate;
+            statsByCustomer.set(b.customerId, s);
+        }
+
+        let withStats = allMatching.map((c) => {
+            const s = statsByCustomer.get(c.id);
+            return {
+                ...c,
+                bookingCount: s?.bookingCount ?? 0,
+                totalSpend: s?.totalSpend ?? 0,
+                branches: s ? Array.from(s.branches.values()) : [],
+                lastBookingDate: s?.lastBookingDate ?? null,
+            };
+        });
+
+        if (minBookings !== undefined) withStats = withStats.filter((c) => c.bookingCount >= minBookings);
+        if (minSpend !== undefined) withStats = withStats.filter((c) => c.totalSpend >= minSpend);
+
+        const total = needsValueFilter ? withStats.length : dbTotal;
+        const data = needsValueFilter ? withStats.slice((page - 1) * limit, (page - 1) * limit + limit) : withStats;
+
+        return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    }
+
     async searchCustomers(query: string) {
         const q = query.trim();
         if (!q) return [];
@@ -144,6 +249,114 @@ export class SalonBookingService {
             }));
 
         return [...fromCustomers, ...fromUsers].slice(0, 15);
+    }
+
+    /**
+     * Combined Salon Bookings overview — merges SalonBooking rows with the
+     * legacy Booking table's WALK_IN entries (still the live customer
+     * self-service path), so admin sees one consistent picture of "what
+     * happened at the salon" regardless of which table a given booking
+     * actually lives in. HOME_SERVICE legacy bookings are deliberately
+     * excluded — those belong to the existing marketplace Booking
+     * Management dashboard, not this one.
+     */
+    async getOverview(filters: { dateFrom?: string; dateTo?: string; branchId?: string; source?: 'salon_booking' | 'booking' | 'all' }) {
+        const dateFilter = (filters.dateFrom || filters.dateTo)
+            ? { gte: filters.dateFrom ? new Date(filters.dateFrom) : undefined, lte: filters.dateTo ? new Date(filters.dateTo) : undefined }
+            : undefined;
+        const wantSalonBookings = !filters.source || filters.source === 'all' || filters.source === 'salon_booking';
+        const wantLegacyBookings = !filters.source || filters.source === 'all' || filters.source === 'booking';
+
+        const salonBookings = wantSalonBookings
+            ? await this.prisma.salonBooking.findMany({
+                where: {
+                    ...(filters.branchId && { branchId: filters.branchId }),
+                    ...(dateFilter && { bookingDate: dateFilter }),
+                },
+                include: {
+                    branch: { select: { id: true, name: true } },
+                    assignedStaff: { select: { id: true, name: true } },
+                },
+                orderBy: { bookingDate: 'desc' },
+            })
+            : [];
+
+        const legacyBookings = wantLegacyBookings
+            ? await this.prisma.booking.findMany({
+                where: {
+                    bookingType: 'WALK_IN',
+                    ...(filters.branchId && { branchId: filters.branchId }),
+                    ...(dateFilter && { bookingDate: dateFilter }),
+                },
+                include: {
+                    branch: { select: { id: true, name: true } },
+                    assignedInHouseStaff: { select: { id: true, name: true } },
+                    user: { select: { firstName: true, lastName: true } },
+                },
+                orderBy: { bookingDate: 'desc' },
+            })
+            : [];
+
+        const normalizeSalonStatus = (status: string): 'completed' | 'pending' | 'cancelled' => {
+            if (status === 'COMPLETED') return 'completed';
+            if (status === 'CANCELLED' || status === 'NO_SHOW') return 'cancelled';
+            return 'pending';
+        };
+        const normalizeLegacyStatus = (status: string): 'completed' | 'pending' | 'cancelled' => {
+            if (status === 'COMPLETED') return 'completed';
+            if (status === 'CANCELLED') return 'cancelled';
+            return 'pending';
+        };
+
+        const rows = [
+            ...salonBookings.map((b) => ({
+                id: b.id,
+                source: 'salon_booking' as const,
+                branchName: b.branch?.name ?? null,
+                staffName: b.assignedStaff?.name ?? null,
+                customerName: b.customerName,
+                bookingDate: b.bookingDate,
+                totalAmount: Number(b.totalAmount),
+                status: b.status,
+                bucket: normalizeSalonStatus(b.status),
+            })),
+            ...legacyBookings.map((b) => ({
+                id: b.id,
+                source: 'booking' as const,
+                branchName: b.branch?.name ?? null,
+                staffName: b.assignedInHouseStaff?.name ?? null,
+                customerName: b.guestName || (b.user ? `${b.user.firstName} ${b.user.lastName}`.trim() : null),
+                bookingDate: b.bookingDate,
+                totalAmount: Number(b.totalAmount),
+                status: b.status,
+                bucket: normalizeLegacyStatus(b.status),
+            })),
+        ].sort((a, z) => z.bookingDate.getTime() - a.bookingDate.getTime());
+
+        const summary = {
+            totalBookings: rows.length,
+            // Realized revenue — only what's actually been completed, not
+            // pending or cancelled bookings that never rendered service.
+            totalRevenue: rows.filter((r) => r.bucket === 'completed').reduce((sum, r) => sum + r.totalAmount, 0),
+            completed: rows.filter((r) => r.bucket === 'completed').length,
+            pending: rows.filter((r) => r.bucket === 'pending').length,
+            cancelled: rows.filter((r) => r.bucket === 'cancelled').length,
+        };
+
+        return { summary, bookings: rows };
+    }
+
+    /**
+     * Hard-deletes a SalonBooking — Super Admin only, and only for
+     * SalonBooking rows (never the legacy marketplace Booking table, which
+     * has its own separate lifecycle and no delete concept here). Cascades
+     * to its service lines, inventory lines, and commission record.
+     */
+    async deleteBooking(id: string) {
+        const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
+        if (!booking) throw new NotFoundException('Booking not found');
+        await this.prisma.salonBooking.delete({ where: { id } });
+        return { deleted: true, id };
     }
 
     private async findOrCreateCustomer(name: string, phone: string, email?: string) {
@@ -254,6 +467,86 @@ export class SalonBookingService {
         });
 
         return this.findOne(id);
+    }
+
+    /**
+     * Looks up a reservation code across both booking systems — SalonBooking
+     * (staff/admin-created walk-ins and advance reservations) and the older
+     * marketplace Booking table (still the live path for customer
+     * self-service bookings, including WALK_IN type, since it's the one
+     * with working wallet deduction). SalonBooking is checked first since
+     * that's the more common staff-facing case.
+     */
+    async findReservationAnywhere(code: string, restrictToBranchId?: string) {
+        const salonBooking = await this.prisma.salonBooking.findUnique({
+            where: { reservationCode: code },
+            include: INCLUDE_FULL,
+        });
+        if (salonBooking) {
+            if (restrictToBranchId && salonBooking.branchId !== restrictToBranchId) {
+                throw new NotFoundException('No reservation found with this code');
+            }
+            return { source: 'salon_booking' as const, booking: salonBooking };
+        }
+
+        let legacyBooking: any;
+        try {
+            legacyBooking = await this.bookingService.adminFindByReservationCode(code);
+        } catch {
+            throw new NotFoundException('No reservation found with this code');
+        }
+        const legacyBranchId = legacyBooking?.branchId ?? legacyBooking?.branch?.id;
+        if (restrictToBranchId && legacyBranchId !== restrictToBranchId) {
+            throw new NotFoundException('No reservation found with this code');
+        }
+        return { source: 'booking' as const, booking: legacyBooking };
+    }
+
+    /**
+     * Verifies a reservation code found in either table. Both paths now
+     * require picking which in-house Stylist is serving the customer — a
+     * self-service customer booking never has one assigned at booking time
+     * (unlike an admin/staff-created SalonBooking walk-in), so verification
+     * is the natural moment to record it, for either table.
+     */
+    async verifyReservationAnywhere(code: string, assignedStaffId: string | undefined, restrictToBranchId?: string) {
+        if (!assignedStaffId) {
+            throw new BadRequestException('Select which staff member is serving this customer');
+        }
+
+        const salonBooking = await this.prisma.salonBooking.findUnique({ where: { reservationCode: code } });
+        if (salonBooking) {
+            if (restrictToBranchId && salonBooking.branchId !== restrictToBranchId) {
+                throw new NotFoundException('No reservation found with this code');
+            }
+            const updated = await this.verifyReservation(salonBooking.id, { assignedStaffId }, restrictToBranchId);
+            return { source: 'salon_booking' as const, booking: updated };
+        }
+
+        let legacyBooking: any;
+        try {
+            legacyBooking = await this.bookingService.adminFindByReservationCode(code);
+        } catch {
+            throw new NotFoundException('No reservation found with this code');
+        }
+        const legacyBranchId = legacyBooking?.branchId ?? legacyBooking?.branch?.id;
+        if (restrictToBranchId && legacyBranchId !== restrictToBranchId) {
+            throw new NotFoundException('No reservation found with this code');
+        }
+
+        const staff = await this.prisma.staff.findUnique({ where: { id: assignedStaffId } });
+        if (!staff) throw new NotFoundException('Assigned staff member not found');
+        if (restrictToBranchId && staff.locationId !== restrictToBranchId) {
+            throw new BadRequestException('The assigned staff member is not based at this branch');
+        }
+
+        await this.bookingService.useReservation(code);
+        const updated = await this.prisma.booking.update({
+            where: { reservationCode: code },
+            data: { assignedInHouseStaffId: assignedStaffId },
+            include: { assignedInHouseStaff: { select: { id: true, name: true, staffCode: true } } },
+        });
+        return { source: 'booking' as const, booking: updated };
     }
 
     /**

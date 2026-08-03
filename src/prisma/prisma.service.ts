@@ -336,6 +336,46 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.latePenaltySettings;
   }
 
+  get supplier() {
+    return this.client.supplier;
+  }
+
+  get staffBankAccount() {
+    return this.client.staffBankAccount;
+  }
+
+  get staffCompensationHistory() {
+    return this.client.staffCompensationHistory;
+  }
+
+  get payrollPeriod() {
+    return this.client.payrollPeriod;
+  }
+
+  get payslip() {
+    return this.client.payslip;
+  }
+
+  get payrollAdjustment() {
+    return this.client.payrollAdjustment;
+  }
+
+  get staffWallet() {
+    return this.client.staffWallet;
+  }
+
+  get staffWalletTransaction() {
+    return this.client.staffWalletTransaction;
+  }
+
+  get staffPayoutRequest() {
+    return this.client.staffPayoutRequest;
+  }
+
+  get payrollSettings() {
+    return this.client.payrollSettings;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }

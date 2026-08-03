@@ -61,6 +61,16 @@ export const PERMISSIONS = {
   STAFF_MANAGE_LOCATIONS: 'staff:manage_locations', // Manage staff locations
   STAFF_MANAGE_DOCUMENTS: 'staff:manage_documents', // Create/version company documents (contracts, NDA, handbook, etc.)
 
+  // ── Suppliers & Vendors (Contacts) ───────────────────────────────────────────
+  SUPPLIERS_READ: 'suppliers:read', // View suppliers/vendors and what they supply
+  SUPPLIERS_CREATE: 'suppliers:create', // Add a new supplier/vendor
+  SUPPLIERS_UPDATE: 'suppliers:update', // Edit supplier/vendor details
+  SUPPLIERS_DELETE: 'suppliers:delete', // Delete a supplier/vendor (blocked while items are linked)
+
+  // ── Payroll (salary/financial data) ──────────────────────────────────────────
+  PAYROLL_READ: 'payroll:read', // View payroll dashboard, periods, payslips, withdrawal history
+  PAYROLL_MANAGE: 'payroll:manage', // Set compensation, run payroll, approve periods, toggle Payday, add adjustments, approve bank changes
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
@@ -258,6 +268,28 @@ export const PERMISSION_GROUPS = [
       {
         key: PERMISSIONS.STAFF_MANAGE_DOCUMENTS,
         label: 'Create and version company documents (contracts, NDA, handbook, etc.)',
+      },
+    ],
+  },
+  {
+    group: 'Suppliers & Vendors',
+    permissions: [
+      { key: PERMISSIONS.SUPPLIERS_READ, label: 'View suppliers/vendors and what they supply' },
+      { key: PERMISSIONS.SUPPLIERS_CREATE, label: 'Add a new supplier or vendor' },
+      { key: PERMISSIONS.SUPPLIERS_UPDATE, label: 'Edit supplier/vendor details' },
+      {
+        key: PERMISSIONS.SUPPLIERS_DELETE,
+        label: 'Delete a supplier/vendor (blocked while inventory items are still linked)',
+      },
+    ],
+  },
+  {
+    group: 'Payroll',
+    permissions: [
+      { key: PERMISSIONS.PAYROLL_READ, label: 'View the payroll dashboard, periods, payslips, and withdrawal history' },
+      {
+        key: PERMISSIONS.PAYROLL_MANAGE,
+        label: 'Set staff compensation, run and approve payroll, toggle Payday, add bonuses/deductions, approve bank account changes',
       },
     ],
   },

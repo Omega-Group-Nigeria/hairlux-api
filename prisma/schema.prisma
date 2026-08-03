@@ -342,6 +342,11 @@ enum ApplicationStatus {
   NOT_SELECTED
 }
 
+enum SupplierType {
+  SUPPLIER
+  VENDOR
+}
+
 enum InventoryCategory {
   FOR_SALE
   INTERNAL_USE
@@ -746,6 +751,11 @@ model Booking {
   notes                    String?
   cancelReason             String?                  @map("cancel_reason")
   assignedBeauticianUserId String?                  @map("assigned_beautician_user_id")
+  // Which in-house Stylist actually served the customer — set when staff
+  // verify a WALK_IN reservation in-salon. Deliberately separate from
+  // assignedBeauticianUserId (marketplace dispatch, points at a Beautician's
+  // User account) — this points at Staff, for salon walk-ins only.
+  assignedInHouseStaffId   String?                  @map("assigned_in_house_staff_id")
   arrivalVerifiedAt        DateTime?                @map("arrival_verified_at")
   serviceStartedAt         DateTime?                @map("service_started_at")
   serviceCompletedAt       DateTime?                @map("service_completed_at")
@@ -762,16 +772,17 @@ model Booking {
   updatedAt                DateTime                 @updatedAt @map("updated_at")
 
   // Relations
-  user               User                        @relation(fields: [userId], references: [id])
-  address            Address?                    @relation(fields: [addressId], references: [id])
-  branch             StaffLocation?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  assignedBeautician User?                       @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
-  review             Review?
-  discountUsage      DiscountUsage?
-  jobOffers          JobOffer[]
-  dispatchEvents     DispatchEvent[]
-  locationHistory    BeauticianLocationHistory[]
-  commsSession       BookingCommsSession?
+  user                 User                        @relation(fields: [userId], references: [id])
+  address              Address?                    @relation(fields: [addressId], references: [id])
+  branch               StaffLocation?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedBeautician   User?                       @relation("AssignedBeautician", fields: [assignedBeauticianUserId], references: [id], onDelete: SetNull)
+  assignedInHouseStaff Staff?                      @relation("BookingAssignedInHouseStaff", fields: [assignedInHouseStaffId], references: [id], onDelete: SetNull)
+  review               Review?
+  discountUsage        DiscountUsage?
+  jobOffers            JobOffer[]
+  dispatchEvents       DispatchEvent[]
+  locationHistory      BeauticianLocationHistory[]
+  commsSession         BookingCommsSession?
 
   @@unique([userId, idempotencyKey])
   @@index([reservationCode])
@@ -780,6 +791,7 @@ model Booking {
   @@index([bookingDate])
   @@index([userId, status])
   @@index([assignedBeauticianUserId])
+  @@index([assignedInHouseStaffId])
   @@map("bookings")
 }
 
@@ -1243,9 +1255,17 @@ model Staff {
 
   commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 4) // overrides the service's own rate when set; percentage as decimal e.g. 0.15 = 15%
 
-  salaryOnlyFirstMonth Boolean  @default(false) @map("salary_only_first_month")
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  salaryOnlyFirstMonth Boolean @default(false) @map("salary_only_first_month")
+
+  // Fast-read snapshot of current pay — the audited history of changes
+  // lives in StaffCompensationHistory. Distinct from OfferLetter.baseSalary,
+  // which is a one-time pre-hire snapshot that was never updated after —
+  // this is the ongoing figure Payroll actually reads from.
+  currentBaseSalary Decimal? @map("current_base_salary") @db.Decimal(10, 2)
+  currentAllowances Decimal? @map("current_allowances") @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   location      StaffLocation            @relation(fields: [locationId], references: [id])
   managedBranch StaffLocation?           @relation("BranchManager")
@@ -1301,6 +1321,20 @@ model Staff {
   transfersRequested      StockTransfer[] @relation("TransferRequestedBy")
   transfersApproved       StockTransfer[] @relation("TransferApprovedBy")
   productSales            ProductSale[]
+  bookingsAsInHouseStaff  Booking[]       @relation("BookingAssignedInHouseStaff")
+
+  bankAccount             StaffBankAccount?
+  compensationHistory     StaffCompensationHistory[] @relation("StaffCompensationHistory")
+  compensationChangesMade StaffCompensationHistory[] @relation("CompensationChangedBy")
+  payrollPeriodsGenerated PayrollPeriod[]            @relation("PayrollGeneratedBy")
+  payrollPeriodsApproved  PayrollPeriod[]            @relation("PayrollApprovedBy")
+  payrollPeriodsReleased  PayrollPeriod[]            @relation("PayrollReleasedBy")
+  payslips                Payslip[]                  @relation("StaffPayslips")
+  payrollAdjustments      PayrollAdjustment[]        @relation("StaffAdjustments")
+  payrollAdjustmentsMade  PayrollAdjustment[]        @relation("AdjustmentCreatedBy")
+  wallet                  StaffWallet?
+  payoutRequests          StaffPayoutRequest[]       @relation("StaffPayoutRequests")
+  payoutRequestsProcessed StaffPayoutRequest[]       @relation("StaffPayoutProcessedBy")
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -1347,6 +1381,262 @@ model StaffEmploymentHistory {
   @@index([staffId, startDate])
   @@index([locationId])
   @@map("staff_employment_history")
+}
+
+// ============================================================================
+// PAYROLL & SALARY WALLET SYSTEM
+// Deliberately its own ledger (StaffWallet/StaffWalletTransaction), separate
+// from the customer/beautician Wallet — salary money and customer spending
+// money should never share one balance, even for a staff member who also
+// happens to hold a customer account. Withdrawal mirrors the proven
+// Beautician payout pattern (Paystack transfer, bank-account-on-file,
+// admin-approved) but is kept as its own parallel set of services rather
+// than generalizing the beautician-specific one, to avoid destabilizing a
+// working system handling real money.
+// ============================================================================
+
+enum PayrollPeriodStatus {
+  DRAFT // being calculated, not yet visible to staff
+  AWAITING_RELEASE // payslips generated, wallets credited, locked until the Payday switch is on
+  RELEASED // Payday switched on for this period — staff can withdraw
+}
+
+enum PayslipAdjustmentType {
+  BONUS
+  DEDUCTION
+}
+
+enum StaffWalletTransactionType {
+  PAYROLL_CREDIT
+  WITHDRAWAL
+  WITHDRAWAL_REVERSED // credited back if a transfer fails after debit
+}
+
+enum StaffPayoutRequestStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REJECTED
+  CANCELLED
+  FAILED
+}
+
+// a staff member can only submit a change *request* (the pending* fields);
+// an admin must explicitly approve it before it takes effect. Verification
+// is done via Paystack's own account resolution at submission time — the
+// same gateway used for the actual withdrawal transfer, so there's never a
+// mismatch between "who we verified" and "who we're paying". `verified`/
+// `verifiedAt` get set the moment that resolution succeeds.
+model StaffBankAccount {
+  id            String @id @default(uuid())
+  staffId       String @unique @map("staff_id")
+  bankCode      String @map("bank_code")
+  bankName      String @map("bank_name")
+  accountNumber String @map("account_number")
+  accountName   String @map("account_name")
+
+  verified        Boolean   @default(false)
+  verifiedAt      DateTime? @map("verified_at")
+  verificationRef String?   @map("verification_ref") // reserved for a future, more formal (e.g. KYC-grade) verification source, unused for now
+
+  pendingBankCode      String?   @map("pending_bank_code")
+  pendingBankName      String?   @map("pending_bank_name")
+  pendingAccountNumber String?   @map("pending_account_number")
+  pendingAccountName   String?   @map("pending_account_name")
+  pendingRequestedAt   DateTime? @map("pending_requested_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@map("staff_bank_accounts")
+}
+
+// Ongoing, editable compensation — fixes the gap where Staff.baseSalary
+// never existed anywhere except a one-time OfferLetter snapshot from before
+// they were even hired. This table is the audit trail of every change
+// (raises, role changes); Staff.currentBaseSalary/currentAllowances (added
+// below) hold the current snapshot for fast reads.
+model StaffCompensationHistory {
+  id            String   @id @default(uuid())
+  staffId       String   @map("staff_id")
+  baseSalary    Decimal  @map("base_salary") @db.Decimal(10, 2)
+  allowances    Decimal? @db.Decimal(10, 2)
+  note          String?
+  effectiveDate DateTime @map("effective_date")
+  changedById   String?  @map("changed_by_id") // nullable — admin-elevated change with no linked staff record
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  staff     Staff  @relation("StaffCompensationHistory", fields: [staffId], references: [id], onDelete: Cascade)
+  changedBy Staff? @relation("CompensationChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([staffId])
+  @@map("staff_compensation_history")
+}
+
+model PayrollPeriod {
+  id          String              @id @default(uuid())
+  label       String // e.g. "August 2026"
+  periodStart DateTime            @map("period_start")
+  periodEnd   DateTime            @map("period_end")
+  status      PayrollPeriodStatus @default(DRAFT)
+
+  generatedAt   DateTime? @map("generated_at")
+  generatedById String?   @map("generated_by_id")
+  approvedAt    DateTime? @map("approved_at")
+  approvedById  String?   @map("approved_by_id")
+  releasedAt    DateTime? @map("released_at")
+  releasedById  String?   @map("released_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  payslips    Payslip[]
+  adjustments PayrollAdjustment[]
+
+  generatedBy Staff? @relation("PayrollGeneratedBy", fields: [generatedById], references: [id], onDelete: SetNull)
+  approvedBy  Staff? @relation("PayrollApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  releasedBy  Staff? @relation("PayrollReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
+
+  @@unique([periodStart, periodEnd])
+  @@map("payroll_periods")
+}
+
+model Payslip {
+  id              String @id @default(uuid())
+  payrollPeriodId String @map("payroll_period_id")
+  staffId         String @map("staff_id")
+
+  baseSalary       Decimal @map("base_salary") @db.Decimal(10, 2)
+  allowances       Decimal @default(0) @db.Decimal(10, 2)
+  overtimeAmount   Decimal @default(0) @map("overtime_amount") @db.Decimal(10, 2)
+  commissionEarned Decimal @default(0) @map("commission_earned") @db.Decimal(10, 2)
+  commissionPaid   Decimal @default(0) @map("commission_paid") @db.Decimal(10, 2) // 0 in the first month per policy — earned and recorded, not paid
+  bonusTotal       Decimal @default(0) @map("bonus_total") @db.Decimal(10, 2)
+
+  attendanceDeduction  Decimal @default(0) @map("attendance_deduction") @db.Decimal(10, 2)
+  latePenaltyDeduction Decimal @default(0) @map("late_penalty_deduction") @db.Decimal(10, 2)
+  fineTotal            Decimal @default(0) @map("fine_total") @db.Decimal(10, 2)
+  loanRepayment        Decimal @default(0) @map("loan_repayment") @db.Decimal(10, 2)
+  taxDeduction         Decimal @default(0) @map("tax_deduction") @db.Decimal(10, 2)
+  pensionDeduction     Decimal @default(0) @map("pension_deduction") @db.Decimal(10, 2)
+  otherDeductionTotal  Decimal @default(0) @map("other_deduction_total") @db.Decimal(10, 2)
+
+  grossPay        Decimal @map("gross_pay") @db.Decimal(10, 2)
+  totalDeductions Decimal @map("total_deductions") @db.Decimal(10, 2)
+  netPay          Decimal @map("net_pay") @db.Decimal(10, 2)
+
+  isFirstMonth Boolean @default(false) @map("is_first_month")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  payrollPeriod PayrollPeriod       @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+  staff         Staff               @relation("StaffPayslips", fields: [staffId], references: [id])
+  adjustments   PayrollAdjustment[]
+
+  @@unique([payrollPeriodId, staffId])
+  @@index([staffId])
+  @@map("payslips")
+}
+
+// Manual bonus/deduction line items. `category` holds the specific named
+// type from the spec (e.g. "Performance Bonus", "Loan Repayment", "Damage
+// Charges") as free text — kept flexible rather than a rigid enum, since new
+// categories will likely come up in practice.
+model PayrollAdjustment {
+  id              String                @id @default(uuid())
+  payrollPeriodId String                @map("payroll_period_id")
+  payslipId       String?               @map("payslip_id") // set once the period is processed and a payslip exists
+  staffId         String                @map("staff_id")
+  type            PayslipAdjustmentType
+  category        String
+  amount          Decimal               @db.Decimal(10, 2)
+  reason          String
+  createdById     String?               @map("created_by_id") // nullable — admin-elevated action with no linked staff record
+  createdAt       DateTime              @default(now()) @map("created_at")
+
+  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+  payslip       Payslip?      @relation(fields: [payslipId], references: [id], onDelete: SetNull)
+  staff         Staff         @relation("StaffAdjustments", fields: [staffId], references: [id])
+  createdBy     Staff?        @relation("AdjustmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([staffId])
+  @@index([payrollPeriodId])
+  @@map("payroll_adjustments")
+}
+
+model StaffWallet {
+  id        String   @id @default(uuid())
+  staffId   String   @unique @map("staff_id")
+  balance   Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  staff        Staff                    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  transactions StaffWalletTransaction[]
+
+  @@map("staff_wallets")
+}
+
+model StaffWalletTransaction {
+  id          String                     @id @default(uuid())
+  walletId    String                     @map("wallet_id")
+  type        StaffWalletTransactionType
+  amount      Decimal                    @db.Decimal(10, 2)
+  status      TransactionStatus          @default(PENDING)
+  reference   String                     @unique
+  description String?
+  createdAt   DateTime                   @default(now()) @map("created_at")
+  updatedAt   DateTime                   @updatedAt @map("updated_at")
+
+  wallet             StaffWallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  staffPayoutRequest StaffPayoutRequest?
+
+  @@index([walletId])
+  @@map("staff_wallet_transactions")
+}
+
+model StaffPayoutRequest {
+  id                        String                   @id @default(uuid())
+  staffId                   String                   @map("staff_id")
+  amount                    Decimal                  @db.Decimal(10, 2)
+  status                    StaffPayoutRequestStatus @default(PENDING)
+  bankCode                  String                   @map("bank_code")
+  accountNumber             String                   @map("account_number")
+  accountName               String?                  @map("account_name")
+  processedById             String?                  @map("processed_by_id")
+  processedAt               DateTime?                @map("processed_at")
+  rejectionReason           String?                  @map("rejection_reason")
+  transactionId             String?                  @unique @map("transaction_id")
+  paystackTransferReference String?                  @unique @map("paystack_transfer_reference")
+  paystackTransferCode      String?                  @map("paystack_transfer_code")
+  createdAt                 DateTime                 @default(now()) @map("created_at")
+  updatedAt                 DateTime                 @updatedAt @map("updated_at")
+
+  staff       Staff                   @relation("StaffPayoutRequests", fields: [staffId], references: [id], onDelete: Cascade)
+  processedBy Staff?                  @relation("StaffPayoutProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  transaction StaffWalletTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([staffId])
+  @@index([status])
+  @@map("staff_payout_requests")
+}
+
+// Singleton — the "Payday" switch. OFF: salaries stay locked in the wallet
+// even though they've been credited. ON: staff can withdraw immediately.
+// Manually toggled by an admin — no automatic schedule.
+model PayrollSettings {
+  id            String   @id @default(uuid())
+  releaseActive Boolean  @default(false) @map("release_active")
+  // 8% is the standard Nigerian employee pension contribution rate as of
+  // the Nigeria Tax Act 2025 (effective Jan 2026) — configurable here in
+  // case Hairlux's accountant determines a different treatment applies.
+  pensionRate   Decimal  @default(0.08) @map("pension_rate") @db.Decimal(5, 4)
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("payroll_settings")
 }
 
 model BranchService {
@@ -1972,11 +2262,34 @@ model EmploymentApproval {
   @@map("employment_approvals")
 }
 
+// One model covers both Suppliers and Vendors (distinguished by `type`) —
+// they share identical shape and both link to InventoryItem the same way;
+// the UI presents them as two separate lists under Contacts.
+model Supplier {
+  id            String       @id @default(uuid())
+  type          SupplierType
+  name          String
+  contactPerson String?      @map("contact_person")
+  phone         String?
+  email         String?
+  address       String?
+  notes         String?
+  isActive      Boolean      @default(true) @map("is_active")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  inventoryItems InventoryItem[]
+
+  @@index([type])
+  @@map("suppliers")
+}
+
 model InventoryItem {
   id                String            @id @default(uuid())
   name              String
   category          InventoryCategory
   branchId          String            @map("branch_id")
+  supplierId        String?           @map("supplier_id")
   unit              String? // e.g. "pcs", "bottle", "ml"
   currentQuantity   Int               @default(0) @map("current_quantity")
   lowStockThreshold Int               @default(5) @map("low_stock_threshold")
@@ -1987,6 +2300,7 @@ model InventoryItem {
   updatedAt         DateTime          @updatedAt @map("updated_at")
 
   branch             StaffLocation               @relation(fields: [branchId], references: [id])
+  supplier           Supplier?                   @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   movements          StockMovement[]
   lowStockAlerts     LowStockAlert[]
   expiryAlerts       ExpiryAlert[]
@@ -1997,6 +2311,7 @@ model InventoryItem {
 
   @@unique([branchId, name, category])
   @@index([branchId, category])
+  @@index([supplierId])
   @@map("inventory_items")
 }
 
