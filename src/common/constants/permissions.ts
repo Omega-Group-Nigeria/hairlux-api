@@ -67,6 +67,10 @@ export const PERMISSIONS = {
   SUPPLIERS_UPDATE: 'suppliers:update', // Edit supplier/vendor details
   SUPPLIERS_DELETE: 'suppliers:delete', // Delete a supplier/vendor (blocked while items are linked)
 
+  // ── Payroll (salary/financial data) ──────────────────────────────────────────
+  PAYROLL_READ: 'payroll:read', // View payroll dashboard, periods, payslips, withdrawal history
+  PAYROLL_MANAGE: 'payroll:manage', // Set compensation, run payroll, approve periods, toggle Payday, add adjustments, approve bank changes
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
@@ -276,6 +280,16 @@ export const PERMISSION_GROUPS = [
       {
         key: PERMISSIONS.SUPPLIERS_DELETE,
         label: 'Delete a supplier/vendor (blocked while inventory items are still linked)',
+      },
+    ],
+  },
+  {
+    group: 'Payroll',
+    permissions: [
+      { key: PERMISSIONS.PAYROLL_READ, label: 'View the payroll dashboard, periods, payslips, and withdrawal history' },
+      {
+        key: PERMISSIONS.PAYROLL_MANAGE,
+        label: 'Set staff compensation, run and approve payroll, toggle Payday, add bonuses/deductions, approve bank account changes',
       },
     ],
   },

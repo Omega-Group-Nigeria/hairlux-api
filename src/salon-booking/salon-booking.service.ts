@@ -101,19 +101,101 @@ export class SalonBookingService {
      * from searchCustomers, which is a lightweight capped lookup used only
      * while creating a booking.
      */
-    async findAllCustomers(query?: string, page = 1, limit = 20) {
-        const where = query
+    async findAllCustomers(params: {
+        query?: string;
+        branchId?: string;
+        dateFrom?: string;
+        dateTo?: string;
+        hasAccount?: boolean;
+        minBookings?: number;
+        minSpend?: number;
+        page?: number;
+        limit?: number;
+    }) {
+        const { query, branchId, dateFrom, dateTo, hasAccount, minBookings, minSpend, page = 1, limit = 20 } = params;
+
+        const where: any = query
             ? { OR: [{ name: { contains: query, mode: 'insensitive' as const } }, { phone: { contains: query } }] }
             : {};
-        const [data, total] = await Promise.all([
+
+        if (hasAccount !== undefined) {
+            where.userId = hasAccount ? { not: null } : null;
+        }
+
+        if (branchId || dateFrom || dateTo) {
+            where.salonBookings = {
+                some: {
+                    ...(branchId && { branchId }),
+                    ...((dateFrom || dateTo) && {
+                        bookingDate: {
+                            ...(dateFrom && { gte: new Date(dateFrom) }),
+                            ...(dateTo && { lte: new Date(dateTo) }),
+                        },
+                    }),
+                },
+            };
+        }
+
+        // minBookings/minSpend depend on each customer's FULL booking
+        // history (not expressible as a plain Prisma where clause without a
+        // raw aggregation query), so when either is set this fetches every
+        // DB-filterable match, computes stats, filters, and paginates in
+        // memory — applying pagination before that filtering would silently
+        // return short pages. Fine at Hairlux's actual customer volume; not
+        // something to do at a scale of hundreds of thousands of rows.
+        const needsValueFilter = minBookings !== undefined || minSpend !== undefined;
+
+        const [allMatching, dbTotal] = await Promise.all([
             this.prisma.customer.findMany({
                 where,
-                skip: (page - 1) * limit,
-                take: limit,
+                ...(needsValueFilter ? {} : { skip: (page - 1) * limit, take: limit }),
                 orderBy: { createdAt: 'desc' },
             }),
             this.prisma.customer.count({ where }),
         ]);
+
+        const customerIds = allMatching.map((c) => c.id);
+        const bookings = customerIds.length
+            ? await this.prisma.salonBooking.findMany({
+                where: { customerId: { in: customerIds } },
+                select: {
+                    customerId: true,
+                    status: true,
+                    totalAmount: true,
+                    bookingDate: true,
+                    branch: { select: { id: true, name: true } },
+                },
+            })
+            : [];
+
+        const statsByCustomer = new Map<string, { bookingCount: number; totalSpend: number; branches: Map<string, string>; lastBookingDate: Date | null }>();
+        for (const b of bookings) {
+            if (!b.customerId) continue;
+            const s = statsByCustomer.get(b.customerId) ?? { bookingCount: 0, totalSpend: 0, branches: new Map(), lastBookingDate: null };
+            s.bookingCount += 1;
+            if (b.status === 'COMPLETED') s.totalSpend += Number(b.totalAmount);
+            s.branches.set(b.branch.id, b.branch.name);
+            if (!s.lastBookingDate || b.bookingDate > s.lastBookingDate) s.lastBookingDate = b.bookingDate;
+            statsByCustomer.set(b.customerId, s);
+        }
+
+        let withStats = allMatching.map((c) => {
+            const s = statsByCustomer.get(c.id);
+            return {
+                ...c,
+                bookingCount: s?.bookingCount ?? 0,
+                totalSpend: s?.totalSpend ?? 0,
+                branches: s ? Array.from(s.branches.values()) : [],
+                lastBookingDate: s?.lastBookingDate ?? null,
+            };
+        });
+
+        if (minBookings !== undefined) withStats = withStats.filter((c) => c.bookingCount >= minBookings);
+        if (minSpend !== undefined) withStats = withStats.filter((c) => c.totalSpend >= minSpend);
+
+        const total = needsValueFilter ? withStats.length : dbTotal;
+        const data = needsValueFilter ? withStats.slice((page - 1) * limit, (page - 1) * limit + limit) : withStats;
+
         return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
     }
 
