@@ -7,5 +7,6 @@ import { QoreidService } from './qoreid.service';
   imports: [ConfigModule],
   controllers: [NinController],
   providers: [QoreidService],
+  exports: [QoreidService],
 })
-export class NinModule {}
+export class NinModule { }

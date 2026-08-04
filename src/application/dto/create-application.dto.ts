@@ -18,6 +18,13 @@ const toLowerTrimmedString = (value: unknown): unknown =>
 
 export class CreateApplicationDto {
   @ApiPropertyOptional({
+    description: 'ID of the draft Application created during NIN verification (POST /applications/verify-nin) — when present and its NIN matches, that same record is finalized instead of creating a new one.',
+  })
+  @IsOptional()
+  @IsUUID()
+  applicationId?: string;
+
+  @ApiPropertyOptional({
     example: '550e8400-e29b-41d4-a716-446655440000',
     description: 'Job posting this application is for, if applying via a listing',
   })
