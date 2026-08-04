@@ -9,6 +9,7 @@ import { MailModule } from '../mail/mail.module';
 import { AuthModule } from '../auth/auth.module';
 import { ApplicantAuthGuard } from './guard/applicant-auth.guard';
 import { StorageModule } from '../storage/storage.module';
+import { NinModule } from '../nin/nin.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { StorageModule } from '../storage/storage.module';
     MailModule,
     AuthModule,
     StorageModule,
+    NinModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

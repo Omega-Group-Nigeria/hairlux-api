@@ -8,6 +8,7 @@ import { CreateApplicationDto } from './dto/create-application.dto';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { RespondToOfferDto } from './dto/respond-to-offer.dto';
 import { VerifyApplicantOtpDto } from './dto/verify-otp.dto';
+import { VerifyApplicationNinDto } from './dto/verify-application-nin.dto';
 import { ApplicantAuthGuard } from './guard/applicant-auth.guard';
 
 const MAX_CV_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
@@ -18,6 +19,16 @@ export class ApplicationController {
   constructor(private readonly applicationService: ApplicationService,
     private readonly s3Service: S3Service,
     private readonly jwtService: JwtService) { }
+
+  @Post('verify-nin')
+  @ApiOperation({
+    summary: 'Verify a NIN for a job application — idempotent',
+    description:
+      'Public endpoint used by the careers page application wizard, in place of POST /nin/verify. Creates or reuses a DRAFT application record so a repeat attempt with the same NIN/name (e.g. after a page refresh) is answered from that record instead of calling QoreID again. Returns an applicationId — include it as `applicationId` in the final POST /applications call to finish this same record rather than creating a new one.',
+  })
+  async verifyNin(@Body() dto: VerifyApplicationNinDto) {
+    return this.applicationService.verifyNinForApplication(dto.nin, dto.firstName, dto.lastName);
+  }
 
   @Post()
   @ApiOperation({

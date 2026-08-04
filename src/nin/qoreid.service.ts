@@ -8,6 +8,8 @@ export interface NinBio {
   gender: string;
   phone: string;
   address: string;
+  /** Raw base64 JPEG from QoreID (response.nin.photo) — no data: prefix. Undefined if QoreID didn't return one. */
+  photoBase64?: string;
 }
 
 export type VerifyNinResult =
@@ -99,6 +101,7 @@ export class QoreidService {
       gender: nin.gender === 'm' ? 'Male' : nin.gender === 'f' ? 'Female' : '',
       phone: nin.phone || '',
       address: this.formatAddress(nin.residence),
+      photoBase64: nin.photo || undefined,
     };
   }
 

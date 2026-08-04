@@ -332,6 +332,7 @@ enum OfferLetterStatus {
 }
 
 enum ApplicationStatus {
+  DRAFT
   SUBMITTED
   UNDER_REVIEW
   SHORTLISTED
@@ -2170,50 +2171,73 @@ model BeauticianLocationHistory {
   @@map("beautician_location_history")
 }
 
+// Backs the per-NIN verification cooldown — one row per NIN, updated every
+// time an attempt actually reaches QoreID (a cache-hit answered from an
+// existing Application record does NOT touch this, since it never calls
+// QoreID at all). NIN_VERIFY_COOLDOWN_MINUTES (.env, default 5) controls
+// how long a NIN is locked out after a real attempt.
+model NinVerificationAttempt {
+  id            String   @id @default(uuid())
+  nin           String   @unique
+  lastAttemptAt DateTime @map("last_attempt_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("nin_verification_attempts")
+}
+
 model Application {
-  id                      String              @id @default(uuid())
-  applicationCode         String              @unique
-  jobId                   String?             @map("job_id")
-  job                     JobPosting?         @relation("ApplicationJobPosting", fields: [jobId], references: [id], onDelete: SetNull)
-  appliedRole             String?
-  firstName               String
-  middleName              String?
-  lastName                String
-  nin                     String
-  dateOfBirth             String?
-  gender                  String?
-  phone                   String
-  address                 String
-  email                   String
-  yearsOfExperience       String?
-  previousEmployer        String?
-  previousEmployerAddress String?
-  previousEmployerPhone   String?
-  coverNote               String
-  preferredLocationId     String?
-  preferredBranchText     String?
-  cvUrl                   String?
-  portfolioUrl            String?
-  status                  ApplicationStatus   @default(SUBMITTED)
-  interviewScheduledAt    DateTime?
-  interviewMode           InterviewMode?
-  interviewLocationId     String?
-  interviewLocation       StaffLocation?      @relation("ApplicationInterviewLocation", fields: [interviewLocationId], references: [id], onDelete: SetNull)
-  interviewMeetingUrl     String?
-  interviewerName         String?
-  interviewNote           String?
-  interviewOutcome        InterviewOutcome?
-  interviewerId           String?
-  interviewer             Staff?              @relation("ApplicationInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
-  offerLetter             OfferLetter?
-  employmentApproval      EmploymentApproval?
-  notSelectedReason       String?
-  otpHash                 String?
-  otpExpiresAt            DateTime?
-  staffId                 String?
-  employedAt              DateTime?
-  createdAt               DateTime            @default(now())
-  updatedAt               DateTime            @updatedAt
+  id                        String              @id @default(uuid())
+  applicationCode           String              @unique
+  jobId                     String?             @map("job_id")
+  job                       JobPosting?         @relation("ApplicationJobPosting", fields: [jobId], references: [id], onDelete: SetNull)
+  appliedRole               String?
+  firstName                 String
+  middleName                String?
+  lastName                  String
+  nin                       String
+  // Set as soon as NIN verification is attempted (success or failure) so a
+  // repeat attempt — e.g. a page refresh — can be answered from this record
+  // instead of calling QoreID again. ninVerified only ever moves false ->
+  // true; a genuinely different (nin, firstName, lastName) combination gets
+  // its own Application row rather than overwriting this one.
+  ninVerified               Boolean             @default(false) @map("nin_verified")
+  ninVerifiedAt             DateTime?           @map("nin_verified_at")
+  ninPhotoUrl               String?             @map("nin_photo_url")
+  ninVerificationFailReason String?             @map("nin_verification_fail_reason")
+  dateOfBirth               String?
+  gender                    String?
+  phone                     String?
+  address                   String?
+  email                     String?
+  yearsOfExperience         String?
+  previousEmployer          String?
+  previousEmployerAddress   String?
+  previousEmployerPhone     String?
+  coverNote                 String?
+  preferredLocationId       String?
+  preferredBranchText       String?
+  cvUrl                     String?
+  portfolioUrl              String?
+  status                    ApplicationStatus   @default(SUBMITTED)
+  interviewScheduledAt      DateTime?
+  interviewMode             InterviewMode?
+  interviewLocationId       String?
+  interviewLocation         StaffLocation?      @relation("ApplicationInterviewLocation", fields: [interviewLocationId], references: [id], onDelete: SetNull)
+  interviewMeetingUrl       String?
+  interviewerName           String?
+  interviewNote             String?
+  interviewOutcome          InterviewOutcome?
+  interviewerId             String?
+  interviewer               Staff?              @relation("ApplicationInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
+  offerLetter               OfferLetter?
+  employmentApproval        EmploymentApproval?
+  notSelectedReason         String?
+  otpHash                   String?
+  otpExpiresAt              DateTime?
+  staffId                   String?
+  employedAt                DateTime?
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
 
   @@index([status])
   @@index([email])

@@ -376,6 +376,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.payrollSettings;
   }
 
+  get ninVerificationAttempt() {
+    return this.client.ninVerificationAttempt;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
