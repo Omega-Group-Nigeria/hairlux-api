@@ -11,6 +11,7 @@ import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
 import { AuthService } from 'src/auth/auth.service';
 import { MailService } from '../mail/mail.service';
+import { QoreidRequestError, QoreidService } from '../nin/qoreid.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { StaffService } from '../staff/staff.service';
@@ -37,14 +38,18 @@ type ApplicationRecord = {
   nin: string;
   dateOfBirth: string | null;
   gender: string | null;
-  phone: string;
-  address: string;
-  email: string;
+  phone: string | null;
+  address: string | null;
+  email: string | null;
+  ninVerified: boolean;
+  ninVerifiedAt: Date | null;
+  ninPhotoUrl: string | null;
+  ninVerificationFailReason: string | null;
   yearsOfExperience: string | null;
   previousEmployer: string | null;
   previousEmployerAddress: string | null;
   previousEmployerPhone: string | null;
-  coverNote: string;
+  coverNote: string | null;
   preferredLocationId: string | null;
   preferredBranchText: string | null;
   cvUrl: string | null;
@@ -89,6 +94,7 @@ interface ApplicationModelDelegate {
 }
 
 const ALLOWED_STATUS_TRANSITIONS: Record<ApplicationStatus, ApplicationStatus[]> = {
+  DRAFT: [ApplicationStatus.SUBMITTED],
   SUBMITTED: [ApplicationStatus.UNDER_REVIEW, ApplicationStatus.NOT_SELECTED],
   UNDER_REVIEW: [ApplicationStatus.SHORTLISTED, ApplicationStatus.NOT_SELECTED],
   SHORTLISTED: [ApplicationStatus.NOT_SELECTED],
@@ -110,7 +116,8 @@ export class ApplicationService {
     private mailService: MailService,
     private configService: ConfigService,
     private authService: AuthService,
-    private s3Service: S3Service
+    private s3Service: S3Service,
+    private qoreidService: QoreidService,
 
   ) { }
 
@@ -163,13 +170,235 @@ export class ApplicationService {
     return { otp, otpHash, otpExpiresAt };
   }
 
+  /**
+    * Answers a repeat verification attempt (same nin+firstName+lastName —
+    * typically caused by a page refresh) from whatever's already stored,
+    * rather than calling QoreID again. Also reuses a NIN that was verified
+    * successfully on a PRIOR, different application (a returning applicant
+    * applying for a new role) without re-verifying. Every attempt — success
+    * or failure — gets persisted onto a DRAFT Application row so the next
+    * attempt for the same inputs is free.
+    */
+  async verifyNinForApplication(nin: string, firstName: string, lastName: string) {
+    const existingDraft = await this.applicationModel.findFirst({
+      where: { nin, firstName, lastName, status: ApplicationStatus.DRAFT },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (existingDraft?.ninVerified) {
+      return this.ninVerifyResponseFromRecord(existingDraft, true);
+    }
+    if (existingDraft?.ninVerificationFailReason) {
+      return this.ninVerifyResponseFromRecord(existingDraft, false);
+    }
+
+    if (!existingDraft) {
+      const priorVerified = await this.applicationModel.findFirst({
+        where: { nin, ninVerified: true },
+        orderBy: { ninVerifiedAt: 'desc' },
+      });
+      if (priorVerified) {
+        const created = await this.createOrUpdateDraft(null, {
+          nin,
+          firstName,
+          lastName,
+          dateOfBirth: priorVerified.dateOfBirth,
+          gender: priorVerified.gender,
+          phone: priorVerified.phone,
+          address: priorVerified.address,
+          ninVerified: true,
+          ninVerifiedAt: priorVerified.ninVerifiedAt,
+          ninPhotoUrl: priorVerified.ninPhotoUrl,
+          ninVerificationFailReason: null,
+        });
+        return this.ninVerifyResponseFromRecord(created, true);
+      }
+    }
+
+    const cooldown = await this.checkAndRecordNinCooldown(nin);
+    if (cooldown) {
+      return {
+        applicationId: existingDraft?.id ?? null,
+        verified: false,
+        reason: 'RATE_LIMITED',
+        retryAfterSeconds: cooldown.retryAfterSeconds,
+        message: `Maximum retries exceeded. Try again in ${this.formatRetryAfter(cooldown.retryAfterSeconds)}.`,
+      };
+    }
+
+    try {
+      const result = await this.qoreidService.verifyNin(nin, firstName, lastName);
+
+      if (result.verified) {
+        let photoKey: string | null = null;
+        if (result.bio.photoBase64) {
+          try {
+            // Stored as an S3 key, not a URL — same pattern as cvUrl.
+            // A presigned URL is generated on demand (see
+            // ninVerifyResponseFromRecord / sanitize), never persisted.
+            photoKey = await this.s3Service.uploadObject(
+              Buffer.from(result.bio.photoBase64, 'base64'),
+              'applications/nin-photos',
+              `${nin}.jpg`,
+              'image/jpeg',
+            );
+          } catch (err) {
+            this.logger.warn(
+              `Failed to upload NIN photo to S3: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
+        const record = await this.createOrUpdateDraft(existingDraft?.id ?? null, {
+          nin,
+          firstName,
+          lastName,
+          dateOfBirth: result.bio.dob || null,
+          gender: result.bio.gender || null,
+          phone: result.bio.phone || null,
+          address: result.bio.address || null,
+          ninVerified: true,
+          ninVerifiedAt: new Date(),
+          ninPhotoUrl: photoKey,
+          ninVerificationFailReason: null,
+        });
+        return this.ninVerifyResponseFromRecord(record, true);
+      }
+
+      const record = await this.createOrUpdateDraft(existingDraft?.id ?? null, {
+        nin,
+        firstName,
+        lastName,
+        ninVerified: false,
+        ninVerificationFailReason: result.reason,
+      });
+      return this.ninVerifyResponseFromRecord(record, false);
+    } catch (err) {
+      // QoreID itself errored (NIN not found, service unavailable, etc). This
+      // is billed the same as a completed-but-unverified attempt, so it gets
+      // cached the same way -- a repeat of the exact same bad input won't
+      // charge again.
+      const reason = err instanceof QoreidRequestError && err.status === 404 ? 'NIN_NOT_FOUND' : 'VERIFICATION_UNAVAILABLE';
+
+      const record = await this.createOrUpdateDraft(existingDraft?.id ?? null, {
+        nin,
+        firstName,
+        lastName,
+        ninVerified: false,
+        ninVerificationFailReason: reason,
+      });
+      return this.ninVerifyResponseFromRecord(record, false);
+    }
+  }
+
+  /**
+   * Per-NIN cooldown, separate from the cache-hit logic above — this only
+   * fires for attempts that are actually about to reach QoreID (a cache-hit
+   * never gets here), so it protects against rapid different-name guessing
+   * against the same NIN without penalizing the legitimate "refresh the
+   * page" case, which is answered for free before this is even called.
+   * Returns null when the attempt is allowed (and records it), or the
+   * remaining wait time when it's still on cooldown.
+   */
+  private async checkAndRecordNinCooldown(nin: string): Promise<{ retryAfterSeconds: number } | null> {
+    const cooldownMinutes = Number(this.configService.get<string>('NIN_VERIFY_COOLDOWN_MINUTES')) || 5;
+    const cooldownMs = cooldownMinutes * 60 * 1000;
+    const now = new Date();
+
+    const existing = await this.prisma.ninVerificationAttempt.findUnique({ where: { nin } });
+    if (existing) {
+      const elapsedMs = now.getTime() - existing.lastAttemptAt.getTime();
+      if (elapsedMs < cooldownMs) {
+        return { retryAfterSeconds: Math.ceil((cooldownMs - elapsedMs) / 1000) };
+      }
+    }
+
+    await this.prisma.ninVerificationAttempt.upsert({
+      where: { nin },
+      create: { nin, lastAttemptAt: now },
+      update: { lastAttemptAt: now },
+    });
+    return null;
+  }
+
+  private formatRetryAfter(totalSeconds: number): string {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes > 0 && seconds > 0) return `${minutes} minute${minutes === 1 ? '' : 's'} ${seconds} second${seconds === 1 ? '' : 's'}`;
+    if (minutes > 0) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+    return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  }
+
+  private async createOrUpdateDraft(
+    existingId: string | null,
+    fields: {
+      nin: string;
+      firstName: string;
+      lastName: string;
+      dateOfBirth?: string | null;
+      gender?: string | null;
+      phone?: string | null;
+      address?: string | null;
+      ninVerified: boolean;
+      ninVerifiedAt?: Date | null;
+      ninPhotoUrl?: string | null;
+      ninVerificationFailReason?: string | null;
+    },
+  ): Promise<ApplicationRecord> {
+    if (existingId) {
+      return this.applicationModel.update({ where: { id: existingId }, data: fields });
+    }
+
+    const applicationCode = await this.generateApplicationCode();
+    return this.applicationModel.create({
+      data: { applicationCode, status: ApplicationStatus.DRAFT, ...fields },
+    });
+  }
+
+  /**
+   * ninPhotoUrl on the record is an S3 object key (not a browsable URL —
+   * same convention as cvUrl elsewhere in this service), so it's resolved
+   * into a short-lived presigned URL right before handing it back to the
+   * applicant.
+   */
+  private async ninVerifyResponseFromRecord(record: ApplicationRecord, verified: boolean) {
+    if (verified) {
+      let photoUrl: string | null = null;
+      if (record.ninPhotoUrl) {
+        try {
+          photoUrl = await this.s3Service.getPresignedUrl(record.ninPhotoUrl);
+        } catch (err) {
+          this.logger.warn(
+            `Failed to presign NIN photo for application ${record.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      return {
+        applicationId: record.id,
+        verified: true,
+        bio: {
+          dob: record.dateOfBirth || '',
+          gender: record.gender || '',
+          phone: record.phone || '',
+          address: record.address || '',
+        },
+        photoUrl,
+      };
+    }
+    return {
+      applicationId: record.id,
+      verified: false,
+      reason: record.ninVerificationFailReason || 'VERIFICATION_UNAVAILABLE',
+    };
+  }
+
   async submit(dto: CreateApplicationDto) {
     if (dto.jobId) {
       const existing = await this.applicationModel.findFirst({
         where: {
           nin: dto.nin,
           jobId: dto.jobId,
-          status: { not: ApplicationStatus.NOT_SELECTED },
+          status: { notIn: [ApplicationStatus.NOT_SELECTED, ApplicationStatus.DRAFT] },
         },
         select: { id: true, status: true },
       });
@@ -181,49 +410,62 @@ export class ApplicationService {
             : 'You already have an active application for this role. Check your applicant dashboard for its status.',);
       }
     }
-    const applicationCode = await this.generateApplicationCode();
+
+    // If this submission is finishing a draft created during NIN
+    // verification, reuse that same record (and its applicationCode)
+    // rather than creating a second one — the nin must still match, so a
+    // draftId from a different NIN can't be reused for this submission.
+    const draft = dto.applicationId
+      ? await this.applicationModel.findFirst({
+        where: { id: dto.applicationId, status: ApplicationStatus.DRAFT, nin: dto.nin },
+      })
+      : null;
+
+    const applicationCode = draft ? draft.applicationCode : await this.generateApplicationCode();
     const { otp, otpHash, otpExpiresAt } = await this.generateOtp();
 
-    const application = await this.applicationModel.create({
-      data: {
-        applicationCode,
-        jobId: dto.jobId ?? null,
-        appliedRole: this.normalizeNullableString(dto.appliedRole),
-        firstName: dto.firstName,
-        middleName: this.normalizeNullableString(dto.middleName),
-        lastName: dto.lastName,
-        nin: dto.nin,
-        dateOfBirth: this.normalizeNullableString(dto.dateOfBirth),
-        gender: this.normalizeNullableString(dto.gender),
-        phone: dto.phone,
-        address: dto.address,
-        email: dto.email.toLowerCase(),
-        yearsOfExperience: this.normalizeNullableString(dto.yearsOfExperience),
-        previousEmployer: this.normalizeNullableString(dto.previousEmployer),
-        previousEmployerAddress: this.normalizeNullableString(
-          dto.previousEmployerAddress,
-        ),
-        previousEmployerPhone: this.normalizeNullableString(
-          dto.previousEmployerPhone,
-        ),
-        coverNote: dto.coverNote,
-        preferredLocationId: dto.preferredLocationId ?? null,
-        preferredBranchText: this.normalizeNullableString(
-          dto.preferredBranchText,
-        ),
-        cvUrl: this.normalizeNullableString(dto.cvUrl),
-        portfolioUrl: this.normalizeNullableString(dto.portfolioUrl),
-        status: ApplicationStatus.SUBMITTED,
-        otpHash,
-        otpExpiresAt,
-      },
-    });
+    const data = {
+      applicationCode,
+      jobId: dto.jobId ?? null,
+      appliedRole: this.normalizeNullableString(dto.appliedRole),
+      firstName: dto.firstName,
+      middleName: this.normalizeNullableString(dto.middleName),
+      lastName: dto.lastName,
+      nin: dto.nin,
+      dateOfBirth: this.normalizeNullableString(dto.dateOfBirth),
+      gender: this.normalizeNullableString(dto.gender),
+      phone: dto.phone,
+      address: dto.address,
+      email: dto.email.toLowerCase(),
+      yearsOfExperience: this.normalizeNullableString(dto.yearsOfExperience),
+      previousEmployer: this.normalizeNullableString(dto.previousEmployer),
+      previousEmployerAddress: this.normalizeNullableString(
+        dto.previousEmployerAddress,
+      ),
+      previousEmployerPhone: this.normalizeNullableString(
+        dto.previousEmployerPhone,
+      ),
+      coverNote: dto.coverNote,
+      preferredLocationId: dto.preferredLocationId ?? null,
+      preferredBranchText: this.normalizeNullableString(
+        dto.preferredBranchText,
+      ),
+      cvUrl: this.normalizeNullableString(dto.cvUrl),
+      portfolioUrl: this.normalizeNullableString(dto.portfolioUrl),
+      status: ApplicationStatus.SUBMITTED,
+      otpHash,
+      otpExpiresAt,
+    };
+
+    const application = draft
+      ? await this.applicationModel.update({ where: { id: draft.id }, data })
+      : await this.applicationModel.create({ data });
 
     const dashboardUrl =
       this.configService.get<string>('APPLICANT_DASHBOARD_URL') ||
-      'https://www.hairlux.com.ng/careers.html';
+      'https://hairlux.com.ng/login.html';
 
-    this.mailService.sendApplicationConfirmationEmail(application.email, application.firstName, {
+    this.mailService.sendApplicationConfirmationEmail(application.email!, application.firstName, {
       applicationCode,
       otp,
       dashboardUrl,
@@ -250,7 +492,7 @@ export class ApplicationService {
     // Same response whether the code doesn't exist or the email doesn't
     // match — don't let this endpoint be used to probe which application
     // codes are real or confirm an applicant's email address.
-    if (!application || application.email.toLowerCase() !== email.toLowerCase()) {
+    if (!application || !application.email || application.email.toLowerCase() !== email.toLowerCase()) {
       console.log('[trace][requestOtp] SILENTLY RETURNING — no match. application exists:', !!application,
         application ? `stored email "${application.email}" vs supplied "${email}"` : '');
       return; // controller returns a generic success message regardless
@@ -434,9 +676,10 @@ export class ApplicationService {
   }
 
   private async sanitize(application: ApplicationRecord) {
-    const { otpHash, otpExpiresAt, cvUrl, interviewLocation, ...rest } = application;
+    const { otpHash, otpExpiresAt, cvUrl, ninPhotoUrl, interviewLocation, ...rest } = application;
     void otpHash;
     void otpExpiresAt;
+
     let cvDownloadUrl: string | null = null;
     if (cvUrl) {
       try {
@@ -445,7 +688,22 @@ export class ApplicationService {
         cvDownloadUrl = null;
       }
     }
-    return { ...rest, cvDownloadUrl, interviewLocationName: interviewLocation?.name ?? null };
+
+    let ninPhotoDownloadUrl: string | null = null;
+    if (ninPhotoUrl) {
+      try {
+        ninPhotoDownloadUrl = await this.s3Service.getPresignedUrl(ninPhotoUrl);
+      } catch {
+        ninPhotoDownloadUrl = null;
+      }
+    }
+
+    return {
+      ...rest,
+      cvDownloadUrl,
+      ninPhotoDownloadUrl,
+      interviewLocationName: interviewLocation?.name ?? null,
+    };
   }
 
   async updateStatus(id: string, dto: UpdateApplicationStatusDto) {
@@ -491,7 +749,7 @@ export class ApplicationService {
       || 'https://hairlux.com.ng/careers.html';
 
     this.mailService
-      .sendApplicationStatusUpdateEmail(application.email, application.firstName, status, {
+      .sendApplicationStatusUpdateEmail(application.email!, application.firstName, status, {
         applicationCode: application.applicationCode,
         dashboardUrl,
         reason: status === 'NOT_SELECTED' ? (application.notSelectedReason ?? undefined) : undefined,
@@ -550,7 +808,7 @@ export class ApplicationService {
         locationName = loc?.name;
       }
 
-      await this.mailService.sendInterviewScheduledEmail(application.email, application.firstName, {
+      await this.mailService.sendInterviewScheduledEmail(application.email!, application.firstName, {
         applicationCode: application.applicationCode,
         scheduledAt: new Date(dto.scheduledAt),
         mode: dto.mode,
@@ -719,7 +977,7 @@ export class ApplicationService {
       'https://hairlux.com.ng/login.html';
 
     this.mailService
-      .sendOfferExtendedEmail(application.email, application.firstName, {
+      .sendOfferExtendedEmail(application.email!, application.firstName, {
         applicationCode: application.applicationCode,
         role: offerLetter.role,
         baseSalary: Number(offerLetter.baseSalary),
@@ -893,7 +1151,7 @@ export class ApplicationService {
     }
 
     // ── Resolve or create the User account ──
-    let user = await this.prisma.user.findUnique({ where: { email: application.email } });
+    let user = await this.prisma.user.findUnique({ where: { email: application.email! } });
 
     if (user) {
       const existingStaff = await this.prisma.staff.findUnique({ where: { userId: user.id } });
@@ -926,11 +1184,11 @@ export class ApplicationService {
 
       user = await this.prisma.user.create({
         data: {
-          email: application.email,
+          email: application.email!,
           password: hashedPassword,
           firstName: application.firstName,
           lastName: application.lastName,
-          phone: application.phone,
+          phone: application.phone!,
           role: 'STAFF',
           status: 'ACTIVE',
           emailVerified: true, // already verified via NIN + OTP during application
@@ -947,10 +1205,10 @@ export class ApplicationService {
       name: fullName,
       currentRole: application.appliedRole ?? 'Staff',
       locationId,
-      email: application.email,
-      phone: application.phone,
+      email: application.email ?? undefined,
+      phone: application.phone ?? undefined,
       dateOfBirth: staffDateOfBirth,
-      address: application.address,
+      address: application.address ?? undefined,
       employmentStatus: 'ACTIVE',
       employmentNotes: `Converted from application ${application.applicationCode}`,
       userId: user.id,
