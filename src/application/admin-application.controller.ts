@@ -27,11 +27,11 @@ import { PERMISSIONS } from '../common/constants/permissions';
 import { ApplicationService } from './application.service';
 import { ApproveEmploymentDto } from './dto/approve-employment.dto';
 import { ConvertToStaffDto } from './dto/convert-to-staff.dto';
+import { GenerateOfferLetterDto } from './dto/generate-offer-letter.dto';
 import { QueryApplicationDto } from './dto/query-application.dto';
 import { RecordInterviewOutcomeDto } from './dto/record-interview-outcome.dto';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto';
-import { GenerateOfferLetterDto } from './dto/generate-offer-letter.dto';
 
 
 @ApiTags('Admin - Applications')
@@ -53,7 +53,7 @@ export class AdminApplicationController {
   @ApiResponse({ status: 403, description: 'Forbidden - Missing application:read permission' })
   @Permission(PERMISSIONS.APPLICATION_READ)
   async findAll(@Query() queryDto: QueryApplicationDto) {
-    const data = await this.applicationService.findAll(queryDto);
+    const data = await this.applicationService.findAllForAdmin(queryDto);
     return { success: true, message: 'Applications retrieved successfully', data };
   }
 

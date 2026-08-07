@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as QRCode from 'qrcode';
 import { AuthService } from 'src/auth/auth.service';
@@ -1159,21 +1160,27 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     const staff = await this.staffModel.findUnique({ where: { id: staffId }, select: { userId: true } }) as unknown as { userId: string | null } | null;
     if (!staff) throw new NotFoundException('Staff record not found');
     if (!staff.userId) {
-      return { linkedToUserAccount: false, adminRoleId: null, adminRoleName: null, permissions: [] as string[], hasAdminPortalLogin: false };
+      return { linkedToUserAccount: false, adminRoleId: null, adminRoleName: null, permissions: [] as string[], hasAdminPortalLogin: false, secondaryRoles: [] as { id: string; name: string }[] };
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: staff.userId },
-      select: {
-        role: true,
-        adminRoleId: true,
-        adminRole: { select: { id: true, name: true, permissions: { select: { permission: true } } } },
-      },
-    }) as unknown as {
-      role: string;
-      adminRoleId: string | null;
-      adminRole: { id: string; name: string; permissions: { permission: string }[] } | null;
-    } | null;
+    const [user, secondary] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: staff.userId },
+        select: {
+          role: true,
+          adminRoleId: true,
+          adminRole: { select: { id: true, name: true, permissions: { select: { permission: true } } } },
+        },
+      }) as unknown as Promise<{
+        role: string;
+        adminRoleId: string | null;
+        adminRole: { id: string; name: string; permissions: { permission: string }[] } | null;
+      } | null>,
+      this.prisma.userAdminRole.findMany({
+        where: { userId: staff.userId },
+        include: { adminRole: { select: { id: true, name: true } } },
+      }),
+    ]);
 
     return {
       linkedToUserAccount: true,
@@ -1181,16 +1188,25 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       adminRoleName: user?.adminRole?.name ?? null,
       permissions: (user?.adminRole?.permissions ?? []).map((p) => p.permission),
       hasAdminPortalLogin: user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN',
+      secondaryRoles: secondary.map((s) => ({ id: s.adminRole.id, name: s.adminRole.name })),
     };
   }
 
   /**
-   * Assigns a permission set to a staff member. `grantPortalLogin` is
+   * Assigns a permission role to a staff member. `grantPortalLogin` is
    * independent of the role itself — a Supervisor role can be assigned
    * purely for staff-portal elevation (no admin dashboard access at all),
    * or with portal login on top, entirely by this flag.
+   *
+   * `mode` determines whether this REPLACES the staff member's existing
+   * role (primary — the original behavior, and still the default for
+   * backward compatibility) or ADDS this role alongside whatever they
+   * already hold (secondary — via UserAdminRole, the same mechanism Roles
+   * & Permissions' "Manage Roles" modal uses). grantPortalLogin is ignored
+   * in secondary mode: dashboard login capability is only ever governed by
+   * the primary role, so a secondary role can't grant or revoke it.
    */
-  async assignRole(staffId: string, adminRoleId: string, grantPortalLogin: boolean, actorId?: string) {
+  async assignRole(staffId: string, adminRoleId: string, grantPortalLogin: boolean, actorId?: string, mode: 'primary' | 'secondary' = 'primary') {
     const staff = await this.staffModel.findUnique({ where: { id: staffId }, select: { userId: true, name: true } }) as unknown as { userId: string | null; name: string } | null;
     if (!staff) throw new NotFoundException('Staff record not found');
     if (!staff.userId) {
@@ -1201,9 +1217,57 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     if (!role) throw new NotFoundException('The specified admin role does not exist');
     if (!role.isActive) throw new BadRequestException(`Admin role "${role.name}" is inactive`);
 
+    if (mode === 'secondary') {
+      const currentUser = await this.prisma.user.findUnique({ where: { id: staff.userId }, select: { adminRoleId: true } });
+      if (currentUser?.adminRoleId === adminRoleId) {
+        throw new BadRequestException(`"${role.name}" is already this person's primary role`);
+      }
+
+      const existing = await this.prisma.userAdminRole.findUnique({
+        where: { userId_adminRoleId: { userId: staff.userId, adminRoleId } },
+      });
+      if (existing) {
+        throw new BadRequestException(`${staff.name} already has the "${role.name}" role`);
+      }
+
+      await this.prisma.userAdminRole.create({
+        data: { userId: staff.userId, adminRoleId, assignedById: actorId },
+      });
+      await this.prisma.roleAuditLog.create({
+        data: {
+          action: 'USER_ROLE_ADDED',
+          adminRoleId,
+          roleName: role.name,
+          targetUserId: staff.userId,
+          actorId: actorId ?? null,
+          before: Prisma.JsonNull,
+          after: { targetUserId: staff.userId },
+        },
+      });
+      await this.invalidateCache(staffId);
+      return this.getRoleAssignment(staffId);
+    }
+
+    const previousRole = await this.prisma.user.findUnique({
+      where: { id: staff.userId },
+      select: { adminRole: { select: { id: true, name: true } } },
+    });
+
     await this.prisma.user.update({
       where: { id: staff.userId },
       data: { adminRoleId, role: grantPortalLogin ? 'ADMIN' : 'STAFF' },
+    });
+
+    await this.prisma.roleAuditLog.create({
+      data: {
+        action: 'USER_ROLE_ASSIGNED',
+        adminRoleId,
+        roleName: role.name,
+        targetUserId: staff.userId,
+        actorId: actorId ?? null,
+        before: previousRole?.adminRole ? { id: previousRole.adminRole.id, name: previousRole.adminRole.name } : Prisma.JsonNull,
+        after: { id: role.id, name: role.name },
+      },
     });
 
     // Preserve staff-portal access when granting portal login: the base

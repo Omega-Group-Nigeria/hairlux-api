@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   Body,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -121,8 +122,8 @@ export class AdminUserController {
   })
   @ApiResponse({ status: 404, description: 'User or admin role not found' })
   @ApiResponse({ status: 400, description: 'User is not an ADMIN' })
-  async assignRole(@Param('id') id: string, @Body() dto: AssignAdminRoleDto) {
-    const data = await this.userService.assignAdminRole(id, dto.adminRoleId);
+  async assignRole(@Req() req: any, @Param('id') id: string, @Body() dto: AssignAdminRoleDto) {
+    const data = await this.userService.assignAdminRole(id, dto.adminRoleId, req.user?.id);
     return {
       success: true,
       message: 'Admin role reassigned successfully',

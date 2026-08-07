@@ -6,14 +6,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateAnnouncementDto, AnnouncementTargetDto } from './dto/create-announcement.dto';
+import { AnnouncementTargetDto, CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { CreateDirectiveDto } from './dto/create-directive.dto';
 
 const DIRECTIVE_STATUS_ORDER = ['PENDING', 'ACKNOWLEDGED', 'COMPLETED'] as const;
 
 @Injectable()
 export class StaffCommsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   private get announcementModel() {
     return (this.prisma as unknown as { announcement: any }).announcement;
@@ -53,13 +53,14 @@ export class StaffCommsService {
         target: dto.target,
         targetLocationId: dto.target === AnnouncementTargetDto.BRANCH ? dto.targetLocationId : null,
         targetStaffId: dto.target === AnnouncementTargetDto.INDIVIDUAL ? dto.targetStaffId : null,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
         createdById: createdById ?? null,
       },
     });
   }
 
   async getAllAnnouncements() {
-     return this.announcementModel.findMany({
+    return this.announcementModel.findMany({
       where: {},
       include: {
         createdBy: { select: { firstName: true, lastName: true } },
@@ -78,12 +79,18 @@ export class StaffCommsService {
       throw new NotFoundException('Staff record not found');
     }
 
+    const now = new Date();
     const announcements = await this.announcementModel.findMany({
       where: {
-        OR: [
-          { target: 'ALL' },
-          { target: 'BRANCH', targetLocationId: staff.locationId },
-          { target: 'INDIVIDUAL', targetStaffId: staffId },
+        AND: [
+          {
+            OR: [
+              { target: 'ALL' },
+              { target: 'BRANCH', targetLocationId: staff.locationId },
+              { target: 'INDIVIDUAL', targetStaffId: staffId },
+            ],
+          },
+          { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
         ],
       },
       include: { createdBy: { select: { firstName: true, lastName: true } } },

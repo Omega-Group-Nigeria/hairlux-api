@@ -40,11 +40,20 @@ export class CreateJobDto {
   location: string;
 
   @ApiPropertyOptional({
-    description: 'StaffLocation ID this posting is tied to. Omit for postings open across branches or not yet branch-specific.',
+    description: 'StaffLocation ID this posting is tied to. Omit for postings open across branches or not yet branch-specific. Kept for backward compatibility — prefer branchIds for new postings.',
   })
   @IsOptional()
   @IsUUID()
   branchId?: string;
+
+  @ApiPropertyOptional({
+    description: 'One or more StaffLocation IDs this posting is available at. When provided, this is the source of truth for branch availability — branchId above is derived from the first entry for backward compatibility.',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  branchIds?: string[];
 
   @ApiPropertyOptional({
     example: 'Hair Styling',

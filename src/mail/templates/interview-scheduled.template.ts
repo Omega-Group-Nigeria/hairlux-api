@@ -12,8 +12,8 @@ export interface InterviewScheduledData {
 }
 
 export function interviewScheduledTemplate(firstName: string, data: InterviewScheduledData): string {
-  const dateStr = data.scheduledAt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  const timeStr = data.scheduledAt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
+  const dateStr = data.scheduledAt.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Africa/Lagos' });
+  const timeStr = data.scheduledAt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', timeZone: 'Africa/Lagos' });
 
   const whereLine = data.mode === 'VIRTUAL'
     ? `<p><strong>Meeting Link:</strong> <a href="${data.meetingUrl}">${data.meetingUrl}</a></p>`

@@ -7,6 +7,8 @@ import {
   Delete,
   Body,
   Param,
+  Query,
+  Req,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -16,6 +18,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -33,7 +36,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN)
 export class RolesController {
-  constructor(private readonly rolesService: RolesService) {}
+  constructor(private readonly rolesService: RolesService) { }
 
   // ── Permission catalogue ──────────────────────────────────────────────────────
 
@@ -110,8 +113,8 @@ export class RolesController {
     },
   })
   @ApiResponse({ status: 409, description: 'Role name already exists' })
-  async create(@Body() dto: CreateRoleDto) {
-    const data = await this.rolesService.create(dto);
+  async create(@Req() req: any, @Body() dto: CreateRoleDto) {
+    const data = await this.rolesService.create(dto, req.user?.id);
     return { success: true, message: 'Role created successfully', data };
   }
 
@@ -158,6 +161,17 @@ export class RolesController {
     return { success: true, message: 'Role retrieved successfully', data };
   }
 
+  @Get(':id/users')
+  @ApiOperation({
+    summary: 'List every user holding this role',
+    description: 'Includes both users for whom this is their primary role AND anyone holding it as a secondary role — the userCount shown on the role itself is the sum of both.',
+  })
+  @ApiParam({ name: 'id', description: 'Role ID' })
+  async getRoleUsers(@Param('id') id: string) {
+    const data = await this.rolesService.getRoleUsers(id);
+    return { success: true, message: 'Retrieved successfully', data };
+  }
+
   @Patch(':id')
   @ApiOperation({
     summary: 'Update role name / description / active status',
@@ -168,8 +182,8 @@ export class RolesController {
   @ApiResponse({ status: 200, description: 'Role updated' })
   @ApiResponse({ status: 404, description: 'Role not found' })
   @ApiResponse({ status: 409, description: 'Role name already taken' })
-  async update(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
-    const data = await this.rolesService.update(id, dto);
+  async update(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateRoleDto) {
+    const data = await this.rolesService.update(id, dto, req.user?.id);
     return { success: true, message: 'Role updated successfully', data };
   }
 
@@ -203,10 +217,11 @@ export class RolesController {
   @ApiResponse({ status: 400, description: 'Unknown permission key(s)' })
   @ApiResponse({ status: 404, description: 'Role not found' })
   async setPermissions(
+    @Req() req: any,
     @Param('id') id: string,
     @Body() dto: SetRolePermissionsDto,
   ) {
-    const data = await this.rolesService.setPermissions(id, dto);
+    const data = await this.rolesService.setPermissions(id, dto, req.user?.id);
     return { success: true, message: 'Permissions updated successfully', data };
   }
 
@@ -220,8 +235,69 @@ export class RolesController {
   @ApiResponse({ status: 200, description: 'Role deleted' })
   @ApiResponse({ status: 400, description: 'Role still has assigned users' })
   @ApiResponse({ status: 404, description: 'Role not found' })
-  async remove(@Param('id') id: string) {
-    await this.rolesService.remove(id);
+  async remove(@Req() req: any, @Param('id') id: string) {
+    await this.rolesService.remove(id, req.user?.id);
     return { success: true, message: 'Role deleted successfully' };
+  }
+
+  // ── Secondary roles (multi-role support) ─────────────────────────────────────
+
+  @Get('users/:userId')
+  @ApiOperation({
+    summary: "Get a user's roles",
+    description: 'Returns the primary role (User.adminRoleId) plus every secondary role assigned to this user.',
+  })
+  @ApiParam({ name: 'userId' })
+  async getUserRoles(@Param('userId') userId: string) {
+    const data = await this.rolesService.getUserRoles(userId);
+    return { success: true, message: 'Retrieved successfully', data };
+  }
+
+  @Post('users/:userId/:adminRoleId')
+  @ApiOperation({
+    summary: 'Add a secondary role to a user',
+    description: "Grants an additional role on top of the user's existing primary role — effective permissions become the union of both. Use PATCH /admin/users/:id/role (Admin Management) to change the primary role instead.",
+  })
+  @ApiParam({ name: 'userId' })
+  @ApiParam({ name: 'adminRoleId' })
+  async addUserRole(@Req() req: any, @Param('userId') userId: string, @Param('adminRoleId') adminRoleId: string) {
+    const data = await this.rolesService.addUserRole(userId, adminRoleId, req.user?.id);
+    return { success: true, message: 'Role added successfully', data };
+  }
+
+  @Delete('users/:userId/:adminRoleId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Remove a secondary role from a user — does not affect their primary role" })
+  @ApiParam({ name: 'userId' })
+  @ApiParam({ name: 'adminRoleId' })
+  async removeUserRole(@Req() req: any, @Param('userId') userId: string, @Param('adminRoleId') adminRoleId: string) {
+    const data = await this.rolesService.removeUserRole(userId, adminRoleId, req.user?.id);
+    return { success: true, message: 'Role removed successfully', data };
+  }
+
+  // ── Audit trail ──────────────────────────────────────────────────────────────
+
+  @Get('audit-log/all')
+  @ApiOperation({
+    summary: 'Role & permission change audit log',
+    description: 'Every role create/update/delete, permission-set change, and secondary-role grant/revoke — who changed what, before/after, and when. Optionally filtered by role or target user.',
+  })
+  @ApiQuery({ name: 'adminRoleId', required: false })
+  @ApiQuery({ name: 'targetUserId', required: false })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  async getAuditLog(
+    @Query('adminRoleId') adminRoleId?: string,
+    @Query('targetUserId') targetUserId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const data = await this.rolesService.getAuditLog({
+      adminRoleId,
+      targetUserId,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { success: true, message: 'Retrieved successfully', data };
   }
 }

@@ -380,6 +380,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.ninVerificationAttempt;
   }
 
+  get userAdminRole() {
+    return this.client.userAdminRole;
+  }
+
+  get roleAuditLog() {
+    return this.client.roleAuditLog;
+  }
+
+  get jobPostingBranch() {
+    return this.client.jobPostingBranch;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
@@ -400,6 +412,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.stockTransfer;
   }
 
-  
+
 
 }
