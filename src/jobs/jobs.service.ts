@@ -1,11 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException, } from '@nestjs/common';
-import { JobType, Prisma, JobPostingStatus, ApplicationStatus } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException, } from '@nestjs/common';
+import { ApplicationStatus, JobPostingStatus, JobType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { CreateJobDto } from './dto/create-job.dto';
-import { UpdateJobDto } from './dto/update-job.dto';
 import { CloseJobPostingDto } from './dto/close-job-posting.dto';
+import { CreateJobDto } from './dto/create-job.dto';
 import { QueryJobsDto } from './dto/query-jobs.dto';
+import { UpdateJobDto } from './dto/update-job.dto';
 
 const TTL = 300; // 5 minutes
 
@@ -14,7 +14,7 @@ export class JobsService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
-  ) {}
+  ) { }
 
   // ── Public ──────────────────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ export class JobsService {
         title: dto.title,
         type: dto.type,
         location: dto.location,
-        branchId: dto.branchId,
+        branchId: dto.branchIds?.length ? dto.branchIds[0] : dto.branchId,
         department: dto.department,
         description: dto.description,
         responsibilities: dto.responsibilities,
@@ -98,6 +98,13 @@ export class JobsService {
       },
     });
 
+    if (dto.branchIds?.length) {
+      await this.prisma.jobPostingBranch.createMany({
+        data: dto.branchIds.map((branchId) => ({ jobPostingId: job.id, branchId })),
+        skipDuplicates: true,
+      });
+    }
+
     await this.redis.delByPattern('jobs:*');
     return job;
   }
@@ -108,7 +115,9 @@ export class JobsService {
 
     const where: Prisma.JobPostingWhereInput = {};
     if (type) where.type = type as JobType;
-    if (branchId) where.branchId = branchId;
+    if (branchId) {
+      where.OR = [{ branchId }, { branches: { some: { branchId } } }];
+    }
 
     const [jobs, total] = await Promise.all([
       this.prisma.jobPosting.findMany({
@@ -132,7 +141,10 @@ export class JobsService {
   }
 
   async findOneAdmin(id: string) {
-    const job = await this.prisma.jobPosting.findUnique({ where: { id } });
+    const job = await this.prisma.jobPosting.findUnique({
+      where: { id },
+      include: { branches: { include: { branch: { select: { id: true, name: true } } } } },
+    });
     if (!job) throw new NotFoundException('Job posting not found');
     return job;
   }
@@ -146,7 +158,9 @@ export class JobsService {
         ...(dto.title !== undefined && { title: dto.title }),
         ...(dto.type !== undefined && { type: dto.type }),
         ...(dto.location !== undefined && { location: dto.location }),
-        ...(dto.branchId !== undefined && { branchId: dto.branchId }),
+        ...(dto.branchIds?.length
+          ? { branchId: dto.branchIds[0] }
+          : dto.branchId !== undefined && { branchId: dto.branchId }),
         ...(dto.department !== undefined && { department: dto.department }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.responsibilities !== undefined && {
@@ -163,6 +177,20 @@ export class JobsService {
         ...(dto.salaryNote !== undefined && { salaryNote: dto.salaryNote }),
       },
     });
+
+    if (dto.branchIds !== undefined) {
+      await this.prisma.$transaction([
+        this.prisma.jobPostingBranch.deleteMany({ where: { jobPostingId: id } }),
+        ...(dto.branchIds.length
+          ? [
+            this.prisma.jobPostingBranch.createMany({
+              data: dto.branchIds.map((branchId) => ({ jobPostingId: id, branchId })),
+              skipDuplicates: true,
+            }),
+          ]
+          : []),
+      ]);
+    }
 
     await this.redis.delByPattern('jobs:*');
     return job;

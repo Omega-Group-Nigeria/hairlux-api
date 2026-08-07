@@ -1,33 +1,33 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
-  UnauthorizedException,
-  ConflictException,
-  BadRequestException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import * as argon2 from 'argon2';
-import { PrismaService } from '../prisma/prisma.service';
-import { RegisterDto } from './dto/register.dto';
-import { RegisterBeauticianDto } from './dto/register-beautician.dto';
-import { LoginDto } from './dto/login.dto';
-import { ForgotPasswordDto } from './dto/forgot-password.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
-import { VerifyOtpDto } from './dto/verify-otp.dto';
-import { ResendOtpDto } from './dto/resend-otp.dto';
-import { ErrorMessages } from '../common/constants/error-messages';
-import { randomBytes, randomInt } from 'crypto';
+import { JwtService } from '@nestjs/jwt';
 import { UserRole, UserStatus } from '@prisma/client';
+import * as argon2 from 'argon2';
+import { randomBytes, randomInt } from 'crypto';
+import { ErrorMessages } from '../common/constants/error-messages';
 import { MailService } from '../mail/mail.service';
-import { ReferralService } from '../referral/referral.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
-import { JwtPayload } from './types/jwt-payload.interface';
-import { PinService } from './pin.service';
+import { ReferralService } from '../referral/referral.service';
 import { CreatePinDto } from './dto/create-pin.dto';
-import { VerifyPinDto } from './dto/verify-pin.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { LoginDto } from './dto/login.dto';
+import { RegisterBeauticianDto } from './dto/register-beautician.dto';
+import { RegisterDto } from './dto/register.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UpdatePinDto } from './dto/update-pin.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
+import { VerifyPinDto } from './dto/verify-pin.dto';
+import { PinService } from './pin.service';
+import { JwtPayload } from './types/jwt-payload.interface';
 
 @Injectable()
 export class AuthService {
@@ -41,7 +41,7 @@ export class AuthService {
     private referralService: ReferralService,
     private redis: RedisService,
     private pinService: PinService,
-  ) {}
+  ) { }
 
   async register(registerDto: RegisterDto) {
     const { email, password, firstName, lastName, phone, referralCode } =
@@ -124,10 +124,9 @@ export class AuthService {
       await this.referralService.createReferralCode(user.id, firstName);
     } catch (referralErr) {
       this.logger.warn(
-        `Referral code generation failed for user ${user.id} (non-fatal): ${
-          referralErr instanceof Error
-            ? referralErr.message
-            : String(referralErr)
+        `Referral code generation failed for user ${user.id} (non-fatal): ${referralErr instanceof Error
+          ? referralErr.message
+          : String(referralErr)
         }`,
       );
     }
@@ -138,10 +137,9 @@ export class AuthService {
         await this.referralService.applySignupCode(user.id, referralCode);
       } catch (referralErr) {
         this.logger.warn(
-          `Signup code application failed for user ${user.id} (non-fatal): ${
-            referralErr instanceof Error
-              ? referralErr.message
-              : String(referralErr)
+          `Signup code application failed for user ${user.id} (non-fatal): ${referralErr instanceof Error
+            ? referralErr.message
+            : String(referralErr)
           }`,
         );
       }
@@ -384,7 +382,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
 
     if (!user) {
-    return { message: 'If the email exists, a password reset link has been sent' };
+      return { message: 'If the email exists, a password reset link has been sent' };
     }
 
     await this.initiatePasswordSetup(user.id);
@@ -546,9 +544,9 @@ export class AuthService {
     }
 
     const roleAssignments = await this.prisma.userRoleAssignment.findMany({
-    where: { userId: user.id },
-    select: { role: true },
-  });
+      where: { userId: user.id },
+      select: { role: true },
+    });
 
     const roles = Array.from(new Set([user.role, ...roleAssignments.map((r) => r.role)]));
 
@@ -556,6 +554,7 @@ export class AuthService {
     const permissions = await this.getPermissionsForUser(
       user.role,
       user.adminRoleId ?? null,
+      user.id,
     );
 
     return { ...user, permissions, roles };
@@ -564,21 +563,43 @@ export class AuthService {
   private async getPermissionsForUser(
     role: UserRole,
     adminRoleId: string | null,
+    userId: string,
   ): Promise<string[]> {
     if (role === UserRole.SUPER_ADMIN) return ['*'];
-    if (!adminRoleId) return [];
 
+    const roleIds = new Set<string>();
+    if (adminRoleId) roleIds.add(adminRoleId);
+
+    const additional = await this.prisma.userAdminRole.findMany({
+      where: { userId },
+      select: { adminRoleId: true },
+    });
+    additional.forEach((r) => roleIds.add(r.adminRoleId));
+
+    if (roleIds.size === 0) return [];
+
+    const permissionSets = await Promise.all(
+      Array.from(roleIds).map((id) => this.getPermissionsForRole(id)),
+    );
+    return Array.from(new Set(permissionSets.flat()));
+  }
+
+  /**
+   * Permissions for a single role, respecting isActive — a deactivated
+   * role now correctly grants nothing, whether read fresh or from cache.
+   */
+  private async getPermissionsForRole(adminRoleId: string): Promise<string[]> {
     const cacheKey = `permissions:adminrole:${adminRoleId}`;
     const cached = await this.redis.get<string[]>(cacheKey);
     if (cached) return cached;
 
-    const rolePerms = await this.prisma.adminRolePermission.findMany({
-      where: { adminRoleId },
-      select: { permission: true },
+    const role = await this.prisma.adminRole.findUnique({
+      where: { id: adminRoleId },
+      select: { isActive: true, permissions: { select: { permission: true } } },
     });
 
-    const permissions = rolePerms.map((p) => p.permission);
-    await this.redis.set(cacheKey, permissions, 300); // 5 min TTL
+    const permissions = role?.isActive ? role.permissions.map((p) => p.permission) : [];
+    await this.redis.set(cacheKey, permissions, 300);
     return permissions;
   }
 
@@ -608,6 +629,7 @@ export class AuthService {
     const permissions = await this.getPermissionsForUser(
       user.role,
       user.adminRoleId ?? null,
+      user.id,
     );
 
     // ── same computation as validateUser() ──
@@ -814,6 +836,7 @@ export class AuthService {
     const permissions = await this.getPermissionsForUser(
       user.role,
       user.adminRoleId ?? null,
+      userId,
     );
 
     // Remove sensitive fields

@@ -49,7 +49,7 @@ export class UserService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
-  ) {}
+  ) { }
 
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -435,11 +435,11 @@ export class UserService {
       longitude: dto.longitude,
       addressComponents: shouldRebuildComponents
         ? this.normalizeAddressComponents({
-            streetAddress,
-            city,
-            state,
-            country,
-          })
+          streetAddress,
+          city,
+          state,
+          country,
+        })
         : undefined,
     };
   }
@@ -502,8 +502,8 @@ export class UserService {
     const role = await (dto.adminRoleId
       ? this.prisma.adminRole.findUnique({ where: { id: dto.adminRoleId } })
       : this.prisma.adminRole.findFirst({
-          where: { name: { equals: dto.role, mode: 'insensitive' } },
-        }));
+        where: { name: { equals: dto.role, mode: 'insensitive' } },
+      }));
     if (!role) {
       throw new NotFoundException('The specified admin role does not exist');
     }
@@ -549,8 +549,11 @@ export class UserService {
     return user;
   }
 
-  async assignAdminRole(userId: string, adminRoleId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+  async assignAdminRole(userId: string, adminRoleId: string, actorId?: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { adminRole: { select: { id: true, name: true } } },
+    });
     if (!user) throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
     if (user.role !== UserRole.ADMIN) {
       throw new BadRequestException(
@@ -567,6 +570,8 @@ export class UserService {
       throw new BadRequestException(`Admin role "${role.name}" is inactive`);
     }
 
+    const previousRole = user.adminRole;
+
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { adminRoleId },
@@ -582,6 +587,19 @@ export class UserService {
       },
     });
     void this.redis.del(`user:profile:${userId}`);
+
+    await this.prisma.roleAuditLog.create({
+      data: {
+        action: 'USER_ROLE_ASSIGNED',
+        adminRoleId,
+        roleName: role.name,
+        targetUserId: userId,
+        actorId: actorId ?? null,
+        before: previousRole ? { id: previousRole.id, name: previousRole.name } : Prisma.JsonNull,
+        after: { id: role.id, name: role.name },
+      },
+    });
+
     return updated;
   }
 
@@ -697,34 +715,34 @@ export class UserService {
 
     const walletStats = wallet
       ? await Promise.all([
-          this.prisma.transaction.aggregate({
-            where: {
-              walletId: wallet.id,
-              type: TransactionType.DEPOSIT,
-              status: TransactionStatus.COMPLETED,
-            },
-            _sum: { amount: true },
-            _count: { id: true },
-          }),
-          this.prisma.transaction.aggregate({
-            where: {
-              walletId: wallet.id,
-              type: TransactionType.DEBIT,
-              status: TransactionStatus.COMPLETED,
-            },
-            _sum: { amount: true },
-            _count: { id: true },
-          }),
-          this.prisma.transaction.aggregate({
-            where: {
-              walletId: wallet.id,
-              type: TransactionType.REFUND,
-              status: TransactionStatus.COMPLETED,
-            },
-            _sum: { amount: true },
-            _count: { id: true },
-          }),
-        ])
+        this.prisma.transaction.aggregate({
+          where: {
+            walletId: wallet.id,
+            type: TransactionType.DEPOSIT,
+            status: TransactionStatus.COMPLETED,
+          },
+          _sum: { amount: true },
+          _count: { id: true },
+        }),
+        this.prisma.transaction.aggregate({
+          where: {
+            walletId: wallet.id,
+            type: TransactionType.DEBIT,
+            status: TransactionStatus.COMPLETED,
+          },
+          _sum: { amount: true },
+          _count: { id: true },
+        }),
+        this.prisma.transaction.aggregate({
+          where: {
+            walletId: wallet.id,
+            type: TransactionType.REFUND,
+            status: TransactionStatus.COMPLETED,
+          },
+          _sum: { amount: true },
+          _count: { id: true },
+        }),
+      ])
       : null;
 
     // Get booking history
@@ -787,17 +805,17 @@ export class UserService {
       user,
       wallet: wallet
         ? {
-            id: wallet.id,
-            balance: Number(wallet.balance),
-            createdAt: wallet.createdAt,
-            updatedAt: wallet.updatedAt,
-            totalDeposited: Number(walletStats![0]._sum.amount || 0),
-            totalDeposits: walletStats![0]._count.id,
-            totalDebited: Number(walletStats![1]._sum.amount || 0),
-            totalDebits: walletStats![1]._count.id,
-            totalRefunded: Number(walletStats![2]._sum.amount || 0),
-            totalRefunds: walletStats![2]._count.id,
-          }
+          id: wallet.id,
+          balance: Number(wallet.balance),
+          createdAt: wallet.createdAt,
+          updatedAt: wallet.updatedAt,
+          totalDeposited: Number(walletStats![0]._sum.amount || 0),
+          totalDeposits: walletStats![0]._count.id,
+          totalDebited: Number(walletStats![1]._sum.amount || 0),
+          totalDebits: walletStats![1]._count.id,
+          totalRefunded: Number(walletStats![2]._sum.amount || 0),
+          totalRefunds: walletStats![2]._count.id,
+        }
         : null,
       bookings: bookings.map((booking) => ({
         ...booking,

@@ -15,6 +15,35 @@ function formatDistance(meters: number): string {
     return Math.round(meters) + 'm';
 }
 
+/**
+ * Nigeria (WAT) is a fixed UTC+1 offset year-round — no daylight saving —
+ * so a constant offset is enough here without needing a full timezone
+ * database. Centralized because attendance business-hours logic needs to
+ * reason in WAT regardless of what timezone the server process itself
+ * happens to be running in (commonly UTC in production), and every one of
+ * Date's local-timezone-dependent methods (getDay, setHours, the plain
+ * Date constructor's local parsing) silently uses the SERVER's zone, not
+ * WAT — which is exactly what caused the "closing time" / late-calculation
+ * bugs this replaces.
+ */
+const WAT_OFFSET_MS = 60 * 60 * 1000;
+
+/** 'YYYY-MM-DD' for "today" as a calendar date in WAT, not the server's own zone. */
+function watTodayDateStr(now: Date): string {
+    return new Date(now.getTime() + WAT_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** 0 (Sunday) .. 6 (Saturday), for "today" as a day-of-week in WAT. */
+function watDayOfWeek(now: Date): number {
+    return new Date(now.getTime() + WAT_OFFSET_MS).getUTCDay();
+}
+
+/** Builds a Date for a specific WAT calendar date ('YYYY-MM-DD') + "HH:MM" WAT clock time. */
+function watDateAtTime(dateStr: string, hhmm: string): Date {
+    const [hour, minute] = hhmm.split(':').map(Number);
+    return new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+01:00`);
+}
+
 @Injectable()
 export class AttendanceService {
     constructor(private prisma: PrismaService,
@@ -27,7 +56,8 @@ export class AttendanceService {
         });
         if (!staff) throw new NotFoundException('Staff record not found');
 
-        const today = new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const today = watTodayDateStr(now);
 
         const existing = await this.prisma.attendanceRecord.findUnique({
             where: { staffId_date: { staffId, date: new Date(today) } },
@@ -51,8 +81,6 @@ export class AttendanceService {
             );
         }
 
-        const now = new Date();
-
         // Public holiday check — takes priority over the normal late calculation.
         const holidayException = await this.prisma.businessException.findUnique({
             where: { date: new Date(today) },
@@ -66,7 +94,7 @@ export class AttendanceService {
             status = AttendanceStatus.PUBLIC_HOLIDAY;
         } else {
             const businessHours = await this.prisma.businessHours.findUnique({
-                where: { dayOfWeek: now.getDay() },
+                where: { dayOfWeek: watDayOfWeek(now) },
             });
 
             // An exception can override open/close times without fully closing the day
@@ -75,9 +103,7 @@ export class AttendanceService {
             const dayIsOpen = holidayException ? !holidayException.isClosed : (businessHours?.isOpen ?? true);
 
             if (dayIsOpen && openTime) {
-                const [openHour, openMin] = openTime.split(':').map(Number);
-                const scheduledStart = new Date(now);
-                scheduledStart.setHours(openHour, openMin, 0, 0);
+                const scheduledStart = watDateAtTime(today, openTime);
 
                 const graceMinutes = staff.lateGracePeriodOverride ?? staff.location.lateGracePeriodMinutes;
                 const graceDeadline = new Date(scheduledStart.getTime() + graceMinutes * 60000);
@@ -147,7 +173,7 @@ export class AttendanceService {
     }
 
     async clockOut(staffId: string, dto: ClockOutDto) {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = watTodayDateStr(new Date());
 
         const record = await this.prisma.attendanceRecord.findUnique({
             where: { staffId_date: { staffId, date: new Date(today) } },
@@ -180,7 +206,7 @@ export class AttendanceService {
             where: { date: new Date(todayStr) },
         });
         const businessHours = await this.prisma.businessHours.findUnique({
-            where: { dayOfWeek: now.getDay() },
+            where: { dayOfWeek: watDayOfWeek(now) },
         });
 
         const closeTime = holidayException?.closeTime ?? businessHours?.closeTime;
@@ -190,9 +216,7 @@ export class AttendanceService {
         let earlyDepartureMinutes: number | null = null;
 
         if (dayIsOpen && closeTime) {
-            const [closeHour, closeMin] = closeTime.split(':').map(Number);
-            const scheduledEnd = new Date(now);
-            scheduledEnd.setHours(closeHour, closeMin, 0, 0);
+            const scheduledEnd = watDateAtTime(todayStr, closeTime);
 
             if (now < scheduledEnd) {
                 // Checking out before closing time — only allowed with an approved
@@ -209,9 +233,7 @@ export class AttendanceService {
                 }
 
                 if (approvedPermission.startTime) {
-                    const [permHour, permMin] = approvedPermission.startTime.split(':').map(Number);
-                    const permittedFrom = new Date(now);
-                    permittedFrom.setHours(permHour, permMin, 0, 0);
+                    const permittedFrom = watDateAtTime(todayStr, approvedPermission.startTime);
 
                     if (now < permittedFrom) {
                         throw new BadRequestException(
