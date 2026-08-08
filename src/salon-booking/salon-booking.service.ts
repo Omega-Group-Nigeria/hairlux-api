@@ -11,6 +11,17 @@ import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
 import { ReserveSalonBookingDto } from './dto/reserve-salon-booking.dto';
 import { VerifyReservationDto } from './dto/verify-reservation.dto';
 
+/**
+ * Nigeria (WAT) is a fixed UTC+1 offset year-round — no daylight saving —
+ * matching the same approach already used in the attendance service for
+ * the identical class of bug (comparing against "now" needs to reason in
+ * WAT regardless of what timezone the server process itself runs in).
+ */
+function watDateTimeFromParts(dateStr: string, hhmm: string): Date {
+    const [hour, minute] = hhmm.split(':').map(Number);
+    return new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+01:00`);
+}
+
 const INCLUDE_FULL = {
     branch: { select: { id: true, name: true } },
     customer: { select: { id: true, name: true, phone: true, email: true } },
@@ -32,6 +43,10 @@ export class SalonBookingService {
     async create(dto: CreateSalonBookingDto, createdById: string | undefined) {
         if (!dto.branchId) {
             throw new BadRequestException('branchId is required');
+        }
+
+        if (watDateTimeFromParts(dto.bookingDate, dto.bookingTime).getTime() < Date.now()) {
+            throw new BadRequestException('Booking date/time cannot be in the past');
         }
 
         if (dto.assignedStaffId) {
@@ -383,6 +398,10 @@ export class SalonBookingService {
     async reserve(dto: ReserveSalonBookingDto) {
         const branch = await this.prisma.staffLocation.findUnique({ where: { id: dto.branchId } });
         if (!branch) throw new NotFoundException('Branch not found');
+
+        if (watDateTimeFromParts(dto.bookingDate, dto.bookingTime).getTime() < Date.now()) {
+            throw new BadRequestException('Booking date/time cannot be in the past');
+        }
 
         const serviceIds = dto.services.map((s) => s.serviceId);
         const services = await this.prisma.service.findMany({ where: { id: { in: serviceIds } } });

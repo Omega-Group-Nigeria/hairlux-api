@@ -127,6 +127,30 @@ export class ApplicationService {
     ).application;
   }
 
+  // Add near the top of the class, alongside your other private helpers:
+
+  /**
+   * Parses a user-supplied datetime string, refusing anything without an
+   * explicit UTC offset. This is the root fix for the WAT/UTC drift bug:
+   * a naive string like "2026-08-06T14:00" is ambiguous (interpreted as
+   * local time of whatever process parses it), so we reject it outright
+   * instead of silently misreading it. Callers must send "...Z" or
+   * "...+01:00" — e.g. the output of `date.toISOString()` on the frontend.
+   */
+  private parseRequiredOffsetDateTime(value: string, fieldName: string): Date {
+    const hasOffset = /(Z|[+-]\d{2}:?\d{2})$/i.test(value.trim());
+    if (!hasOffset) {
+      throw new BadRequestException(
+        `${fieldName} must be an ISO 8601 datetime with an explicit UTC offset (e.g. "...Z" or "...+01:00"), got "${value}".`,
+      );
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`${fieldName} is not a valid datetime.`);
+    }
+    return parsed;
+  }
+
   private async invalidateCache(applicationId?: string) {
     await Promise.all([
       this.redis.delByPattern('application:list:*'),
@@ -193,25 +217,44 @@ export class ApplicationService {
     }
 
     if (!existingDraft) {
-      const priorVerified = await this.applicationModel.findFirst({
+      const anyVerifiedForNin = await this.applicationModel.findFirst({
         where: { nin, ninVerified: true },
         orderBy: { ninVerifiedAt: 'desc' },
       });
-      if (priorVerified) {
-        const created = await this.createOrUpdateDraft(null, {
-          nin,
-          firstName,
-          lastName,
-          dateOfBirth: priorVerified.dateOfBirth,
-          gender: priorVerified.gender,
-          phone: priorVerified.phone,
-          address: priorVerified.address,
-          ninVerified: true,
-          ninVerifiedAt: priorVerified.ninVerifiedAt,
-          ninPhotoUrl: priorVerified.ninPhotoUrl,
-          ninVerificationFailReason: null,
-        });
-        return this.ninVerifyResponseFromRecord(created, true);
+
+      if (anyVerifiedForNin) {
+        const nameMatches =
+          anyVerifiedForNin.firstName.trim().toLowerCase() === firstName.trim().toLowerCase() &&
+          anyVerifiedForNin.lastName.trim().toLowerCase() === lastName.trim().toLowerCase();
+
+        if (nameMatches) {
+          const created = await this.createOrUpdateDraft(null, {
+            nin,
+            firstName,
+            lastName,
+            dateOfBirth: anyVerifiedForNin.dateOfBirth,
+            gender: anyVerifiedForNin.gender,
+            phone: anyVerifiedForNin.phone,
+            address: anyVerifiedForNin.address,
+            ninVerified: true,
+            ninVerifiedAt: anyVerifiedForNin.ninVerifiedAt,
+            ninPhotoUrl: anyVerifiedForNin.ninPhotoUrl,
+            ninVerificationFailReason: null,
+          });
+          return this.ninVerifyResponseFromRecord(created, true);
+        }
+
+        // This NIN is already verified in our own records, just under a
+        // different name -- QoreID would certainly reject this too, so
+        // there's no reason to spend a real call finding that out. No
+        // draft is created and no cooldown is touched here: this is a
+        // free, local check, not a billable attempt.
+        return {
+          applicationId: null,
+          verified: false,
+          reason: 'NAME_MISMATCH',
+          message: "We couldn't verify those details against this NIN. Double-check your first and last name match your NIN slip exactly, then try again.",
+        };
       }
     }
 
@@ -393,23 +436,23 @@ export class ApplicationService {
   }
 
   async submit(dto: CreateApplicationDto) {
-    if (dto.jobId) {
-      const existing = await this.applicationModel.findFirst({
-        where: {
-          nin: dto.nin,
-          jobId: dto.jobId,
-          status: { notIn: [ApplicationStatus.NOT_SELECTED, ApplicationStatus.DRAFT] },
-        },
-        select: { id: true, status: true },
-      });
+    const existing = await this.applicationModel.findFirst({
+      where: {
+        nin: dto.nin,
+        status: { notIn: [ApplicationStatus.NOT_SELECTED, ApplicationStatus.DRAFT] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, status: true, appliedRole: true },
+    });
 
-      if (existing) {
-        throw new ConflictException(
-          existing.status === ApplicationStatus.EMPLOYED
-            ? 'You have already been hired for this role.'
-            : 'You already have an active application for this role. Check your applicant dashboard for its status.',);
-      }
+    if (existing) {
+      throw new ConflictException(
+        existing.status === ApplicationStatus.EMPLOYED
+          ? 'You have already been hired.'
+          : `You already have an active application${existing.appliedRole ? ` for ${existing.appliedRole}` : ''}. Only one active application is allowed at a time — check your applicant dashboard for its status, or apply again once a decision has been made.`,
+      );
     }
+
 
     // If this submission is finishing a draft created during NIN
     // verification, reuse that same record (and its applicationCode)
@@ -559,6 +602,67 @@ export class ApplicationService {
 
     const where: Record<string, unknown> = {};
     if (status) where.status = status;
+    if (preferredLocationId) where.preferredLocationId = preferredLocationId;
+    if (jobId) where.jobId = jobId;
+
+    if (search) {
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+        { applicationCode: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [applications, total] = await Promise.all([
+      this.applicationModel.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.applicationModel.count({ where }),
+    ]);
+
+    const result = {
+      data: await Promise.all(applications.map((a) => this.sanitize(a))),
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+
+    await this.redis.set(cacheKey, result, TTL);
+    return result;
+  }
+
+  async findAllForAdmin(queryDto: QueryApplicationDto) {
+    const cacheKey = `application:list:admin:${JSON.stringify(queryDto)}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return cached;
+
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      status,
+      preferredLocationId,
+      jobId,
+    } = queryDto;
+
+    // Admins never see DRAFT applications — those are abandoned/incomplete
+    // NIN-verification records, not real submissions. If a status filter is
+    // explicitly supplied we respect it as given; otherwise we exclude DRAFT
+    // by default.
+    const where: Record<string, unknown> = status
+      ? { status }
+      : { status: { not: ApplicationStatus.DRAFT } };
+
     if (preferredLocationId) where.preferredLocationId = preferredLocationId;
     if (jobId) where.jobId = jobId;
 
@@ -775,11 +879,13 @@ export class ApplicationService {
       );
     }
 
+    const scheduledAt = this.parseRequiredOffsetDateTime(dto.scheduledAt, 'scheduledAt');
+
     const updated = await this.applicationModel.update({
       where: { id },
       data: {
         status: ApplicationStatus.INTERVIEW_SCHEDULED,
-        interviewScheduledAt: new Date(dto.scheduledAt),
+        interviewScheduledAt: new Date(scheduledAt),
         interviewMode: dto.mode,
         interviewLocationId: dto.mode === 'IN_PERSON' ? dto.locationId : null,
         interviewMeetingUrl: dto.mode === 'VIRTUAL' ? dto.meetingUrl : null,
@@ -810,7 +916,7 @@ export class ApplicationService {
 
       await this.mailService.sendInterviewScheduledEmail(application.email!, application.firstName, {
         applicationCode: application.applicationCode,
-        scheduledAt: new Date(dto.scheduledAt),
+        scheduledAt: this.parseRequiredOffsetDateTime(dto.scheduledAt, 'scheduledAt'),
         mode: dto.mode,
         locationName,
         meetingUrl: dto.meetingUrl,
@@ -958,7 +1064,7 @@ export class ApplicationService {
           baseSalary: dto.baseSalary,
           allowances: dto.allowances,
           compensationNote: dto.compensationNote,
-          effectiveDate: new Date(dto.effectiveDate),
+          effectiveDate: this.parseRequiredOffsetDateTime(dto.effectiveDate, 'effectiveDate'),
           templateUsed: dto.templateUsed,
           generatedById,
           sentAt: new Date(),

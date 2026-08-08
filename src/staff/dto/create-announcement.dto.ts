@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
+  IsDateString,
   IsEnum,
   IsNotEmpty,
   IsOptional,
@@ -44,4 +45,12 @@ export class CreateAnnouncementDto {
   @ValidateIf((o) => o.target === AnnouncementTargetDto.INDIVIDUAL)
   @IsUUID()
   targetStaffId?: string;
+
+  @ApiPropertyOptional({
+    description: 'ISO 8601 date/time — once passed, this announcement stops appearing in the staff portal. Omit for an announcement that never expires.',
+    example: '2026-08-31T23:59:59.000Z',
+  })
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
 }

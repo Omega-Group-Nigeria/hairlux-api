@@ -1,9 +1,14 @@
-import { IsOptional, IsEnum, IsUUID, IsBoolean, IsInt, Min } from 'class-validator';
+import { IsOptional, IsEnum, IsUUID, IsBoolean, IsInt, IsString, Min } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { InventoryCategory } from '@prisma/client';
 
 export class QueryInventoryDto {
+    @ApiPropertyOptional({ description: 'Matches against item name' })
+    @IsOptional()
+    @IsString()
+    search?: string;
+
     @ApiPropertyOptional()
     @IsOptional()
     @IsUUID()

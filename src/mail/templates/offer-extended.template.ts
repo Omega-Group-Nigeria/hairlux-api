@@ -22,6 +22,7 @@ export function offerExtendedTemplate(
         day: '2-digit',
         month: 'long',
         year: 'numeric',
+        timeZone: 'Africa/Lagos',
     });
 
     const body = `

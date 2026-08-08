@@ -86,22 +86,20 @@ export class InventoryService {
     }
 
     async findAll(query: QueryInventoryDto) {
-        const { branchId, category, lowStockOnly, page = 1, limit = 20 } = query;
+        const { search, branchId, category, lowStockOnly, page = 1, limit = 20 } = query;
         const skip = (page - 1) * limit;
 
         const where: Prisma.InventoryItemWhereInput = {
             isActive: true,
             ...(branchId && { branchId }),
             ...(category && { category }),
-            ...(lowStockOnly && {
-                currentQuantity: { lte: this.prisma.inventoryItem.fields.lowStockThreshold as any },
-            }),
+            ...(search && { name: { contains: search, mode: 'insensitive' } }),
         };
 
         // Prisma can't compare two columns directly in `where` without a raw query;
         // for lowStockOnly, filter in application code instead of the DB when needed.
         const items = await this.prisma.inventoryItem.findMany({
-            where: branchId || category ? { isActive: true, ...(branchId && { branchId }), ...(category && { category }) } : { isActive: true },
+            where,
             include: { branch: { select: { id: true, name: true } }, supplier: { select: { id: true, name: true, type: true } } },
             orderBy: { name: 'asc' },
         });

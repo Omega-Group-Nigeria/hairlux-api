@@ -479,8 +479,7 @@ export class AdminStaffController {
     @Body() dto: AssignRoleDto,
     @Req() req: any,
   ) {
-    const data = await this.staffService.assignRole(id, dto.adminRoleId, dto.grantPortalLogin, req.user.id);
-    return { success: true, message: 'Role assigned successfully', data };
+    const data = await this.staffService.assignRole(id, dto.adminRoleId, dto.grantPortalLogin, req.user.id, dto.mode ?? 'primary'); return { success: true, message: 'Role assigned successfully', data };
   }
 
   @Delete(':id/role-assignment')
