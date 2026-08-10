@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, IsDateString, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsString, Matches, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class GenerateOfferLetterDto {
@@ -18,8 +18,8 @@ export class GenerateOfferLetterDto {
     @IsString()
     compensationNote?: string;
 
-    @ApiProperty({ example: '2026-09-01' })
-    @IsDateString()
+    @ApiProperty({ example: '2026-09-01', description: 'Plain calendar date (YYYY-MM-DD) — no time component or timezone offset needed' })
+    @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'effectiveDate must be a date in YYYY-MM-DD format' })
     effectiveDate: string;
 
     @ApiPropertyOptional({ description: 'Which offer letter template was used' })
