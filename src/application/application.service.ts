@@ -982,6 +982,7 @@ export class ApplicationService {
 
     // TODO once Audit Trail module exists: log actorUserId, applicationId, previous/new status+outcome here.
 
+    await this.invalidateCache(applicationId);
     return updated;
   }
 
@@ -1064,7 +1065,7 @@ export class ApplicationService {
           baseSalary: dto.baseSalary,
           allowances: dto.allowances,
           compensationNote: dto.compensationNote,
-          effectiveDate: this.parseRequiredOffsetDateTime(dto.effectiveDate, 'effectiveDate'),
+          effectiveDate: new Date(dto.effectiveDate),
           templateUsed: dto.templateUsed,
           generatedById,
           sentAt: new Date(),
