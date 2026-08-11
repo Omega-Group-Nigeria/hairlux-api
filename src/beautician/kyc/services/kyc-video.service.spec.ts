@@ -94,7 +94,7 @@ describe('KycVideoService', () => {
       fileKey: 'kyc-videos/user-1/abc.mp4',
       expiresIn: 600,
       expiresAt: '2026-07-18T10:10:00.000Z',
-      maxSizeBytes: 15 * 1024 * 1024,
+      maxSizeBytes: 100 * 1024 * 1024,
       contentType: 'video/mp4',
     });
 

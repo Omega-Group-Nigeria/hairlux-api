@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { JobOptions, Queue } from 'bull';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
+import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-matching-queue.constants';
 import { RedisService } from '../../../redis/redis.service';
 import {
   MATCHING_JOB_INDEX_TTL_SECONDS,

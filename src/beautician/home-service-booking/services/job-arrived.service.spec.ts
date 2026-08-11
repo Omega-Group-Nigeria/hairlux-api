@@ -191,4 +191,46 @@ describe('JobArrivedService', () => {
 
     expect(order).toEqual(['pin', 'update']);
   });
+
+  it('returns the existing PIN when already arrived and still valid', async () => {
+    booking.status = BookingStatus.ARRIVED;
+    mockPinService.getPin.mockResolvedValueOnce({
+      pin: '654321',
+      bookingId: 'booking-1',
+      beauticianUserId: 'beautician-1',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      geoAuditFlag: false,
+      distanceMeters: 0,
+    });
+
+    const result = await service.markArrived('booking-1', 'beautician-1', {
+      lat: 6.4474,
+      lng: 3.47,
+    });
+
+    expect(result.message).toBe('Already marked as arrived');
+    expect(mockPinService.storePin).not.toHaveBeenCalled();
+    expect(mockPrisma.booking.update).not.toHaveBeenCalled();
+    expect(result.verificationExpiresAt).toBeDefined();
+  });
+
+  it('regenerates a new PIN when already arrived but the PIN expired', async () => {
+    booking.status = BookingStatus.ARRIVED;
+    mockPinService.getPin.mockResolvedValueOnce(null);
+
+    const result = await service.markArrived('booking-1', 'beautician-1', {
+      lat: 6.4474,
+      lng: 3.47,
+    });
+
+    expect(result.message).toContain('New arrival PIN');
+    expect(result.booking.status).toBe(BookingStatus.ARRIVED);
+    expect(mockPinService.storePin).toHaveBeenCalledWith(
+      'booking-1',
+      expect.objectContaining({ pin: '123456' }),
+      15 * 60,
+    );
+    expect(mockPrisma.booking.update).toHaveBeenCalled();
+    expect(mockNotification.notifyArrivalVerificationNeeded).toHaveBeenCalled();
+  });
 });

@@ -7,6 +7,7 @@ import {
 import {
   BookingCommsCloseReason,
   BookingStatus,
+  BookingType,
   PaymentMethod,
   TransactionStatus,
   TransactionType,
@@ -145,6 +146,19 @@ export class BookingCoreService {
       include: bookingUserReadInclude,
     });
 
+    // If the booking is still awaiting dispatch and matching hasn't started,
+    // re-schedule its first dispatch for the new service time.
+    if (
+      booking.status === BookingStatus.PENDING_ASSIGNMENT &&
+      booking.bookingType === BookingType.HOME_SERVICE &&
+      !booking.matchingStartedAt
+    ) {
+      await this.matchingOrchestrator.rescheduleDispatchForBooking(
+        id,
+        newBookingDate,
+      );
+    }
+
     return formatBookingResponse(updatedBooking);
   }
 
@@ -242,10 +256,7 @@ export class BookingCoreService {
         BookingCommsCloseReason.CANCELLED,
       );
 
-      await this.commsRealtime.emitBookingStatus(
-        id,
-        BookingStatus.CANCELLED,
-      );
+      await this.commsRealtime.emitBookingStatus(id, BookingStatus.CANCELLED);
     }
 
     this.bookingPushNotifier.notifyCancelled({

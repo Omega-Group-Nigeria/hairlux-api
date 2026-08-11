@@ -87,6 +87,20 @@ export function buildDeliveryAddressSnapshot(
   };
 }
 
+export function buildTemporaryDeliverySnapshot(input: {
+  tempFullAddress?: string;
+  tempState?: string;
+}): DeliveryAddressSnapshot {
+  return {
+    fullAddress: String(input.tempFullAddress ?? '').trim(),
+    streetAddress: null,
+    city: null,
+    state: input.tempState?.trim() || null,
+    country: 'Nigeria',
+    label: null,
+  };
+}
+
 export function normalizeDeliveryAddressSnapshot(
   json: unknown,
 ): DeliveryAddressSnapshot | null {
@@ -140,6 +154,18 @@ export function formatShopOrderResponse(order: ShopOrder) {
     deliveryAddress: normalizeDeliveryAddressSnapshot(
       order.deliveryAddressSnapshot,
     ),
+    temporaryLocation:
+      order.tempLatitude !== null &&
+      order.tempLatitude !== undefined &&
+      order.tempLongitude !== null &&
+      order.tempLongitude !== undefined
+        ? {
+            latitude: Number(order.tempLatitude),
+            longitude: Number(order.tempLongitude),
+            fullAddress: order.tempFullAddress,
+            state: order.tempState,
+          }
+        : null,
   };
 }
 

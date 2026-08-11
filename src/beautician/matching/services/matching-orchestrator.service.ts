@@ -23,12 +23,14 @@ import { RedisService } from '../../../redis/redis.service';
 import { bookingExhaustedWakeRetryKey } from '../constants/location-index.constants';
 import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
 import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import { BeauticianCommissionRateService } from '../../payout/services/beautician-commission-rate.service';
 import { MatchingLockService } from './matching-lock.service';
 import { MatchingQueueService } from './matching-queue.service';
 import { BookingCoordinatesService } from './booking-coordinates.service';
 import { OfferLifecycleService } from './offer-lifecycle.service';
 import { MatchingAttemptService } from './matching-attempt.service';
 import { matchingJobIds } from '../constants/matching-queue.constants';
+import { computeDispatchDelayMs } from '../utils/dispatch-window.utils';
 
 /**
  * Thin coordinator for home-service matching.
@@ -49,6 +51,7 @@ export class MatchingOrchestratorService {
     private readonly redis: RedisService,
     private readonly earningsCalculator: EarningsCalculatorService,
     private readonly serviceCommissionRates: ServiceCommissionRateService,
+    private readonly beauticianCommissionRates: BeauticianCommissionRateService,
     private readonly matchingLock: MatchingLockService,
     private readonly matchingQueue: MatchingQueueService,
     private readonly bookingCoordinates: BookingCoordinatesService,
@@ -65,6 +68,7 @@ export class MatchingOrchestratorService {
       select: {
         id: true,
         status: true,
+        bookingDate: true,
         matchingExhaustedAt: true,
         matchingStartedAt: true,
       },
@@ -89,6 +93,18 @@ export class MatchingOrchestratorService {
       return;
     }
 
+    // Self-healing: if this job fired before the booking's dispatch window
+    // opened (early/stray trigger, or lead time raised), re-schedule instead
+    // of dispatching early.
+    const delayMs = computeDispatchDelayMs(booking.bookingDate);
+    if (delayMs > 0) {
+      this.logger.log(
+        `Booking ${bookingId} dispatch window not open yet; re-scheduling first dispatch in ${delayMs}ms`,
+      );
+      await this.scheduleInitialDispatch(bookingId, booking.bookingDate);
+      return;
+    }
+
     if (!booking.matchingStartedAt) {
       await this.dispatchState.transition(bookingId, {
         to: DispatchStatus.PENDING_MATCH,
@@ -99,6 +115,38 @@ export class MatchingOrchestratorService {
     }
 
     await this.continueMatching(bookingId, matchingAttempt);
+  }
+
+  /**
+   * Schedule the FIRST dispatch for a booking at its scheduled service time.
+   * Uses a deterministic job id so re-scheduling replaces any existing job.
+   * When the window has already opened (immediate / near-term booking) the
+   * delay is 0 and matching starts right away.
+   */
+  async scheduleInitialDispatch(
+    bookingId: string,
+    bookingDate: Date,
+  ): Promise<void> {
+    await this.matchingQueue.scheduleCreateOffers(
+      { bookingId, matchingAttempt: 1 },
+      {
+        jobId: matchingJobIds.scheduledDispatch(bookingId),
+        delayMs: computeDispatchDelayMs(bookingDate),
+      },
+    );
+  }
+
+  /**
+   * Re-schedule dispatch after a booking's date/time changes. Clears any
+   * pending matching jobs first, then schedules the first dispatch for the
+   * new time (immediate if the window is already open).
+   */
+  async rescheduleDispatchForBooking(
+    bookingId: string,
+    bookingDate: Date,
+  ): Promise<void> {
+    await this.matchingQueue.cancelBookingJobs(bookingId);
+    await this.scheduleInitialDispatch(bookingId, bookingDate);
   }
 
   /**
@@ -319,10 +367,7 @@ export class MatchingOrchestratorService {
         matchingAttempt: booking.matchingAttempt,
       },
       {
-        jobId: matchingJobIds.immediate(
-          bookingId,
-          booking.matchingAttempt,
-        ),
+        jobId: matchingJobIds.immediate(bookingId, booking.matchingAttempt),
       },
     );
 
@@ -487,22 +532,27 @@ export class MatchingOrchestratorService {
       return;
     }
 
-    const estEarnings = await this.calculateEstEarnings({
-      bookingType: booking.bookingType,
-      services: booking.services,
-      totalAmount: Number(booking.totalAmount),
-      defaultCommissionRate: Number(settings.commissionRate),
-      requiredServiceIds,
-    });
-
     const offerTtlSeconds = this.matchingConfig.getOfferTtlSeconds(attempt);
+    const beauticianCommissionRates =
+      await this.beauticianCommissionRates.getRateMapForBeauticianIds(
+        candidates.map((c) => c.userId),
+      );
 
     for (const candidate of candidates) {
+      const candidateEstEarnings = await this.calculateEstEarnings({
+        bookingType: booking.bookingType,
+        services: booking.services,
+        totalAmount: Number(booking.totalAmount),
+        defaultCommissionRate: Number(settings.commissionRate),
+        requiredServiceIds,
+        beauticianCommissionRate: beauticianCommissionRates.get(candidate.userId),
+      });
+
       await this.offerManager.createNextOffer({
         bookingId,
         matchingAttempt: attempt,
         candidate,
-        estEarnings,
+        estEarnings: candidateEstEarnings,
         offerTtlSeconds,
       });
     }
@@ -565,6 +615,7 @@ export class MatchingOrchestratorService {
     totalAmount: number;
     defaultCommissionRate: number;
     requiredServiceIds: string[];
+    beauticianCommissionRate?: number;
   }): Promise<number> {
     const serviceCommissionRates =
       await this.serviceCommissionRates.getRateMapForServiceIds(
@@ -577,6 +628,7 @@ export class MatchingOrchestratorService {
       totalAmount: params.totalAmount,
       defaultCommissionRate: params.defaultCommissionRate,
       serviceCommissionRates,
+      beauticianCommissionRate: params.beauticianCommissionRate,
     });
 
     return earnings.earningsAmount;

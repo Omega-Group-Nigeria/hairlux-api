@@ -37,17 +37,23 @@ export class JobArrivedService {
       beauticianUserId,
     );
 
-    if (booking.status === BookingStatus.ARRIVED) {
-      const existingPin = await this.pinService.getPin(bookingId);
+    const existingPin = await this.pinService.getPin(bookingId);
+
+    if (booking.status === BookingStatus.ARRIVED && existingPin) {
       return {
         booking: formatBookingResponse(booking),
-        geoAuditFlag: existingPin?.geoAuditFlag ?? false,
-        distanceMeters: existingPin?.distanceMeters ?? null,
+        geoAuditFlag: existingPin.geoAuditFlag,
+        distanceMeters: existingPin.distanceMeters,
+        verificationExpiresAt: existingPin.expiresAt,
         message: 'Already marked as arrived',
       };
     }
 
-    this.statusService.assertTransition(booking.status, BookingStatus.ARRIVED);
+    if (booking.status !== BookingStatus.ARRIVED) {
+      this.statusService.assertTransition(booking.status, BookingStatus.ARRIVED);
+    }
+
+    const regenerated = booking.status === BookingStatus.ARRIVED;
 
     // Destination resolve is sync (stored lat/lng only); settings may hit cache.
     const [destination, settings] = await Promise.all([
@@ -123,9 +129,11 @@ export class JobArrivedService {
       distanceMeters,
       geoFenceMeters: settings.arrivalGeoFenceMeters,
       verificationExpiresAt: expiresAt,
-      message: geoAuditFlag
-        ? 'Arrived recorded with geo audit flag. Share PIN with customer for verification.'
-        : 'Arrived recorded. Share PIN with customer for verification.',
+      message: regenerated
+        ? 'New arrival PIN generated. Share PIN with customer for verification.'
+        : geoAuditFlag
+          ? 'Arrived recorded with geo audit flag. Share PIN with customer for verification.'
+          : 'Arrived recorded. Share PIN with customer for verification.',
     };
   }
 

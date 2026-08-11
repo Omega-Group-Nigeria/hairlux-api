@@ -65,6 +65,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.serviceCommissionRate;
   }
 
+  get beauticianCommissionRate() {
+    return this.client.beauticianCommissionRate;
+  }
+
   get booking() {
     return this.client.booking;
   }

@@ -12,6 +12,7 @@ import { HomeServiceSettingsService } from '../../services/home-service-settings
 import { EarningsCalculatorService } from './earnings-calculator.service';
 import { BeauticianStatsService } from './beautician-stats.service';
 import { ServiceCommissionRateService } from './service-commission-rate.service';
+import { BeauticianCommissionRateService } from './beautician-commission-rate.service';
 
 @Injectable()
 export class CreditServiceEarningsService {
@@ -22,6 +23,7 @@ export class CreditServiceEarningsService {
     private readonly settingsService: HomeServiceSettingsService,
     private readonly earningsCalculator: EarningsCalculatorService,
     private readonly serviceCommissionRates: ServiceCommissionRateService,
+    private readonly beauticianCommissionRates: BeauticianCommissionRateService,
     private readonly statsService: BeauticianStatsService,
     private readonly redis: RedisService,
   ) {}
@@ -91,10 +93,14 @@ export class CreditServiceEarningsService {
       };
     }
 
-    const [settings, serviceCommissionRates] = await Promise.all([
-      this.settingsService.getSettings(),
-      this.serviceCommissionRates.getRateMapForBookingServices(booking.services),
-    ]);
+    const [settings, serviceCommissionRates, beauticianRateMap] =
+      await Promise.all([
+        this.settingsService.getSettings(),
+        this.serviceCommissionRates.getRateMapForBookingServices(booking.services),
+        this.beauticianCommissionRates.getRateMapForBeauticianIds([
+          booking.assignedBeauticianUserId!,
+        ]),
+      ]);
 
     const calculation = this.earningsCalculator.calculate({
       bookingType: booking.bookingType,
@@ -102,6 +108,9 @@ export class CreditServiceEarningsService {
       totalAmount: Number(booking.totalAmount),
       defaultCommissionRate: settings.commissionRate,
       serviceCommissionRates,
+      beauticianCommissionRate: beauticianRateMap.get(
+        booking.assignedBeauticianUserId!,
+      ),
     });
 
     if (calculation.earningsAmount <= 0) {

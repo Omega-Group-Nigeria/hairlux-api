@@ -1,12 +1,10 @@
 import { Module } from '@nestjs/common';
-import { BullModule } from '@nestjs/bull';
-import {
-  HOME_SERVICE_MATCHING_QUEUE,
-  HomeServiceBookingService,
-} from './home-service-booking.service';
+import { PrismaModule } from '../../prisma/prisma.module';
+import { MatchingModule } from '../matching/matching.module';
+import { HomeServiceBookingService } from './home-service-booking.service';
 
 @Module({
-  imports: [BullModule.registerQueue({ name: HOME_SERVICE_MATCHING_QUEUE })],
+  imports: [PrismaModule, MatchingModule],
   providers: [HomeServiceBookingService],
   exports: [HomeServiceBookingService],
 })

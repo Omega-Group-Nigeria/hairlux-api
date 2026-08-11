@@ -15,6 +15,7 @@ import { DispatchStateService } from './dispatch-state.service';
 import { RedisService } from '../../../redis/redis.service';
 import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
 import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import { BeauticianCommissionRateService } from '../../payout/services/beautician-commission-rate.service';
 import { MatchingLockService } from './matching-lock.service';
 import { MatchingQueueService } from './matching-queue.service';
 import { BookingCoordinatesService } from './booking-coordinates.service';
@@ -240,6 +241,12 @@ describe('MatchingOrchestratorService cycling', () => {
           provide: ServiceCommissionRateService,
           useValue: {
             getRateMapForServiceIds: jest.fn(async () => new Map()),
+          },
+        },
+        {
+          provide: BeauticianCommissionRateService,
+          useValue: {
+            getRateMapForBeauticianIds: jest.fn(async () => new Map()),
           },
         },
       ],

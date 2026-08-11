@@ -12,13 +12,14 @@ import {
 } from '@prisma/client';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
+import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-matching-queue.constants';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AssignmentLockService } from './assignment-lock.service';
 import { JobPresentationService } from './job-presentation.service';
 import { JobEarningsResolverService } from './job-earnings-resolver.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import { BeauticianCommissionRateService } from '../../payout/services/beautician-commission-rate.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { DispatchStateService } from '../../matching/services/dispatch-state.service';
 import { DISPATCH_EVENT_TYPES } from '../../matching/constants/dispatch-event.constants';
@@ -36,6 +37,7 @@ export class JobAcceptService {
     private readonly earningsResolver: JobEarningsResolverService,
     private readonly settingsService: HomeServiceSettingsService,
     private readonly serviceCommissionRates: ServiceCommissionRateService,
+    private readonly beauticianCommissionRates: BeauticianCommissionRateService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly dispatchState: DispatchStateService,
     private readonly locationIndex: BeauticianLocationIndexService,
@@ -215,12 +217,16 @@ export class JobAcceptService {
         });
       }
 
-      const [settings, serviceCommissionRates] = await Promise.all([
-        this.settingsService.getSettings(),
-        this.serviceCommissionRates.getRateMapForBookingServices(
-          bookingForResponse.services,
-        ),
-      ]);
+      const [settings, serviceCommissionRates, beauticianRateMap] =
+        await Promise.all([
+          this.settingsService.getSettings(),
+          this.serviceCommissionRates.getRateMapForBookingServices(
+            bookingForResponse.services,
+          ),
+          this.beauticianCommissionRates.getRateMapForBeauticianIds([
+            beauticianUserId,
+          ]),
+        ]);
 
       const earnings = this.earningsResolver.resolveFromOfferSnapshot(
         updatedBooking,
@@ -228,6 +234,7 @@ export class JobAcceptService {
           estEarningsAtOffer: offer.estEarningsAtOffer,
           defaultCommissionRate: settings.commissionRate,
           serviceCommissionRates,
+          beauticianCommissionRate: beauticianRateMap.get(beauticianUserId),
         },
       );
 

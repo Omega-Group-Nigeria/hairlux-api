@@ -19,13 +19,21 @@ describe('JobEarningsResolverService', () => {
     getRateMapForServiceIds: jest.fn(),
   };
 
+  const mockBeauticianCommissionRates = {
+    getRateMapForBeauticianIds: jest.fn(),
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
+    mockBeauticianCommissionRates.getRateMapForBeauticianIds.mockResolvedValue(
+      new Map(),
+    );
     service = new JobEarningsResolverService(
       mockPrisma as never,
       mockSettingsService as never,
       new EarningsCalculatorService(),
       mockServiceCommissionRates as never,
+      mockBeauticianCommissionRates as never,
     );
   });
 

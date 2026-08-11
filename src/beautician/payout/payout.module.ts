@@ -7,6 +7,7 @@ import { HomeServiceSharedModule } from '../home-service-booking/home-service-sh
 import { WalletNotificationsModule } from '../../notifications/wallet/wallet-notifications.module';
 import { EarningsCalculatorService } from './services/earnings-calculator.service';
 import { ServiceCommissionRateService } from './services/service-commission-rate.service';
+import { BeauticianCommissionRateService } from './services/beautician-commission-rate.service';
 import { BeauticianStatsService } from './services/beautician-stats.service';
 import { CreditServiceEarningsService } from './services/credit-service-earnings.service';
 import { EarningsSummaryService } from './services/earnings-summary.service';
@@ -35,6 +36,7 @@ import { DailyPayoutLimitService } from './services/daily-payout-limit.service';
   providers: [
     EarningsCalculatorService,
     ServiceCommissionRateService,
+    BeauticianCommissionRateService,
     BeauticianStatsService,
     CreditServiceEarningsService,
     EarningsSummaryService,
@@ -51,6 +53,7 @@ import { DailyPayoutLimitService } from './services/daily-payout-limit.service';
   exports: [
     EarningsCalculatorService,
     ServiceCommissionRateService,
+    BeauticianCommissionRateService,
     CreditServiceEarningsService,
     EarningsSummaryService,
     DailyPayoutLimitService,

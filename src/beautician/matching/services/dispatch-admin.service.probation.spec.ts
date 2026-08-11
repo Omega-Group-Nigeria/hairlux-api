@@ -72,6 +72,7 @@ describe('DispatchAdminService timed probation', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       mockMail as never,
       mockQueue as never,
     );

@@ -12,7 +12,7 @@ async function seedSuperAdmin() {
   const email = 'superadmin@gmail.com';
   const password = 'SuperAdmin123$';
 
-  const existing = await prisma.user.findUnique({ where: { email } });
+  const existing = await prisma.user.findFirst({ where: { email } });
 
   if (existing) {
     console.log(`⚠️  Super admin already exists: ${email}`);

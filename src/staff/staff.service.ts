@@ -2016,7 +2016,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     // Check both users.email and staff.email — either could already hold
     // this address (e.g. two staff who happen to share a first+last name).
     while (
-      (await this.prisma.user.findUnique({ where: { email: candidate } })) ||
+      (await this.prisma.user.findFirst({ where: { email: candidate } })) ||
       (await this.staffModel.findFirst({ where: { email: candidate }, select: { id: true } }))
     ) {
       candidate = `${base}${suffix}@hairlux.com.ng`;
@@ -2084,10 +2084,15 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         emailSource = 'generated';
       }
 
-      const existingUser = await this.prisma.user.findUnique({
-        where: { email: resolvedEmail },
-        select: { id: true },
-      });
+      const existingUser =
+        (await this.prisma.user.findFirst({
+          where: { email: resolvedEmail, role: 'USER' },
+          select: { id: true },
+        })) ??
+        (await this.prisma.user.findFirst({
+          where: { email: resolvedEmail },
+          select: { id: true },
+        }));
 
       plan.push({
         staffId: s.id,
@@ -2126,7 +2131,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
 
     const email = staff.email ?? (await this.generateCompanyEmail(staff.name));
 
-    let user = await this.prisma.user.findUnique({ where: { email } });
+    let user =
+      (await this.prisma.user.findFirst({ where: { email, role: 'USER' } })) ??
+      (await this.prisma.user.findFirst({ where: { email } }));
     const wasExistingUser = !!user;
 
     if (user) {

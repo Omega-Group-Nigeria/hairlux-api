@@ -3,7 +3,7 @@ import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import { JobOfferStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
+import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-matching-queue.constants';
 import { MatchingOrchestratorService } from '../../matching/services/matching-orchestrator.service';
 import { OfferManagerService } from '../../matching/services/offer-manager.service';
 import { DispatchStateService } from '../../matching/services/dispatch-state.service';

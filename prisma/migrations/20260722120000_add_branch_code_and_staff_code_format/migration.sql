@@ -22,6 +22,7 @@ ALTER TABLE "staff_locations" ADD COLUMN "staff_sequence" INTEGER NOT NULL DEFAU
 UPDATE "staff_locations" SET "code" = 'IFE' WHERE "id" = 'acf28921-2f0d-4eec-b464-caab0ff29136'; -- Ile-Ife
 UPDATE "staff_locations" SET "code" = 'OWD' WHERE "id" = 'd6a36e46-36d9-472c-9d31-36743464319f'; -- Owode Oyo
 UPDATE "staff_locations" SET "code" = 'OLM' WHERE "id" = 'fe71d338-7763-424a-9546-9eb583080acb'; -- Academy Olomi
+UPDATE "staff_locations" SET "code" = 'ADM' WHERE "id" = 'f032030e-f3e9-452c-b3a6-5c191f81e071'; -- ADMIN
 
 -- ── Step 3: rename existing staff codes to the branch-coded format ─────
 -- Ranks each staff member by hire order (created_at) within their own

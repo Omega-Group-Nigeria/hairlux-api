@@ -491,7 +491,7 @@ export class UserService {
   // ==================== ADMIN METHODS ====================
 
   async createAdminUser(dto: CreateAdminUserDto) {
-    const existing = await this.prisma.user.findUnique({
+    const existing = await this.prisma.user.findFirst({
       where: { email: dto.email },
     });
     if (existing) {

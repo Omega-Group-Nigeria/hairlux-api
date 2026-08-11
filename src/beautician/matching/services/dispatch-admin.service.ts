@@ -33,6 +33,7 @@ import { CommsSessionService } from '../../../comms/services/comms-session.servi
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { EarningsCalculatorService } from '../../payout/services/earnings-calculator.service';
 import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import { BeauticianCommissionRateService } from '../../payout/services/beautician-commission-rate.service';
 import type { UpdateBeauticianDispatchDto } from '../dto/update-beautician-dispatch.dto';
 
 @Injectable()
@@ -47,6 +48,7 @@ export class DispatchAdminService {
     private readonly settingsService: HomeServiceSettingsService,
     private readonly earningsCalculator: EarningsCalculatorService,
     private readonly serviceCommissionRates: ServiceCommissionRateService,
+    private readonly beauticianCommissionRates: BeauticianCommissionRateService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly commsSessionService: CommsSessionService,
     private readonly mailService: MailService,
@@ -157,12 +159,17 @@ export class DispatchAdminService {
     const homeServiceIds = extractHomeServiceIds(services);
     const serviceCommissionRates =
       await this.serviceCommissionRates.getRateMapForServiceIds(homeServiceIds);
+    const beauticianRateMap =
+      await this.beauticianCommissionRates.getRateMapForBeauticianIds([
+        beauticianUserId,
+      ]);
     const earnings = this.earningsCalculator.calculate({
       bookingType: booking.bookingType,
       services: booking.services,
       totalAmount: Number(booking.totalAmount),
       defaultCommissionRate: Number(settings.commissionRate),
       serviceCommissionRates,
+      beauticianCommissionRate: beauticianRateMap.get(beauticianUserId),
     });
     const estEarnings = earnings.earningsAmount;
     const now = new Date();

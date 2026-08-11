@@ -13,7 +13,7 @@ import { RealtimeModule } from '../realtime/realtime.module';
 import { PayoutModule } from '../payout/payout.module';
 import { MatchingModule } from '../matching/matching.module';
 import { BullModule } from '@nestjs/bull';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../home-service-booking/home-service-booking.service';
+import { HOME_SERVICE_MATCHING_QUEUE } from '../home-service-booking/home-service-matching-queue.constants';
 import { CommsModule } from '../../comms/comms.module';
 import { BookingNotificationsModule } from '../../notifications/booking/booking-notifications.module';
 import { JobNotificationsModule } from '../../notifications/job/job-notifications.module';

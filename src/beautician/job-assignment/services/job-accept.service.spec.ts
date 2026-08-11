@@ -15,7 +15,7 @@ jest.mock('../../matching/services/beautician-location-index.service', () => ({
   BeauticianLocationIndexService: class BeauticianLocationIndexService {},
 }));
 
-import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-booking.service';
+import { HOME_SERVICE_MATCHING_QUEUE } from '../../home-service-booking/home-service-matching-queue.constants';
 import {
   AvailabilityStatus,
   BookingStatus,
@@ -28,6 +28,7 @@ import { JobPresentationService } from './job-presentation.service';
 import { JobEarningsResolverService } from './job-earnings-resolver.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { ServiceCommissionRateService } from '../../payout/services/service-commission-rate.service';
+import { BeauticianCommissionRateService } from '../../payout/services/beautician-commission-rate.service';
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { DispatchStateService } from '../../matching/services/dispatch-state.service';
 import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
@@ -105,15 +106,17 @@ describe('JobAcceptService', () => {
 
   const mockPrisma = {
     booking: {
-      findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
-        if (
-          where.assignedBeauticianUserId &&
-          where.status === BookingStatus.ASSIGNED
-        ) {
+      findFirst: jest.fn(
+        async ({ where }: { where: Record<string, unknown> }) => {
+          if (
+            where.assignedBeauticianUserId &&
+            where.status === BookingStatus.ASSIGNED
+          ) {
+            return null;
+          }
           return null;
-        }
-        return null;
-      }),
+        },
+      ),
       findUnique: jest.fn(async () => ({
         ...bookingRecord,
         status: bookingStatus,
@@ -168,17 +171,25 @@ describe('JobAcceptService', () => {
             .map((offer) => ({ beauticianUserId: offer.beauticianUserId }));
         },
       ),
-      update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-        for (const [userId, offer] of offers.entries()) {
-          if (offer.id === where.id) {
-            offers.set(userId, {
-              ...offer,
-              status: data.status as JobOfferStatus,
-            });
+      update: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => {
+          for (const [userId, offer] of offers.entries()) {
+            if (offer.id === where.id) {
+              offers.set(userId, {
+                ...offer,
+                status: data.status as JobOfferStatus,
+              });
+            }
           }
-        }
-        return { id: where.id };
-      }),
+          return { id: where.id };
+        },
+      ),
       updateMany: jest.fn(
         async ({
           where,
@@ -224,8 +235,9 @@ describe('JobAcceptService', () => {
         availabilityStatus: AvailabilityStatus.ON_JOB,
       })),
     },
-    $transaction: jest.fn(async (callback: (tx: typeof mockPrisma) => unknown) =>
-      callback(mockPrisma),
+    $transaction: jest.fn(
+      async (callback: (tx: typeof mockPrisma) => unknown) =>
+        callback(mockPrisma),
     ),
   };
 
@@ -266,7 +278,9 @@ describe('JobAcceptService', () => {
         { provide: JobPresentationService, useValue: mockPresentation },
         {
           provide: CommsRealtimeService,
-          useValue: { emitBookingStatus: jest.fn().mockResolvedValue(undefined) },
+          useValue: {
+            emitBookingStatus: jest.fn().mockResolvedValue(undefined),
+          },
         },
         {
           provide: getQueueToken(HOME_SERVICE_MATCHING_QUEUE),
@@ -274,7 +288,9 @@ describe('JobAcceptService', () => {
         },
         {
           provide: DispatchStateService,
-          useValue: { recordEvent: jest.fn().mockResolvedValue({ applied: true }) },
+          useValue: {
+            recordEvent: jest.fn().mockResolvedValue({ applied: true }),
+          },
         },
         {
           provide: JobEarningsResolverService,
@@ -298,6 +314,12 @@ describe('JobAcceptService', () => {
             getRateMapForBookingServices: jest
               .fn()
               .mockResolvedValue(new Map()),
+          },
+        },
+        {
+          provide: BeauticianCommissionRateService,
+          useValue: {
+            getRateMapForBeauticianIds: jest.fn().mockResolvedValue(new Map()),
           },
         },
         {

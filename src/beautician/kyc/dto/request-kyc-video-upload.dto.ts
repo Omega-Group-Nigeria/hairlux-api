@@ -16,7 +16,7 @@ export class RequestKycVideoUploadDto {
 
   @ApiProperty({
     description:
-      'Expected file size in bytes after compression (max 15 MB). Optional; used for client guidance.',
+      'Expected file size in bytes after compression (max 100 MB). Optional; used for client guidance.',
     required: false,
     example: 8_000_000,
     maximum: KYC_VIDEO_MAX_SIZE_BYTES,

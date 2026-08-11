@@ -49,11 +49,10 @@ export class DeliveryPricingService {
     }
   }
 
-  async resolveDeliveryFeeForAddress(address: Address) {
-    const { state: resolvedState } = resolveAddressFields(address);
-    const state = resolvedState?.trim();
+  async resolveDeliveryFeeForState(state: string) {
+    const normalized = state?.trim();
 
-    if (!state) {
+    if (!normalized) {
       throw new BadRequestException(
         'Delivery address must include a state. Please update your address or contact support.',
       );
@@ -61,14 +60,14 @@ export class DeliveryPricingService {
 
     const region = await this.prisma.deliveryRegion.findFirst({
       where: {
-        state: { equals: state, mode: 'insensitive' },
+        state: { equals: normalized, mode: 'insensitive' },
         isActive: true,
       },
     });
 
     if (!region) {
       throw new BadRequestException(
-        `Delivery is not available for "${state}" yet. Please contact support.`,
+        `Delivery is not available for "${normalized}" yet. Please contact support.`,
       );
     }
 
@@ -79,6 +78,11 @@ export class DeliveryPricingService {
         state: region.state,
       },
     };
+  }
+
+  async resolveDeliveryFeeForAddress(address: Address) {
+    const { state: resolvedState } = resolveAddressFields(address);
+    return this.resolveDeliveryFeeForState(resolvedState ?? '');
   }
 
   async findAllRegions() {

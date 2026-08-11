@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Product, ShopOrderStatus, TransactionType } from '@prisma/client';
+import { Address, Product, ShopOrderStatus, TransactionType } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { assertUserOwnsAddress, formatAddress } from '../../common/utils/address.utils';
 import { MailService } from '../../mail/mail.service';
@@ -11,11 +11,16 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { CreateShopOrderDto } from '../dto/create-shop-order.dto';
-import { QuoteShopOrderDto } from '../dto/quote-shop-order.dto';
+import {
+  hasTemporaryDeliveryLocation,
+  QuoteShopOrderDto,
+} from '../dto/quote-shop-order.dto';
 import { ShopOrderLineItemDto } from '../dto/shop-order-line-item.dto';
+import { DeliveryAddressSnapshot } from '../types/shop-order-item.interface';
 import {
   buildDeliveryAddressSnapshot,
   buildShopOrderItems,
+  buildTemporaryDeliverySnapshot,
   calculateSubtotal,
   formatShopOrderResponse,
   toDeliveryAddressSnapshotJson,
@@ -91,13 +96,33 @@ export class ShopCheckoutService {
   }
 
   private async buildCheckoutContext(userId: string, dto: QuoteShopOrderDto) {
-    const address = await assertUserOwnsAddress(
-      this.prisma,
-      userId,
-      dto.addressId,
-    );
-    const { deliveryFee, deliveryRegion } =
-      await this.deliveryPricingService.resolveDeliveryFeeForAddress(address);
+    const isTemporary = hasTemporaryDeliveryLocation(dto);
+
+    let address: Address | null = null;
+    let addressSnapshot: DeliveryAddressSnapshot;
+    let deliveryFee: number;
+    let deliveryRegion: { name: string; state: string };
+
+    if (isTemporary) {
+      addressSnapshot = buildTemporaryDeliverySnapshot(dto);
+      const pricing = await this.deliveryPricingService.resolveDeliveryFeeForState(
+        String(dto.tempState).trim(),
+      );
+      deliveryFee = pricing.deliveryFee;
+      deliveryRegion = pricing.deliveryRegion;
+    } else {
+      const resolved = await assertUserOwnsAddress(
+        this.prisma,
+        userId,
+        dto.addressId as string,
+      );
+      address = resolved;
+      addressSnapshot = buildDeliveryAddressSnapshot(resolved);
+      const pricing =
+        await this.deliveryPricingService.resolveDeliveryFeeForAddress(resolved);
+      deliveryFee = pricing.deliveryFee;
+      deliveryRegion = pricing.deliveryRegion;
+    }
 
     const quantities = this.buildQuantityMap(dto.items);
     const products = await this.productCatalogService.loadActiveProductsForCheckout(
@@ -108,7 +133,6 @@ export class ShopCheckoutService {
     const orderItems = buildShopOrderItems(products, quantities);
     const subtotal = calculateSubtotal(orderItems);
     const totalAmount = Math.round((subtotal + deliveryFee) * 100) / 100;
-    const addressSnapshot = buildDeliveryAddressSnapshot(address);
 
     return {
       address,
@@ -118,6 +142,7 @@ export class ShopCheckoutService {
       orderItems,
       subtotal,
       totalAmount,
+      isTemporary,
     };
   }
 
@@ -203,7 +228,15 @@ export class ShopCheckoutService {
             id: orderId,
             orderCode,
             userId,
-            addressId: dto.addressId,
+            addressId: dto.addressId ?? null,
+            ...(context.isTemporary
+              ? {
+                  tempLatitude: dto.tempLatitude,
+                  tempLongitude: dto.tempLongitude,
+                  tempFullAddress: dto.tempFullAddress?.trim() ?? null,
+                  tempState: dto.tempState?.trim() ?? null,
+                }
+              : {}),
             items: toShopOrderItemsJson(context.orderItems),
             deliveryAddressSnapshot: toDeliveryAddressSnapshotJson(
               context.addressSnapshot,

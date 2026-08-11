@@ -75,7 +75,7 @@ export class KycController {
   @ApiOperation({
     summary: 'Request presigned URL to upload KYC intro video',
     description:
-      'Step 3 of onboarding (after QoreID + profile submission). Profile must be AWAITING_VIDEO. Returns a presigned PUT URL valid ~10 minutes. Max 15 MB; video/mp4, video/quicktime, or video/webm.',
+      'Step 3 of onboarding (after QoreID + profile submission). Profile must be AWAITING_VIDEO. Returns a presigned PUT URL valid ~10 minutes. Max 100 MB; video/mp4, video/quicktime, or video/webm.',
   })
   @ApiResponse({ status: 201, description: 'Presigned upload URL created' })
   @ApiResponse({

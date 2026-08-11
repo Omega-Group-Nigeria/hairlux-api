@@ -1,5 +1,12 @@
-import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import {
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { AuthAccountType } from './account-type.enum';
 
 export class LoginDto {
   @ApiProperty({
@@ -17,4 +24,14 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty({ message: 'Password is required' })
   password: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Which account to sign into when the email has both a USER and a BEAUTICIAN account. Omit for the legacy single-account lookup.',
+    enum: AuthAccountType,
+    example: AuthAccountType.USER,
+  })
+  @IsOptional()
+  @IsEnum(AuthAccountType)
+  type?: AuthAccountType;
 }

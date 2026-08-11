@@ -36,7 +36,7 @@ export class KycVideoService {
       dto.fileSizeBytes > KYC_VIDEO_MAX_SIZE_BYTES
     ) {
       throw new BadRequestException(
-        `Video exceeds maximum size of ${KYC_VIDEO_MAX_SIZE_BYTES} bytes (15 MB)`,
+        `Video exceeds maximum size of ${KYC_VIDEO_MAX_SIZE_BYTES} bytes (100 MB)`,
       );
     }
 
@@ -86,7 +86,7 @@ export class KycVideoService {
 
     if (head.contentLength > KYC_VIDEO_MAX_SIZE_BYTES) {
       throw new BadRequestException(
-        `Video exceeds maximum size of ${KYC_VIDEO_MAX_SIZE_BYTES} bytes (15 MB)`,
+        `Video exceeds maximum size of ${KYC_VIDEO_MAX_SIZE_BYTES} bytes (100 MB)`,
       );
     }
 

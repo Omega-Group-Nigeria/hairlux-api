@@ -447,7 +447,7 @@ model StaffDocumentAcknowledgment {
 
 model User {
   id               String     @id @default(uuid())
-  email            String     @unique
+  email            String
   password         String
   firstName        String     @map("first_name")
   lastName         String     @map("last_name")
@@ -472,6 +472,11 @@ model User {
 
   adminRoleId String? @map("admin_role_id")
 
+  // Identity link: one person may hold multiple role-scoped accounts (e.g. a
+  // USER account + a BEAUTICIAN account) sharing one email. Accounts in the
+  // same identity group belong to the same person and share email/phone data.
+  identityGroupId String  @default(uuid()) @map("identity_group_id")
+
   // Relations
   addresses                  Address[]
   bookings                   Booking[]
@@ -491,6 +496,7 @@ model User {
   influencer                 Influencer?
   shopOrders                 ShopOrder[]
   beauticianProfile          BeauticianProfile?
+  beauticianCommissionRates  BeauticianCommissionRate[]
   assignedBookings           Booking[]                   @relation("AssignedBeautician")
   jobOffers                  JobOffer[]
   offerLettersGenerated      OfferLetter[]               @relation("OfferLetterGeneratedBy")
@@ -511,7 +517,10 @@ model User {
 
   @@index([role])
   @@index([status])
+  @@index([email])
+  @@index([identityGroupId])
   @@index([firstName, lastName, dateOfBirth])
+  @@unique([email, role])
   @@map("users")
 }
 
@@ -633,7 +642,12 @@ model ShopOrder {
   id                      String          @id @default(uuid())
   orderCode               String          @unique @map("order_code")
   userId                  String          @map("user_id")
-  addressId               String          @map("address_id")
+  addressId               String?         @map("address_id")
+  // Temporary / current-location alternative to a saved addressId (delivery)
+  tempLatitude            Decimal?        @map("temp_latitude") @db.Decimal(10, 7)
+  tempLongitude           Decimal?        @map("temp_longitude") @db.Decimal(10, 7)
+  tempFullAddress         String?         @map("temp_full_address")
+  tempState               String?         @map("temp_state")
   items                   Json
   deliveryAddressSnapshot Json            @map("delivery_address_snapshot")
   subtotal                Decimal         @db.Decimal(10, 2)
@@ -645,8 +659,8 @@ model ShopOrder {
   createdAt               DateTime        @default(now()) @map("created_at")
   updatedAt               DateTime        @updatedAt @map("updated_at")
 
-  user    User    @relation(fields: [userId], references: [id])
-  address Address @relation(fields: [addressId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+  address Address? @relation(fields: [addressId], references: [id])
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -708,6 +722,20 @@ model ServiceCommissionRate {
   service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@map("service_commission_rates")
+}
+
+/// Optional per-beautician commission override (admin-set).
+/// Precedence when present: beautician override → service override → HomeServiceSettings.commissionRate.
+model BeauticianCommissionRate {
+  id             String   @id @default(uuid())
+  beauticianUserId String @unique @map("beautician_user_id")
+  commissionRate Decimal  @map("commission_rate") @db.Decimal(5, 4)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  beautician User @relation(fields: [beauticianUserId], references: [id], onDelete: Cascade)
+
+  @@map("beautician_commission_rates")
 }
 
 // ─── Salon customer tracking (lightweight, no auth required) ───

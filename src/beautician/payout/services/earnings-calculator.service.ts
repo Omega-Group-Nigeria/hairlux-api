@@ -16,6 +16,12 @@ export interface EarningsCalculationInput {
   defaultCommissionRate: number;
   /** serviceId → rate (0–1). Only overridden services need entries. */
   serviceCommissionRates?: ServiceCommissionRateMap;
+  /**
+   * Per-beautician override (admin-set). When present it wins over the
+   * per-service override (Option A): a beautician's personal deal applies to
+   * every home-service line regardless of service-level rates.
+   */
+  beauticianCommissionRate?: number;
 }
 
 export interface EarningsLineBreakdown {
@@ -39,6 +45,10 @@ export class EarningsCalculatorService {
   calculate(input: EarningsCalculationInput): EarningsCalculationResult {
     const defaultRate = this.clampRate(input.defaultCommissionRate);
     const rateMap = input.serviceCommissionRates ?? new Map<string, number>();
+    const beauticianRate =
+      input.beauticianCommissionRate !== undefined
+        ? this.clampRate(input.beauticianCommissionRate)
+        : undefined;
     const homeLines = this.resolveHomeServiceLines(
       input.bookingType,
       input.services,
@@ -46,9 +56,10 @@ export class EarningsCalculatorService {
 
     if (!homeLines.length) {
       const base = this.resolveFallbackBase(input.bookingType, input.totalAmount);
-      const earningsAmount = this.roundMoney(base * defaultRate);
+      const rate = beauticianRate ?? defaultRate;
+      const earningsAmount = this.roundMoney(base * rate);
       return {
-        commissionRate: defaultRate,
+        commissionRate: rate,
         defaultCommissionRate: defaultRate,
         earningsBaseAmount: base,
         earningsAmount,
@@ -58,7 +69,12 @@ export class EarningsCalculatorService {
 
     const lines: EarningsLineBreakdown[] = homeLines.map((line) => {
       const lineAmount = this.roundMoney(line.price * line.quantity);
-      const commissionRate = this.resolveLineRate(line.serviceId, rateMap, defaultRate);
+      const commissionRate = this.resolveLineRate(
+        line.serviceId,
+        rateMap,
+        defaultRate,
+        beauticianRate,
+      );
       return {
         serviceId: line.serviceId,
         lineAmount,
@@ -144,7 +160,11 @@ export class EarningsCalculatorService {
     serviceId: string,
     rateMap: ServiceCommissionRateMap,
     defaultRate: number,
+    beauticianRate?: number,
   ): number {
+    if (beauticianRate !== undefined) {
+      return beauticianRate;
+    }
     if (rateMap.has(serviceId)) {
       return this.clampRate(rateMap.get(serviceId)!);
     }

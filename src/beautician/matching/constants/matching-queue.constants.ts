@@ -15,13 +15,13 @@ export const matchingJobIds = {
     `matching-wait-online:${bookingId}:${attempt}`,
   nextTier: (bookingId: string, nextAttempt: number) =>
     `matching-tier:${bookingId}:${nextAttempt}`,
-  exhaustedWake: (bookingId: string) =>
-    `matching-exhausted-wake:${bookingId}`,
+  exhaustedWake: (bookingId: string) => `matching-exhausted-wake:${bookingId}`,
   immediate: (bookingId: string, attempt: number) =>
     `matching-immediate:${bookingId}:${attempt}`,
   manualRetry: (bookingId: string) => `matching-retry:${bookingId}`,
   createOffers: (bookingId: string, attempt: number) =>
     `matching-create:${bookingId}:${attempt}`,
+  scheduledDispatch: (bookingId: string) => `matching-scheduled:${bookingId}`,
 } as const;
 
 /** Redis keys used by matching infrastructure. */

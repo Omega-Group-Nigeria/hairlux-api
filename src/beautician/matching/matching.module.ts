@@ -5,7 +5,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { RedisModule } from '../../redis/redis.module';
 import { MailModule } from '../../mail/mail.module';
 import { BeauticianNotificationModule } from '../notification/notification.module';
-import { HOME_SERVICE_MATCHING_QUEUE } from '../home-service-booking/home-service-booking.service';
+import { HOME_SERVICE_MATCHING_QUEUE } from '../home-service-booking/home-service-matching-queue.constants';
 import { DISPATCH_PROBATION_QUEUE } from './constants/dispatch-probation.constants';
 import { HomeServiceSettingsService } from '../services/home-service-settings.service';
 import { CandidateFinderService } from './services/candidate-finder.service';

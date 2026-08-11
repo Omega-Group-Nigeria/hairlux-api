@@ -8,8 +8,8 @@ export const KYC_VIDEO_ALLOWED_CONTENT_TYPES = [
 export type KycVideoContentType =
   (typeof KYC_VIDEO_ALLOWED_CONTENT_TYPES)[number];
 
-/** Max compressed video size (~1 min highly compressed with headroom). */
-export const KYC_VIDEO_MAX_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB
+/** Max compressed video size (~1 min with headroom). */
+export const KYC_VIDEO_MAX_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /** Presigned PUT URL lifetime for client → R2 upload. */
 export const KYC_VIDEO_UPLOAD_URL_TTL_SECONDS = 10 * 60; // 10 minutes

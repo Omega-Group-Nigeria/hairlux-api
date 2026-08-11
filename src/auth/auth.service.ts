@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { randomBytes, randomInt } from 'crypto';
+import { randomBytes, randomInt, randomUUID } from 'crypto';
 import { ErrorMessages } from '../common/constants/error-messages';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -41,33 +41,41 @@ export class AuthService {
     private referralService: ReferralService,
     private redis: RedisService,
     private pinService: PinService,
-  ) { }
+  ) {}
 
   async register(registerDto: RegisterDto) {
     const { email, password, firstName, lastName, phone, referralCode } =
       registerDto;
 
-    // Check if email already exists
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const normalizedEmail = email.toLowerCase();
+
+    // An email may already belong to a BEAUTICIAN account. In that case this is
+    // a LINKED registration: the same person is creating their USER account.
+    // Nothing else gets to reuse the email.
+    const existingUser = await this.prisma.user.findFirst({
+      where: { email: normalizedEmail },
+      select: { id: true, role: true, identityGroupId: true },
     });
 
+    let linkContext: { parentId: string; groupId: string } | null = null;
     if (existingUser) {
-      throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
-    }
-
-    // Check if phone number is already in use
-    if (phone) {
-      const existingPhone = await this.prisma.user.findFirst({
-        where: { phone },
-        select: { id: true },
-      });
-      if (existingPhone) {
-        throw new ConflictException(
-          'Phone number is already associated with an account',
-        );
+      if (existingUser.role === UserRole.BEAUTICIAN) {
+        linkContext = {
+          parentId: existingUser.id,
+          groupId: existingUser.identityGroupId ?? randomUUID(),
+        };
+      } else {
+        throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
       }
     }
+
+    // Phone may be shared with an account already owned by the same person
+    // (same identity group), but never with someone else's account.
+    await this.assertPhoneAcrossGroups(
+      phone,
+      linkContext?.groupId,
+      linkContext?.parentId,
+    );
 
     // Hash password using argon2id
     const hashedPassword = await argon2.hash(password, {
@@ -83,21 +91,32 @@ export class AuthService {
 
     // Create user and wallet in transaction
     const user = await this.prisma.$transaction(async (tx) => {
+      // If the existing parent account predates identity groups, give it and
+      // the new linked account a fresh shared group.
+      if (linkContext) {
+        await tx.user.update({
+          where: { id: linkContext.parentId },
+          data: { identityGroupId: linkContext.groupId },
+        });
+      }
+
       const newUser = await tx.user.create({
         data: {
-          email: email.toLowerCase(),
+          email: normalizedEmail,
           password: hashedPassword,
           firstName,
           lastName,
           phone,
           role: UserRole.USER,
           status: UserStatus.ACTIVE,
+          ...(linkContext ? { identityGroupId: linkContext.groupId } : {}),
           otpCode,
           otpExpiry,
         },
         select: {
           id: true,
           email: true,
+          identityGroupId: true,
           firstName: true,
           lastName: true,
           phone: true,
@@ -124,9 +143,10 @@ export class AuthService {
       await this.referralService.createReferralCode(user.id, firstName);
     } catch (referralErr) {
       this.logger.warn(
-        `Referral code generation failed for user ${user.id} (non-fatal): ${referralErr instanceof Error
-          ? referralErr.message
-          : String(referralErr)
+        `Referral code generation failed for user ${user.id} (non-fatal): ${
+          referralErr instanceof Error
+            ? referralErr.message
+            : String(referralErr)
         }`,
       );
     }
@@ -137,9 +157,10 @@ export class AuthService {
         await this.referralService.applySignupCode(user.id, referralCode);
       } catch (referralErr) {
         this.logger.warn(
-          `Signup code application failed for user ${user.id} (non-fatal): ${referralErr instanceof Error
-            ? referralErr.message
-            : String(referralErr)
+          `Signup code application failed for user ${user.id} (non-fatal): ${
+            referralErr instanceof Error
+              ? referralErr.message
+              : String(referralErr)
           }`,
         );
       }
@@ -175,13 +196,41 @@ export class AuthService {
         ? dateOfBirth
         : this.parseDateOfBirth(String(dateOfBirth));
 
-    await this.assertBeauticianRegistrationAvailable({
-      email: normalizedEmail,
+    // An email may already belong to a USER account. In that case this is a
+    // LINKED registration: the same person is creating their BEAUTICIAN
+    // account. Nothing else gets to reuse the email.
+    const existingUser = await this.prisma.user.findFirst({
+      where: { email: normalizedEmail },
+      select: { id: true, role: true, identityGroupId: true },
+    });
+
+    let linkContext: { parentId: string; groupId: string } | null = null;
+    if (existingUser) {
+      if (existingUser.role === UserRole.USER) {
+        linkContext = {
+          parentId: existingUser.id,
+          groupId: existingUser.identityGroupId ?? randomUUID(),
+        };
+      } else {
+        throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
+      }
+    }
+
+    await this.assertBeauticianIdentityAvailable({
       firstName,
       lastName,
-      phone,
       dateOfBirth: parsedDateOfBirth,
+      allowedGroupId: linkContext?.groupId,
+      excludeUserId: linkContext?.parentId,
     });
+
+    // Phone may be shared with an account already owned by the same person
+    // (same identity group), but never with someone else's account.
+    await this.assertPhoneAcrossGroups(
+      phone,
+      linkContext?.groupId,
+      linkContext?.parentId,
+    );
 
     const hashedPassword = await argon2.hash(password, {
       type: argon2.argon2id,
@@ -194,6 +243,15 @@ export class AuthService {
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
     const user = await this.prisma.$transaction(async (tx) => {
+      // If the existing parent account predates identity groups, give it and
+      // the new linked account a fresh shared group.
+      if (linkContext) {
+        await tx.user.update({
+          where: { id: linkContext.parentId },
+          data: { identityGroupId: linkContext.groupId },
+        });
+      }
+
       const newUser = await tx.user.create({
         data: {
           email: normalizedEmail,
@@ -204,12 +262,14 @@ export class AuthService {
           dateOfBirth: parsedDateOfBirth,
           role: UserRole.BEAUTICIAN,
           status: UserStatus.ACTIVE,
+          ...(linkContext ? { identityGroupId: linkContext.groupId } : {}),
           otpCode,
           otpExpiry,
         },
         select: {
           id: true,
           email: true,
+          identityGroupId: true,
           firstName: true,
           lastName: true,
           phone: true,
@@ -256,11 +316,16 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
-    const { email, password } = loginDto;
+    const { email, password, type } = loginDto;
 
-    // Find user
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    // Find the account. When `type` is given, it disambiguates which
+    // role-scoped account (USER vs BEAUTICIAN) the email refers to, since one
+    // person can now hold both. Without `type` we keep the legacy behaviour.
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: email.toLowerCase(),
+        ...(type ? { role: type as unknown as UserRole } : {}),
+      },
       include: {
         adminRole: {
           select: { id: true, name: true },
@@ -272,6 +337,11 @@ export class AuthService {
     });
 
     if (!user) {
+      if (type) {
+        throw new UnauthorizedException(
+          `No ${type.toLowerCase()} account exists for this email. Please register as a ${type.toLowerCase()} first.`,
+        );
+      }
       throw new UnauthorizedException(ErrorMessages.INVALID_CREDENTIALS);
     }
 
@@ -358,10 +428,10 @@ export class AuthService {
   }
 
   /**
- * Generates a password-setup token and emails it. Shared by genuine
- * forgot-password requests and by brand-new accounts that start with an
- * unusable random password (e.g. staff created via convertToStaff).
- */
+   * Generates a password-setup token and emails it. Shared by genuine
+   * forgot-password requests and by brand-new accounts that start with an
+   * unusable random password (e.g. staff created via convertToStaff).
+   */
   async initiatePasswordSetup(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
@@ -374,20 +444,34 @@ export class AuthService {
       data: { resetToken: hashedResetToken, resetTokenExpiry },
     });
 
-    await this.mailService.sendPasswordResetEmail(user.email, resetToken, user.firstName, user.role);
+    await this.mailService.sendPasswordResetEmail(
+      user.email,
+      resetToken,
+      user.firstName,
+      user.role,
+    );
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
-    const { email } = forgotPasswordDto;
-    const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const { email, type } = forgotPasswordDto;
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: email.toLowerCase(),
+        ...(type ? { role: type as unknown as UserRole } : {}),
+      },
+    });
 
     if (!user) {
-      return { message: 'If the email exists, a password reset link has been sent' };
+      return {
+        message: 'If the email exists, a password reset link has been sent',
+      };
     }
 
     await this.initiatePasswordSetup(user.id);
 
-    return { message: 'If the email exists, a password reset link has been sent' };
+    return {
+      message: 'If the email exists, a password reset link has been sent',
+    };
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
@@ -548,8 +632,9 @@ export class AuthService {
       select: { role: true },
     });
 
-    const roles = Array.from(new Set([user.role, ...roleAssignments.map((r) => r.role)]));
-
+    const roles = Array.from(
+      new Set([user.role, ...roleAssignments.map((r) => r.role)]),
+    );
 
     const permissions = await this.getPermissionsForUser(
       user.role,
@@ -598,7 +683,9 @@ export class AuthService {
       select: { isActive: true, permissions: { select: { permission: true } } },
     });
 
-    const permissions = role?.isActive ? role.permissions.map((p) => p.permission) : [];
+    const permissions = role?.isActive
+      ? role.permissions.map((p) => p.permission)
+      : [];
     await this.redis.set(cacheKey, permissions, 300);
     return permissions;
   }
@@ -637,8 +724,9 @@ export class AuthService {
       where: { userId: user.id },
       select: { role: true },
     });
-    const roles = Array.from(new Set([user.role, ...roleAssignments.map((r) => r.role)]));
-
+    const roles = Array.from(
+      new Set([user.role, ...roleAssignments.map((r) => r.role)]),
+    );
 
     const hasPin = !!user.pin;
 
@@ -665,10 +753,13 @@ export class AuthService {
   }
 
   async verifyOtp(verifyOtpDto: VerifyOtpDto) {
-    const { email, otpCode } = verifyOtpDto;
+    const { email, otpCode, type } = verifyOtpDto;
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: email.toLowerCase(),
+        ...(type ? { role: type as unknown as UserRole } : {}),
+      },
       include: {
         adminRole: {
           select: { id: true, name: true },
@@ -731,10 +822,13 @@ export class AuthService {
   }
 
   async resendOtp(resendOtpDto: ResendOtpDto) {
-    const { email } = resendOtpDto;
+    const { email, type } = resendOtpDto;
 
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: email.toLowerCase(),
+        ...(type ? { role: type as unknown as UserRole } : {}),
+      },
     });
 
     if (!user) {
@@ -867,44 +961,57 @@ export class AuthService {
     return new Date(Date.UTC(year, month - 1, day));
   }
 
-  private async assertBeauticianRegistrationAvailable(input: {
-    email: string;
+  private async assertBeauticianIdentityAvailable(input: {
     firstName: string;
     lastName: string;
-    phone: string;
     dateOfBirth: Date;
+    allowedGroupId?: string;
+    excludeUserId?: string;
   }): Promise<void> {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: input.email },
-      select: { id: true },
-    });
-
-    if (existingUser) {
-      throw new ConflictException(ErrorMessages.USER_ALREADY_EXISTS);
-    }
-
-    const existingPhone = await this.prisma.user.findFirst({
-      where: { phone: input.phone },
-      select: { id: true },
-    });
-
-    if (existingPhone) {
-      throw new ConflictException(ErrorMessages.PHONE_ALREADY_EXISTS);
-    }
-
-    const existingIdentity = await this.prisma.user.findFirst({
+    const existingIdentity = await this.prisma.user.findMany({
       where: {
         firstName: { equals: input.firstName, mode: 'insensitive' },
         lastName: { equals: input.lastName, mode: 'insensitive' },
         dateOfBirth: input.dateOfBirth,
       },
-      select: { id: true },
+      select: { id: true, identityGroupId: true },
     });
 
-    if (existingIdentity) {
+    // Another account in the same identity group (i.e. the same person) may
+    // share the identity; nobody outside the group may.
+    const conflict = existingIdentity.some(
+      (u) =>
+        u.id !== input.excludeUserId &&
+        u.identityGroupId !== input.allowedGroupId,
+    );
+
+    if (conflict) {
       throw new ConflictException(
         ErrorMessages.BEAUTICIAN_IDENTITY_ALREADY_EXISTS,
       );
+    }
+  }
+
+  private async assertPhoneAcrossGroups(
+    phone: string | undefined,
+    allowedGroupId: string | undefined,
+    excludeUserId?: string,
+  ): Promise<void> {
+    if (!phone) return;
+
+    const existingPhones = await this.prisma.user.findMany({
+      where: { phone },
+      select: { id: true, identityGroupId: true },
+    });
+
+    // An account owned by the same person (same identity group) may reuse the
+    // phone; nobody outside the group may.
+    const conflict = existingPhones.some(
+      (u) => u.id !== excludeUserId && u.identityGroupId !== allowedGroupId,
+    );
+
+    if (conflict) {
+      throw new ConflictException(ErrorMessages.PHONE_ALREADY_EXISTS);
     }
   }
 

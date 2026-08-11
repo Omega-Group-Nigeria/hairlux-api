@@ -1257,7 +1257,14 @@ export class ApplicationService {
     }
 
     // ── Resolve or create the User account ──
-    let user = await this.prisma.user.findUnique({ where: { email: application.email! } });
+    // Prefer the customer (USER) account when the person holds both a USER and
+    // a BEAUTICIAN account for this email; fall back to whichever account
+    // exists so a beautician-only applicant is still handled.
+    let user =
+      (await this.prisma.user.findFirst({
+        where: { email: application.email!, role: 'USER' },
+      })) ??
+      (await this.prisma.user.findFirst({ where: { email: application.email! } }));
 
     if (user) {
       const existingStaff = await this.prisma.staff.findUnique({ where: { userId: user.id } });

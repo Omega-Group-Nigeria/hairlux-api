@@ -125,4 +125,71 @@ describe('EarningsCalculatorService', () => {
     expect(result.earningsAmount).toBe(10000);
     expect(result.lines).toEqual([]);
   });
+
+  it('beautician override wins over per-service override (Option A)', () => {
+    const result = service.calculate({
+      bookingType: BookingType.HOME_SERVICE,
+      services: [
+        {
+          serviceId: 'svc-luxury',
+          name: 'Luxury',
+          price: 1_000_000,
+          quantity: 1,
+          duration: 300,
+          serviceMode: BookingType.HOME_SERVICE,
+        },
+        {
+          serviceId: 'svc-basic',
+          name: 'Basic',
+          price: 20000,
+          quantity: 1,
+          duration: 60,
+          serviceMode: BookingType.HOME_SERVICE,
+        },
+      ],
+      totalAmount: 1_020_000,
+      defaultCommissionRate: 0.1,
+      serviceCommissionRates: new Map([['svc-luxury', 0.03]]),
+      beauticianCommissionRate: 0.6,
+    });
+
+    expect(result.lines).toEqual([
+      {
+        serviceId: 'svc-luxury',
+        lineAmount: 1_000_000,
+        commissionRate: 0.6,
+        earningsAmount: 600_000,
+      },
+      {
+        serviceId: 'svc-basic',
+        lineAmount: 20_000,
+        commissionRate: 0.6,
+        earningsAmount: 12_000,
+      },
+    ]);
+    expect(result.earningsAmount).toBe(612_000);
+    expect(result.commissionRate).toBe(0.6);
+  });
+
+  it('beautician override wins over default when no service override', () => {
+    const result = service.calculate({
+      bookingType: BookingType.HOME_SERVICE,
+      services: [
+        {
+          serviceId: 'svc-basic',
+          name: 'Basic',
+          price: 10000,
+          quantity: 1,
+          duration: 60,
+          serviceMode: BookingType.HOME_SERVICE,
+        },
+      ],
+      totalAmount: 10000,
+      defaultCommissionRate: 0.7,
+      beauticianCommissionRate: 0.5,
+    });
+
+    expect(result.earningsAmount).toBe(5000);
+    expect(result.commissionRate).toBe(0.5);
+  });
 });

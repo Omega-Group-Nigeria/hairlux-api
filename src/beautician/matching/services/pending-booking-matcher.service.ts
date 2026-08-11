@@ -9,11 +9,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { RedisService } from '../../../redis/redis.service';
 import { normalizeBookingServices } from '../../../booking/utils/booking.utils';
 import { resolveBookingCoordinatesSync } from '../../../booking/utils/booking-location.utils';
-import {
-  extractHomeServiceIds,
-} from '../utils/booking-assignment.utils';
+import { extractHomeServiceIds } from '../utils/booking-assignment.utils';
 import { haversineKm } from '../utils/geo.util';
 import { beauticianLastRematchPosKey } from '../constants/location-index.constants';
+import { getDispatchWindowOpenAt } from '../utils/dispatch-window.utils';
 import { MatchingConfigService } from './matching-config.service';
 import { MatchingOrchestratorService } from './matching-orchestrator.service';
 
@@ -88,11 +87,15 @@ export class PendingBookingMatcherService {
     }
 
     const maxRadiusKm = this.matchingConfig.getMaxRadiusKm();
-    const includeExhausted = this.matchingConfig.isWakeExhaustedOnOnlineEnabled();
+    const includeExhausted =
+      this.matchingConfig.isWakeExhaustedOnOnlineEnabled();
 
     const pendingBookings = await this.prisma.booking.findMany({
       where: {
         status: BookingStatus.PENDING_ASSIGNMENT,
+        // Only wake bookings whose dispatch window has opened — scheduled
+        // (future-dated) bookings must not be dispatched early.
+        bookingDate: { lte: getDispatchWindowOpenAt() },
         OR: [
           { addressId: { not: null } },
           {
@@ -102,9 +105,7 @@ export class PendingBookingMatcherService {
             ],
           },
         ],
-        ...(includeExhausted
-          ? {}
-          : { matchingExhaustedAt: null }),
+        ...(includeExhausted ? {} : { matchingExhaustedAt: null }),
       },
       include: { address: true },
       orderBy: { createdAt: 'desc' },
