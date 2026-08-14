@@ -20,8 +20,10 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { UserService } from './user.service';
+import type { CustomerLifecycle, CustomerValue } from '../common/utils/customer-status.util';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -212,6 +214,109 @@ export class AdminUserController {
   })
   async getAllUsers(@Query() queryDto: AdminQueryUsersDto) {
     return this.userService.findAllUsers(queryDto);
+  }
+
+  @Get('customers')
+  @ApiOperation({ summary: 'The Users page (Website/App customers) — full list, searchable and filterable by signup source, activity, spending, service, branch, and lifecycle/value' })
+  async findAllCustomerUsers(
+    @Query('q') q?: string,
+    @Query('branchIds') branchIds?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('signupSource') signupSource?: 'WEB' | 'APP',
+    @Query('accountStatus') accountStatus?: 'ACTIVE' | 'INACTIVE',
+    @Query('serviceMode') serviceMode?: 'HOME_SERVICE' | 'WALK_IN',
+    @Query('lifecycle') lifecycle?: CustomerLifecycle,
+    @Query('value') value?: CustomerValue,
+    @Query('minVisits') minVisits?: string,
+    @Query('maxVisits') maxVisits?: string,
+    @Query('minSpend') minSpend?: string,
+    @Query('maxSpend') maxSpend?: string,
+    @Query('minAvgSpend') minAvgSpend?: string,
+    @Query('maxAvgSpend') maxAvgSpend?: string,
+    @Query('firstVisitFrom') firstVisitFrom?: string,
+    @Query('firstVisitTo') firstVisitTo?: string,
+    @Query('lastVisitFrom') lastVisitFrom?: string,
+    @Query('lastVisitTo') lastVisitTo?: string,
+    @Query('daysSinceLastVisitMin') daysSinceLastVisitMin?: string,
+    @Query('daysSinceLastVisitMax') daysSinceLastVisitMax?: string,
+    @Query('serviceCategoryIds') serviceCategoryIds?: string,
+    @Query('serviceIds') serviceIds?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const data = await this.userService.findAllCustomerUsers({
+      query: q,
+      branchIds: branchIds ? branchIds.split(',') : undefined,
+      dateFrom, dateTo, signupSource, accountStatus, serviceMode, lifecycle, value,
+      minVisits: minVisits ? Number(minVisits) : undefined,
+      maxVisits: maxVisits ? Number(maxVisits) : undefined,
+      minSpend: minSpend ? Number(minSpend) : undefined,
+      maxSpend: maxSpend ? Number(maxSpend) : undefined,
+      minAvgSpend: minAvgSpend ? Number(minAvgSpend) : undefined,
+      maxAvgSpend: maxAvgSpend ? Number(maxAvgSpend) : undefined,
+      firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+      daysSinceLastVisitMin: daysSinceLastVisitMin ? Number(daysSinceLastVisitMin) : undefined,
+      daysSinceLastVisitMax: daysSinceLastVisitMax ? Number(daysSinceLastVisitMax) : undefined,
+      serviceCategoryIds: serviceCategoryIds ? serviceCategoryIds.split(',') : undefined,
+      serviceIds: serviceIds ? serviceIds.split(',') : undefined,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+    return { success: true, message: 'Customers retrieved successfully', data };
+  }
+
+  @Get('customers/performance')
+  @ApiOperation({ summary: 'Performance cards for the Users page — computed over the same filters as the customer list, so cards and table always agree' })
+  async getCustomerUsersPerformance(
+    @Query('q') q?: string,
+    @Query('branchIds') branchIds?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('signupSource') signupSource?: 'WEB' | 'APP',
+    @Query('accountStatus') accountStatus?: 'ACTIVE' | 'INACTIVE',
+    @Query('serviceMode') serviceMode?: 'HOME_SERVICE' | 'WALK_IN',
+    @Query('lifecycle') lifecycle?: CustomerLifecycle,
+    @Query('value') value?: CustomerValue,
+    @Query('minVisits') minVisits?: string,
+    @Query('maxVisits') maxVisits?: string,
+    @Query('minSpend') minSpend?: string,
+    @Query('maxSpend') maxSpend?: string,
+    @Query('minAvgSpend') minAvgSpend?: string,
+    @Query('maxAvgSpend') maxAvgSpend?: string,
+    @Query('firstVisitFrom') firstVisitFrom?: string,
+    @Query('firstVisitTo') firstVisitTo?: string,
+    @Query('lastVisitFrom') lastVisitFrom?: string,
+    @Query('lastVisitTo') lastVisitTo?: string,
+    @Query('daysSinceLastVisitMin') daysSinceLastVisitMin?: string,
+    @Query('daysSinceLastVisitMax') daysSinceLastVisitMax?: string,
+    @Query('serviceCategoryIds') serviceCategoryIds?: string,
+    @Query('serviceIds') serviceIds?: string,
+  ) {
+    const data = await this.userService.getCustomerUsersPerformance({
+      query: q,
+      branchIds: branchIds ? branchIds.split(',') : undefined,
+      dateFrom, dateTo, signupSource, accountStatus, serviceMode, lifecycle, value,
+      minVisits: minVisits ? Number(minVisits) : undefined,
+      maxVisits: maxVisits ? Number(maxVisits) : undefined,
+      minSpend: minSpend ? Number(minSpend) : undefined,
+      maxSpend: maxSpend ? Number(maxSpend) : undefined,
+      minAvgSpend: minAvgSpend ? Number(minAvgSpend) : undefined,
+      maxAvgSpend: maxAvgSpend ? Number(maxAvgSpend) : undefined,
+      firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+      daysSinceLastVisitMin: daysSinceLastVisitMin ? Number(daysSinceLastVisitMin) : undefined,
+      daysSinceLastVisitMax: daysSinceLastVisitMax ? Number(daysSinceLastVisitMax) : undefined,
+      serviceCategoryIds: serviceCategoryIds ? serviceCategoryIds.split(',') : undefined,
+      serviceIds: serviceIds ? serviceIds.split(',') : undefined,
+    });
+    return { success: true, message: 'Performance retrieved successfully', data };
+  }
+
+  @Get('customers/:id/profile')
+  @ApiOperation({ summary: "A single customer's full profile and booking history (Users page drill-down)" })
+  async getCustomerUserProfile(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.userService.getCustomerUserProfile(id);
+    return { success: true, message: 'Customer profile retrieved successfully', data };
   }
 
   // ─── Search (must be declared before :id to prevent route shadowing) ─────

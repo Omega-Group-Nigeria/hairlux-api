@@ -1,41 +1,41 @@
 import {
+  Body,
   Controller,
+  ForbiddenException,
   Get,
+  Param,
   Post,
   Put,
-  Body,
-  Param,
   Query,
   UseGuards,
-  ForbiddenException,
 } from '@nestjs/common';
 import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
   ApiBearerAuth,
+  ApiOperation,
   ApiParam,
   ApiQuery,
+  ApiResponse,
+  ApiTags,
 } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { GetUser } from '../auth/decorators/get-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CompleteServiceDto } from '../beautician/dto/complete-service.dto';
+import { ConfirmCompletionDto } from '../beautician/dto/confirm-completion.dto';
+import { VerifyArrivalDto } from '../beautician/dto/verify-arrival.dto';
 import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { InitializeBookingPaymentDto } from './dto/initialize-booking-payment.dto';
-import { VerifyBookingPaymentDto } from './dto/verify-booking-payment.dto';
 import { QueryBookingsDto } from './dto/query-bookings.dto';
-import { Public } from '../auth/decorators/public.decorator';
 import { RescheduleBookingDto } from './dto/reschedule-booking.dto';
 import { UpdateBookingStatusDto } from './dto/update-booking-status.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { GetUser } from '../auth/decorators/get-user.decorator';
-import { VerifyArrivalDto } from '../beautician/dto/verify-arrival.dto';
-import { ConfirmCompletionDto } from '../beautician/dto/confirm-completion.dto';
-import { UserRole } from '@prisma/client';
-import { CompleteServiceDto } from '../beautician/dto/complete-service.dto';
+import { VerifyBookingPaymentDto } from './dto/verify-booking-payment.dto';
 
 @ApiTags('Bookings')
 @Controller('bookings')
 export class BookingController {
-  constructor(private readonly bookingService: BookingService) {}
+  constructor(private readonly bookingService: BookingService) { }
 
   @Get('business-hours')
   @Public()
@@ -84,7 +84,7 @@ export class BookingController {
   @ApiOperation({
     summary: 'Get all business exceptions',
     description:
-      'Returns all date-specific overrides (holidays, special hours, emergency closures). Public endpoint, no authentication required.',
+      'Returns all date-specific overrides (holidays, special hours, emergency closures) — both company-wide and branch-specific. Public endpoint, no authentication required.',
   })
   @ApiResponse({
     status: 200,
@@ -97,15 +97,28 @@ export class BookingController {
           {
             id: 'uuid',
             date: '2026-12-25T00:00:00.000Z',
+            branchId: null,
+            branch: null,
             isClosed: true,
             openTime: null,
             closeTime: null,
             reason: 'Christmas Holiday',
           },
+          {
+            id: 'uuid',
+            date: '2026-08-11T00:00:00.000Z',
+            branchId: 'branch-uuid',
+            branch: { id: 'branch-uuid', name: 'Academy Olomi' },
+            isClosed: true,
+            openTime: null,
+            closeTime: null,
+            reason: 'Emergency closure — this branch only',
+          },
         ],
       },
     },
   })
+
   async getBusinessExceptions() {
     const data = await this.bookingService.getBusinessExceptions();
     return {

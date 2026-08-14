@@ -1,6 +1,6 @@
-import { IsOptional, IsString, IsNotEmpty, IsDateString, IsEnum } from 'class-validator';
+import { IsOptional, IsString, IsNotEmpty, IsDateString, IsEnum, ValidateIf } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { AttendanceStatus } from '@prisma/client';
+import { AttendanceOverrideReason, AttendanceStatus } from '@prisma/client';
 
 export class CorrectAttendanceDto {
     @ApiPropertyOptional({ description: 'Corrected check-in time (ISO 8601)' })
@@ -18,8 +18,13 @@ export class CorrectAttendanceDto {
     @IsEnum(AttendanceStatus)
     status?: AttendanceStatus;
 
-    @ApiProperty({ description: 'Required — why this record is being manually corrected' })
+    @ApiProperty({ enum: AttendanceOverrideReason, description: 'Required — the category this override falls under' })
+    @IsEnum(AttendanceOverrideReason)
+    reasonCategory: AttendanceOverrideReason;
+
+    @ApiProperty({ description: 'Required when reasonCategory is OTHER; optional supplementary detail otherwise' })
+    @ValidateIf((o) => o.reasonCategory === AttendanceOverrideReason.OTHER || o.reason !== undefined)
     @IsString()
     @IsNotEmpty()
-    reason: string;
+    reason?: string;
 }

@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsIn, IsOptional, IsUUID } from 'class-validator';
+import { IsDateString, IsIn, IsOptional, IsUUID, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 const STATUS_VALUES = ['SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] as const;
@@ -24,6 +24,11 @@ export class QuerySalonBookingsDto {
     @IsOptional()
     @IsDateString()
     date?: string;
+
+    @ApiPropertyOptional({ description: 'Matches customer name, customer phone, or Booking ID (accepts either the raw number or the HLB-prefixed display format)' })
+    @IsOptional()
+    @IsString()
+    search?: string;
 
     @ApiPropertyOptional({ default: 1 })
     @IsOptional()

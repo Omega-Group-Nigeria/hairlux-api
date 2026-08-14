@@ -15,7 +15,7 @@ export class AvailabilityService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
-  ) {}
+  ) { }
 
   async checkAvailability(queryDto: CheckAvailabilityDto) {
     const { serviceId, date } = queryDto;
@@ -35,6 +35,12 @@ export class AvailabilityService {
             gte: new Date(new Date(date).setHours(0, 0, 0, 0)),
             lte: new Date(new Date(date).setHours(23, 59, 59, 999)),
           },
+          // Company-wide only — this flow doesn't currently know which
+          // branch a booking is for, so a branch-specific exception must
+          // never be picked up here (that would misapply one branch's
+          // closure to every branch). Known limitation: a branch-specific
+          // exception has no effect on customer booking availability yet.
+          branchId: null,
         },
       }),
       this.prisma.businessHours.findUnique({
@@ -168,6 +174,7 @@ export class AvailabilityService {
 
     const exceptions = await this.prisma.businessException.findMany({
       orderBy: { date: 'asc' },
+      include: { branch: { select: { id: true, name: true } } },
     });
     await this.redis.set('booking:business-exceptions', exceptions, 3600);
     return exceptions;
@@ -177,17 +184,24 @@ export class AvailabilityService {
     const date = new Date(dto.date);
     date.setUTCHours(0, 0, 0, 0);
 
+    // Scoped to the same branch (or company-wide, when branchId is
+    // omitted) — a company-wide exception for a date doesn't conflict with
+    // a different branch's own exception for that same date, but does
+    // conflict with another company-wide row for it.
     const existing = await this.prisma.businessException.findFirst({
       where: {
         date: {
           gte: new Date(date.getTime()),
           lte: new Date(date.getTime() + 86399999),
         },
+        branchId: dto.branchId ?? null,
       },
     });
     if (existing) {
       throw new ConflictException(
-        `An exception already exists for ${dto.date}`,
+        dto.branchId
+          ? `An exception already exists for ${dto.date} at this branch`
+          : `A company-wide exception already exists for ${dto.date}`,
       );
     }
 
@@ -200,6 +214,7 @@ export class AvailabilityService {
     const created = await this.prisma.businessException.create({
       data: {
         date,
+        branchId: dto.branchId,
         isClosed: dto.isClosed ?? true,
         openTime: dto.openTime,
         closeTime: dto.closeTime,

@@ -1,6 +1,7 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
+import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
@@ -33,6 +34,7 @@ import { StorageModule } from './storage/storage.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LeaveModule } from './leave/leave.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { BranchFinanceModule } from './branch-finance/branch-finance.module';
 import { SalonBookingModule } from './salon-booking/salon-booking.module';
 import { ProductSaleModule } from './product-sale/product-sale.module';
 import { SupplierModule } from './supplier/supplier.module';
@@ -44,6 +46,7 @@ import { PayrollModule } from './payroll/payroll.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     BullModule.forRootAsync({
       inject: [ConfigService],
@@ -105,11 +108,13 @@ import { PayrollModule } from './payroll/payroll.module';
     AttendanceModule,
     LeaveModule,
     InventoryModule,
+    BranchFinanceModule,
     SalonBookingModule,
     ProductSaleModule,
     ProductSaleModule,
     SupplierModule,
     PayrollModule,
+    BranchFinanceModule,
     
   ],
   controllers: [AppController],

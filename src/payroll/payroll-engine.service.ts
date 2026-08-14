@@ -78,13 +78,23 @@ export class PayrollEngineService {
             const priorPayslip = await this.prisma.payslip.findFirst({ where: { staffId: staff.id } });
             const isFirstMonth = !priorPayslip;
 
-            const [lateAgg, absentCount, commissionAgg, adjustments] = await Promise.all([
+            const [lateAgg, absentCount, approvedExtraWorkDayCount, commissionAgg, adjustments] = await Promise.all([
                 this.prisma.attendanceRecord.aggregate({
                     where: { staffId: staff.id, date: { gte: period.periodStart, lte: period.periodEnd } },
                     _sum: { latePenaltyAmount: true },
                 }),
                 this.prisma.attendanceRecord.count({
                     where: { staffId: staff.id, date: { gte: period.periodStart, lte: period.periodEnd }, status: 'ABSENT' },
+                }),
+                // HCS v1.0 Part B, Phase 3 — only APPROVED extra work days count; still-pending
+                // or rejected ones earn nothing until (or unless) approved.
+                this.prisma.attendanceRecord.count({
+                    where: {
+                        staffId: staff.id,
+                        date: { gte: period.periodStart, lte: period.periodEnd },
+                        status: 'EXTRA_WORK_DAY_PENDING',
+                        extraWorkDayApproval: 'APPROVED',
+                    },
                 }),
                 this.prisma.salonBookingCommission.aggregate({
                     where: { staffId: staff.id, calculatedAt: { gte: period.periodStart, lte: period.periodEnd } },
@@ -98,6 +108,7 @@ export class PayrollEngineService {
             const latePenaltyDeduction = Number(lateAgg._sum.latePenaltyAmount ?? 0);
             const dailyRate = baseSalary / daysInPeriod;
             const attendanceDeduction = absentCount * dailyRate;
+            const extraWorkDayEarnings = approvedExtraWorkDayCount * dailyRate;
             const commissionEarned = Number(commissionAgg._sum.amount ?? 0);
             const commissionPaid = isFirstMonth && staff.salaryOnlyFirstMonth ? 0 : commissionEarned;
 
@@ -121,7 +132,7 @@ export class PayrollEngineService {
 
             const overtimeAmount = 0; // no overtime-rate tracking exists yet — always 0 until that's built
 
-            const grossPay = baseSalary + allowances + overtimeAmount + commissionPaid + bonusTotal;
+            const grossPay = baseSalary + allowances + overtimeAmount + commissionPaid + bonusTotal + extraWorkDayEarnings;
             const pensionDeduction = (baseSalary + allowances) * pensionRate;
             const taxableIncome = grossPay - pensionDeduction;
             const taxDeduction = calculateMonthlyPaye(taxableIncome);
@@ -141,6 +152,7 @@ export class PayrollEngineService {
                     commissionEarned,
                     commissionPaid,
                     bonusTotal,
+                    extraWorkDayEarnings,
                     attendanceDeduction,
                     latePenaltyDeduction,
                     fineTotal,
@@ -160,6 +172,7 @@ export class PayrollEngineService {
                     commissionEarned,
                     commissionPaid,
                     bonusTotal,
+                    extraWorkDayEarnings,
                     attendanceDeduction,
                     latePenaltyDeduction,
                     fineTotal,

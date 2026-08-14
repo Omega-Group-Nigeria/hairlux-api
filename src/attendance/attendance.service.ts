@@ -1,12 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { AttendanceStatus, LeaveRequestType, Prisma } from '@prisma/client';
 import { LeaveService } from 'src/leave/leave.service';
 import { haversineDistanceMeters } from '../common/utils/geo.util';
+import { watDateAtTime, watTodayDateStr } from '../common/utils/wat-time.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { ClockInDto } from './dto/clock-in.dto';
 import { ClockOutDto } from './dto/clock-out.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
+import { StaffWorkCalendarService } from './staff-work-calendar.service';
 
 function formatDistance(meters: number): string {
     if (meters >= 1000) {
@@ -15,40 +18,37 @@ function formatDistance(meters: number): string {
     return Math.round(meters) + 'm';
 }
 
-/**
- * Nigeria (WAT) is a fixed UTC+1 offset year-round — no daylight saving —
- * so a constant offset is enough here without needing a full timezone
- * database. Centralized because attendance business-hours logic needs to
- * reason in WAT regardless of what timezone the server process itself
- * happens to be running in (commonly UTC in production), and every one of
- * Date's local-timezone-dependent methods (getDay, setHours, the plain
- * Date constructor's local parsing) silently uses the SERVER's zone, not
- * WAT — which is exactly what caused the "closing time" / late-calculation
- * bugs this replaces.
- */
-const WAT_OFFSET_MS = 60 * 60 * 1000;
-
-/** 'YYYY-MM-DD' for "today" as a calendar date in WAT, not the server's own zone. */
-function watTodayDateStr(now: Date): string {
-    return new Date(now.getTime() + WAT_OFFSET_MS).toISOString().slice(0, 10);
-}
-
-/** 0 (Sunday) .. 6 (Saturday), for "today" as a day-of-week in WAT. */
-function watDayOfWeek(now: Date): number {
-    return new Date(now.getTime() + WAT_OFFSET_MS).getUTCDay();
-}
-
-/** Builds a Date for a specific WAT calendar date ('YYYY-MM-DD') + "HH:MM" WAT clock time. */
-function watDateAtTime(dateStr: string, hhmm: string): Date {
-    const [hour, minute] = hhmm.split(':').map(Number);
-    return new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+01:00`);
-}
-
 @Injectable()
 export class AttendanceService {
+    private readonly logger = new Logger(AttendanceService.name);
+
     constructor(private prisma: PrismaService,
-        private leaveService: LeaveService
+        private leaveService: LeaveService,
+        private workCalendarService: StaffWorkCalendarService,
     ) { }
+    /**
+     * Branch-specific exception wins over a company-wide one for the same
+     * date (more specific overrides general) — e.g. one branch closing
+     * early for a local reason while the rest of the company runs
+     * normally. Falls back to the company-wide row (branchId null) when no
+     * branch-specific one exists, matching the original, unscoped behavior.
+     */
+    private async resolveBusinessException(locationId: string, dateStr: string) {
+        const dayStart = new Date(dateStr);
+        const dayEnd = new Date(new Date(dateStr).getTime() + 24 * 60 * 60 * 1000);
+
+        const [branchSpecific, companyWide] = await Promise.all([
+            this.prisma.businessException.findFirst({
+                where: { date: { gte: dayStart, lt: dayEnd }, branchId: locationId },
+            }),
+            this.prisma.businessException.findFirst({
+                where: { date: { gte: dayStart, lt: dayEnd }, branchId: null },
+            }),
+        ]);
+
+        return branchSpecific ?? companyWide;
+    }
+
     async clockIn(staffId: string, dto: ClockInDto) {
         const staff = await this.prisma.staff.findUnique({
             where: { id: staffId },
@@ -81,10 +81,11 @@ export class AttendanceService {
             );
         }
 
-        // Public holiday check — takes priority over the normal late calculation.
-        const holidayException = await this.prisma.businessException.findUnique({
-            where: { date: new Date(today) },
-        });
+        // Public holiday check — a company-wide closure takes priority over
+        // everything, including an individual's own calendar; a
+        // branch-specific closure takes priority over that too, but only
+        // for staff at that branch.
+        const holidayException = await this.resolveBusinessException(staff.locationId, today);
 
         let status: AttendanceStatus = AttendanceStatus.PRESENT;
         let lateMinutes: number | null = null;
@@ -93,16 +94,29 @@ export class AttendanceService {
         if (holidayException?.isClosed) {
             status = AttendanceStatus.PUBLIC_HOLIDAY;
         } else {
-            const businessHours = await this.prisma.businessHours.findUnique({
-                where: { dayOfWeek: watDayOfWeek(now) },
-            });
+            const effectiveDay = await this.workCalendarService.resolveEffectiveDay(staffId, today);
 
-            // An exception can override open/close times without fully closing the day
-            // (e.g. shortened holiday hours) — exception times win when present.
-            const openTime = holidayException?.openTime ?? businessHours?.openTime;
-            const dayIsOpen = holidayException ? !holidayException.isClosed : (businessHours?.isOpen ?? true);
+            // An exception can override the resume time without fully closing the
+            // day (e.g. shortened holiday hours) — exception time wins when present,
+            // over both the global default AND this staff member's own calendar,
+            // since a shortened company holiday applies uniformly to everyone.
+            const openTime = holidayException?.openTime ?? effectiveDay.resumeTime;
 
-            if (dayIsOpen && openTime) {
+            // Whether the business is open at all is still governed by the holiday
+            // exception when one exists; otherwise it comes down to whether THIS
+            // staff member's own calendar has them working today at all — a
+            // half-day still counts as "expected", only a genuine OFF day doesn't.
+            const staffExpectedToday = holidayException
+                ? !holidayException.isClosed
+                : effectiveDay.dayType !== 'OFF';
+
+            if (!staffExpectedToday) {
+                // Clocking in on a day their own calendar says is OFF — this isn't
+                // ordinary attendance and shouldn't be scored as late/on-time at
+                // all (HCS v1.0 Part B, Section 2/4). It's recorded as pending
+                // approval; approving it and folding it into payroll is Phase 3.
+                status = AttendanceStatus.EXTRA_WORK_DAY_PENDING;
+            } else if (openTime) {
                 const scheduledStart = watDateAtTime(today, openTime);
 
                 const graceMinutes = staff.lateGracePeriodOverride ?? staff.location.lateGracePeriodMinutes;
@@ -135,6 +149,7 @@ export class AttendanceService {
                 status,
                 lateMinutes,
                 latePenaltyAmount,
+                ...(status === AttendanceStatus.EXTRA_WORK_DAY_PENDING && { extraWorkDayApproval: 'PENDING' }),
             },
         });
     }
@@ -202,49 +217,53 @@ export class AttendanceService {
 
         const now = new Date();
         const todayStr = record.date.toISOString().slice(0, 10);
-        const holidayException = await this.prisma.businessException.findUnique({
-            where: { date: new Date(todayStr) },
-        });
-        const businessHours = await this.prisma.businessHours.findUnique({
-            where: { dayOfWeek: watDayOfWeek(now) },
-        });
-
-        const closeTime = holidayException?.closeTime ?? businessHours?.closeTime;
-        const dayIsOpen = holidayException ? !holidayException.isClosed : (businessHours?.isOpen ?? true);
 
         let overtimeMinutes: number | null = null;
         let earlyDepartureMinutes: number | null = null;
 
-        if (dayIsOpen && closeTime) {
-            const scheduledEnd = watDateAtTime(todayStr, closeTime);
+        if (record.status === AttendanceStatus.EXTRA_WORK_DAY_PENDING) {
+            // Clocked in on a day their calendar said was OFF — there's no
+            // scheduled closing time to enforce or measure against, so
+            // checkout is unrestricted and no overtime/early-departure figures
+            // apply here either, matching clockIn's "no penalties" treatment.
+        } else {
+            const holidayException = await this.resolveBusinessException(record.locationId, todayStr);
+            const effectiveDay = await this.workCalendarService.resolveEffectiveDay(staffId, todayStr);
 
-            if (now < scheduledEnd) {
-                // Checking out before closing time — only allowed with an approved
-                // early-departure permission covering today, and only from that
-                // permission's approved start time onward.
-                const approvedPermission = await this.leaveService.findApprovedPermissionForToday(
-                    staffId, LeaveRequestType.PERMISSION_EARLY_DEPARTURE, new Date(todayStr),
-                );
+            const closeTime = holidayException?.closeTime ?? effectiveDay.closingTime;
+            const dayIsOpen = holidayException ? !holidayException.isClosed : effectiveDay.dayType !== 'OFF';
 
-                if (!approvedPermission) {
-                    throw new BadRequestException(
-                        `Checkout is not allowed before closing time (${closeTime}) without an approved early departure permission for today`,
+            if (dayIsOpen && closeTime) {
+                const scheduledEnd = watDateAtTime(todayStr, closeTime);
+
+                if (now < scheduledEnd) {
+                    // Checking out before closing time — only allowed with an approved
+                    // early-departure permission covering today, and only from that
+                    // permission's approved start time onward.
+                    const approvedPermission = await this.leaveService.findApprovedPermissionForToday(
+                        staffId, LeaveRequestType.PERMISSION_EARLY_DEPARTURE, new Date(todayStr),
                     );
-                }
 
-                if (approvedPermission.startTime) {
-                    const permittedFrom = watDateAtTime(todayStr, approvedPermission.startTime);
-
-                    if (now < permittedFrom) {
+                    if (!approvedPermission) {
                         throw new BadRequestException(
-                            `Your approved early departure is not until ${approvedPermission.startTime}`,
+                            `Checkout is not allowed before closing time (${closeTime}) without an approved early departure permission for today`,
                         );
                     }
-                }
 
-                earlyDepartureMinutes = Math.round((scheduledEnd.getTime() - now.getTime()) / 60000);
-            } else if (now > scheduledEnd) {
-                overtimeMinutes = Math.round((now.getTime() - scheduledEnd.getTime()) / 60000);
+                    if (approvedPermission.startTime) {
+                        const permittedFrom = watDateAtTime(todayStr, approvedPermission.startTime);
+
+                        if (now < permittedFrom) {
+                            throw new BadRequestException(
+                                `Your approved early departure is not until ${approvedPermission.startTime}`,
+                            );
+                        }
+                    }
+
+                    earlyDepartureMinutes = Math.round((scheduledEnd.getTime() - now.getTime()) / 60000);
+                } else if (now > scheduledEnd) {
+                    overtimeMinutes = Math.round((now.getTime() - scheduledEnd.getTime()) / 60000);
+                }
             }
         }
 
@@ -307,6 +326,7 @@ export class AttendanceService {
                 ...(dto.checkOutAt !== undefined && { checkOutAt: new Date(dto.checkOutAt) }),
                 ...(dto.status !== undefined && { status: dto.status }),
                 isManuallyAdjusted: true,
+                adjustmentReasonCategory: dto.reasonCategory,
                 adjustmentReason: dto.reason,
                 adjustedById,
             },
@@ -328,12 +348,121 @@ export class AttendanceService {
                 staffId,
                 locationId: dto.locationId,
                 date: new Date(dto.date),
-                checkInAt: dto.checkInAt ? new Date(dto.checkInAt) : new Date(dto.date),
+                checkInAt: dto.checkInAt
+                    ? new Date(dto.checkInAt)
+                    : (dto.status === AttendanceStatus.ABSENT ? null : new Date(dto.date)),
                 checkOutAt: dto.checkOutAt ? new Date(dto.checkOutAt) : null,
                 status: dto.status ?? AttendanceStatus.PRESENT,
                 isManuallyAdjusted: true,
+                adjustmentReasonCategory: dto.reasonCategory,
                 adjustmentReason: dto.reason,
                 adjustedById,
+            },
+        });
+    }
+
+    /**
+     * Runs once daily, shortly after midnight WAT, to mark ABSENT any
+     * active staff member who was expected to work yesterday (per their
+     * own calendar) and simply never clocked in — closing the gap this
+     * system otherwise had: nothing else ever sets ABSENT automatically,
+     * so without this a no-show just leaves no record at all, and the
+     * monthly summary's derived absence figure is the only place it ever
+     * surfaced. Runs on yesterday specifically (never today) so a person
+     * who's simply running late is never caught mid-day — the day has to
+     * be fully over first. Idempotent: a staff member who already has any
+     * record for that date (clocked in, or already manually handled) is
+     * left alone entirely.
+     */
+    @Cron('30 0 * * *', { timeZone: 'Africa/Lagos' })
+    async markAbsencesForYesterday() {
+        const yesterday = watTodayDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+        const activeStaff = await this.prisma.staff.findMany({
+            where: { employmentStatus: 'ACTIVE' },
+            select: { id: true, locationId: true },
+        });
+
+        let marked = 0;
+        for (const staff of activeStaff) {
+            const existing = await this.prisma.attendanceRecord.findUnique({
+                where: { staffId_date: { staffId: staff.id, date: new Date(yesterday) } },
+            });
+            if (existing) continue; // already accounted for, one way or another
+
+            const effectiveDay = await this.workCalendarService.resolveEffectiveDay(staff.id, yesterday);
+            if (effectiveDay.dayType === 'OFF') continue; // not expected to work at all
+
+            const holidayException = await this.resolveBusinessException(staff.locationId, yesterday);
+            if (holidayException?.isClosed) continue; // business/branch was closed — not their fault
+
+            const onApprovedLeave = await this.prisma.leaveRequest.findFirst({
+                where: {
+                    staffId: staff.id,
+                    status: 'APPROVED',
+                    type: { in: [LeaveRequestType.ANNUAL_LEAVE, LeaveRequestType.SICK_LEAVE, LeaveRequestType.CASUAL_LEAVE, LeaveRequestType.DAY_OFF] },
+                    startDate: { lte: new Date(yesterday) },
+                    endDate: { gte: new Date(yesterday) },
+                },
+            });
+            if (onApprovedLeave) continue;
+
+            await this.prisma.attendanceRecord.create({
+                data: {
+                    staffId: staff.id,
+                    locationId: staff.locationId,
+                    date: new Date(yesterday),
+                    checkInAt: null,
+                    status: AttendanceStatus.ABSENT,
+                },
+            });
+            marked += 1;
+        }
+
+        if (marked > 0) {
+            this.logger.log(`Auto-marked ${marked} staff member(s) absent for ${yesterday}`);
+        }
+    }
+
+    /** HCS v1.0 Part B, Phase 3 — extra work days awaiting an approve/reject decision. */
+    async getExtraWorkDayQueue(params: { branchId?: string; staffId?: string; status?: 'PENDING' | 'APPROVED' | 'REJECTED' }) {
+        return this.prisma.attendanceRecord.findMany({
+            where: {
+                status: AttendanceStatus.EXTRA_WORK_DAY_PENDING,
+                extraWorkDayApproval: params.status ?? 'PENDING',
+                ...(params.branchId && { locationId: params.branchId }),
+                ...(params.staffId && { staffId: params.staffId }),
+            },
+            include: {
+                staff: { select: { id: true, name: true, locationId: true } },
+                extraWorkDayDecidedBy: { select: { id: true, firstName: true, lastName: true } },
+            },
+            orderBy: { date: 'desc' },
+        });
+    }
+
+    async decideExtraWorkDay(recordId: string, decidedById: string, approve: boolean, note?: string) {
+        const record = await this.prisma.attendanceRecord.findUnique({ where: { id: recordId } });
+        if (!record) {
+            throw new NotFoundException('Attendance record not found');
+        }
+        if (record.status !== AttendanceStatus.EXTRA_WORK_DAY_PENDING) {
+            throw new BadRequestException('This attendance record is not an extra work day');
+        }
+        if (record.extraWorkDayApproval !== 'PENDING') {
+            throw new BadRequestException(`This extra work day has already been ${record.extraWorkDayApproval?.toLowerCase()}`);
+        }
+        if (!approve && !note) {
+            throw new BadRequestException('A reason is required when rejecting an extra work day');
+        }
+
+        return this.prisma.attendanceRecord.update({
+            where: { id: recordId },
+            data: {
+                extraWorkDayApproval: approve ? 'APPROVED' : 'REJECTED',
+                extraWorkDayDecidedById: decidedById,
+                extraWorkDayDecidedAt: new Date(),
+                extraWorkDayNote: note,
             },
         });
     }

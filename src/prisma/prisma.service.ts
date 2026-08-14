@@ -392,6 +392,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.jobPostingBranch;
   }
 
+  get dailyCashReconciliation() {
+    return this.client.dailyCashReconciliation;
+  }
+
+  get staffWorkCalendar() {
+    return this.client.staffWorkCalendar;
+  }
+
+  get customerValueSettings() {
+    return this.client.customerValueSettings;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }

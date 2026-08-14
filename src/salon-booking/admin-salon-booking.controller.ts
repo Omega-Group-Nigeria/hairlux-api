@@ -11,7 +11,9 @@ import { ConfirmReservationDto } from './dto/confirm-reservation.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
 import { VerifyReservationDto } from './dto/verify-reservation.dto';
+import { EditSalonBookingDto, AddServiceToCompletedBookingDto } from './dto/edit-salon-booking.dto';
 import { SalonBookingService } from './salon-booking.service';
+import type { CustomerLifecycle, CustomerValue } from '../common/utils/customer-status.util';
 
 @ApiTags('Admin - Salon Bookings')
 @ApiBearerAuth('JWT-auth')
@@ -73,30 +75,110 @@ export class AdminSalonBookingController {
     }
 
     @Get('customers')
-    @ApiOperation({ summary: 'Full paginated Customer Contacts list (Contacts module) — searchable and filterable by branch, date range, account status, minimum bookings, and minimum spend' })
+    @ApiOperation({ summary: 'Full paginated Customer Contacts list (Contacts module) — searchable and filterable by branch, activity, spending, service, and lifecycle status' })
     async findAllCustomers(
         @Query('q') q?: string,
-        @Query('branchId') branchId?: string,
+        @Query('branchIds') branchIds?: string,
         @Query('dateFrom') dateFrom?: string,
         @Query('dateTo') dateTo?: string,
         @Query('hasAccount') hasAccount?: string,
-        @Query('minBookings') minBookings?: string,
+        @Query('minVisits') minVisits?: string,
+        @Query('maxVisits') maxVisits?: string,
         @Query('minSpend') minSpend?: string,
+        @Query('maxSpend') maxSpend?: string,
+        @Query('minAvgSpend') minAvgSpend?: string,
+        @Query('maxAvgSpend') maxAvgSpend?: string,
+        @Query('firstVisitFrom') firstVisitFrom?: string,
+        @Query('firstVisitTo') firstVisitTo?: string,
+        @Query('lastVisitFrom') lastVisitFrom?: string,
+        @Query('lastVisitTo') lastVisitTo?: string,
+        @Query('daysSinceLastVisitMin') daysSinceLastVisitMin?: string,
+        @Query('daysSinceLastVisitMax') daysSinceLastVisitMax?: string,
+        @Query('lifecycle') lifecycle?: CustomerLifecycle,
+        @Query('value') value?: CustomerValue,
+        @Query('serviceCategoryIds') serviceCategoryIds?: string,
+        @Query('serviceIds') serviceIds?: string,
         @Query('page') page?: string,
         @Query('limit') limit?: string,
     ) {
         const data = await this.salonBookingService.findAllCustomers({
             query: q,
-            branchId,
+            branchIds: branchIds ? branchIds.split(',') : undefined,
             dateFrom,
             dateTo,
             hasAccount: hasAccount === undefined ? undefined : hasAccount === 'true',
-            minBookings: minBookings ? Number(minBookings) : undefined,
+            minVisits: minVisits ? Number(minVisits) : undefined,
+            maxVisits: maxVisits ? Number(maxVisits) : undefined,
             minSpend: minSpend ? Number(minSpend) : undefined,
+            maxSpend: maxSpend ? Number(maxSpend) : undefined,
+            minAvgSpend: minAvgSpend ? Number(minAvgSpend) : undefined,
+            maxAvgSpend: maxAvgSpend ? Number(maxAvgSpend) : undefined,
+            firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+            daysSinceLastVisitMin: daysSinceLastVisitMin ? Number(daysSinceLastVisitMin) : undefined,
+            daysSinceLastVisitMax: daysSinceLastVisitMax ? Number(daysSinceLastVisitMax) : undefined,
+            lifecycle,
+            value,
+            serviceCategoryIds: serviceCategoryIds ? serviceCategoryIds.split(',') : undefined,
+            serviceIds: serviceIds ? serviceIds.split(',') : undefined,
             page: page ? Number(page) : undefined,
             limit: limit ? Number(limit) : undefined,
         });
         return { success: true, message: 'Customers retrieved successfully', data };
+    }
+
+    @Get('customers/performance')
+    @ApiOperation({ summary: 'Performance cards for the Customer Contacts page — computed over the same filters as the customer list, so cards and table always agree' })
+    async getCustomerContactsPerformance(
+        @Query('q') q?: string,
+        @Query('branchIds') branchIds?: string,
+        @Query('dateFrom') dateFrom?: string,
+        @Query('dateTo') dateTo?: string,
+        @Query('hasAccount') hasAccount?: string,
+        @Query('minVisits') minVisits?: string,
+        @Query('maxVisits') maxVisits?: string,
+        @Query('minSpend') minSpend?: string,
+        @Query('maxSpend') maxSpend?: string,
+        @Query('minAvgSpend') minAvgSpend?: string,
+        @Query('maxAvgSpend') maxAvgSpend?: string,
+        @Query('firstVisitFrom') firstVisitFrom?: string,
+        @Query('firstVisitTo') firstVisitTo?: string,
+        @Query('lastVisitFrom') lastVisitFrom?: string,
+        @Query('lastVisitTo') lastVisitTo?: string,
+        @Query('daysSinceLastVisitMin') daysSinceLastVisitMin?: string,
+        @Query('daysSinceLastVisitMax') daysSinceLastVisitMax?: string,
+        @Query('lifecycle') lifecycle?: CustomerLifecycle,
+        @Query('value') value?: CustomerValue,
+        @Query('serviceCategoryIds') serviceCategoryIds?: string,
+        @Query('serviceIds') serviceIds?: string,
+    ) {
+        const data = await this.salonBookingService.getCustomerContactsPerformance({
+            query: q,
+            branchIds: branchIds ? branchIds.split(',') : undefined,
+            dateFrom,
+            dateTo,
+            hasAccount: hasAccount === undefined ? undefined : hasAccount === 'true',
+            minVisits: minVisits ? Number(minVisits) : undefined,
+            maxVisits: maxVisits ? Number(maxVisits) : undefined,
+            minSpend: minSpend ? Number(minSpend) : undefined,
+            maxSpend: maxSpend ? Number(maxSpend) : undefined,
+            minAvgSpend: minAvgSpend ? Number(minAvgSpend) : undefined,
+            maxAvgSpend: maxAvgSpend ? Number(maxAvgSpend) : undefined,
+            firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+            daysSinceLastVisitMin: daysSinceLastVisitMin ? Number(daysSinceLastVisitMin) : undefined,
+            daysSinceLastVisitMax: daysSinceLastVisitMax ? Number(daysSinceLastVisitMax) : undefined,
+            lifecycle,
+            value,
+            serviceCategoryIds: serviceCategoryIds ? serviceCategoryIds.split(',') : undefined,
+            serviceIds: serviceIds ? serviceIds.split(',') : undefined,
+        });
+        return { success: true, message: 'Performance retrieved successfully', data };
+    }
+
+    @Get('customers/:id/profile')
+    @ApiOperation({ summary: "A single customer's full profile and booking history (Customer Contacts drill-down)" })
+    async getCustomerProfile(@Param('id', ParseUUIDPipe) id: string) {
+        const data = await this.salonBookingService.getCustomerProfile(id);
+        return { success: true, message: 'Customer profile retrieved successfully', data };
     }
 
     @Get('customers/search')
@@ -112,6 +194,28 @@ export class AdminSalonBookingController {
     async findOne(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.salonBookingService.findOne(id);
         return { success: true, message: 'Booking retrieved successfully', data };
+    }
+
+    @Patch(':id')
+    @ApiOperation({
+        summary: 'Edit a booking — Scheduled or In Progress only',
+        description: 'Full edit: services, staff, date/time, customer details, notes. Re-validates date/time changes against the same past-date and business-hours-closure rules as creating a new booking. For a Completed booking, use POST :id/add-service instead — existing service lines can never be altered here.',
+    })
+    @ApiParam({ name: 'id' })
+    async editBooking(@Param('id', ParseUUIDPipe) id: string, @Body() dto: EditSalonBookingDto) {
+        const data = await this.salonBookingService.editBooking(id, dto);
+        return { success: true, message: 'Booking updated successfully', data };
+    }
+
+    @Post(':id/add-service')
+    @ApiOperation({
+        summary: 'Add an additional service to a Completed booking',
+        description: 'The only way a Completed booking can change — adds one new service line. Existing service lines on the booking are never altered or removed by this or any other endpoint.',
+    })
+    @ApiParam({ name: 'id' })
+    async addServiceToCompletedBooking(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddServiceToCompletedBookingDto) {
+        const data = await this.salonBookingService.addServiceToCompletedBooking(id, dto);
+        return { success: true, message: 'Service added successfully', data };
     }
 
     @Delete(':id')

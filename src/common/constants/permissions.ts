@@ -71,6 +71,10 @@ export const PERMISSIONS = {
   PAYROLL_READ: 'payroll:read', // View payroll dashboard, periods, payslips, withdrawal history
   PAYROLL_MANAGE: 'payroll:manage', // Set compensation, run payroll, approve periods, toggle Payday, add adjustments, approve bank changes
 
+  // ── Branch Finance (daily summary & cash reconciliation) ─────────────────────
+  BRANCH_FINANCE_READ: 'branch_finance:read', // View the daily financial summary for a branch (bookings, sales, inventory movement)
+  BRANCH_FINANCE_RECONCILE: 'branch_finance:reconcile', // Submit a branch's end-of-day cash count
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
@@ -291,6 +295,13 @@ export const PERMISSION_GROUPS = [
         key: PERMISSIONS.PAYROLL_MANAGE,
         label: 'Set staff compensation, run and approve payroll, toggle Payday, add bonuses/deductions, approve bank account changes',
       },
+    ],
+  },
+  {
+    group: 'Branch Finance',
+    permissions: [
+      { key: PERMISSIONS.BRANCH_FINANCE_READ, label: "View a branch's daily financial summary — booking revenue, product sales, inventory received/transferred" },
+      { key: PERMISSIONS.BRANCH_FINANCE_RECONCILE, label: "Submit a branch's end-of-day cash count" },
     ],
   },
   {

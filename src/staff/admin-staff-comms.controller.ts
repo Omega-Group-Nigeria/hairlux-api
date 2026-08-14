@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Get, UseGuards, Query, Req } from '@nestjs/common';
+import { Body, Controller, Post, Get, Patch, Delete, Param, ParseUUIDPipe, UseGuards, Query, Req } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -14,6 +14,7 @@ import { Permission } from '../auth/decorators/permission.decorator';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { StaffCommsService } from './staff-comms.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
+import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { CreateDirectiveDto } from './dto/create-directive.dto';
 
 @ApiTags('Admin - Staff Comms')
@@ -45,6 +46,26 @@ export class AdminStaffCommsController {
   async createAnnouncement(@Body() dto: CreateAnnouncementDto, @Req() req: any) {
     const data = await this.commsService.createAnnouncement(dto, req.user?.id);
     return { success: true, message: 'Announcement created successfully', data };
+  }
+
+  @Patch('announcements/:id')
+  @ApiOperation({ summary: 'Edit an existing announcement — title, body, audience, or expiry' })
+  @ApiResponse({ status: 200, description: 'Announcement updated successfully' })
+  @ApiResponse({ status: 404, description: 'Announcement, target branch, or target staff member not found' })
+  @Permission(PERMISSIONS.STAFF_UPDATE)
+  async updateAnnouncement(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateAnnouncementDto) {
+    const data = await this.commsService.updateAnnouncement(id, dto);
+    return { success: true, message: 'Announcement updated successfully', data };
+  }
+
+  @Delete('announcements/:id')
+  @ApiOperation({ summary: 'Permanently delete an announcement' })
+  @ApiResponse({ status: 200, description: 'Announcement deleted successfully' })
+  @ApiResponse({ status: 404, description: 'Announcement not found' })
+  @Permission(PERMISSIONS.STAFF_UPDATE)
+  async deleteAnnouncement(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.commsService.deleteAnnouncement(id);
+    return { success: true, message: 'Announcement deleted successfully', data };
   }
 
   @Get('directives')
