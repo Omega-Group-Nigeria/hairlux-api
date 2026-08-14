@@ -123,6 +123,52 @@ export class InventoryService {
         return item;
     }
 
+    /** Full movement history for a single item — receipts, sales, adjustments, transfers in/out. */
+    async getMovementHistory(itemId: string, page = 1, limit = 50) {
+        await this.findOne(itemId); // 404s if the item doesn't exist
+        const skip = (page - 1) * limit;
+
+        const [data, total] = await Promise.all([
+            this.prisma.stockMovement.findMany({
+                where: { itemId },
+                include: { performedBy: { select: { id: true, name: true } } },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit,
+            }),
+            this.prisma.stockMovement.count({ where: { itemId } }),
+        ]);
+
+        return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    }
+
+    /** Movement log across every item, optionally scoped to a branch or movement type — for a global audit view. */
+    async getAllMovements(params: { branchId?: string; type?: string; page?: number; limit?: number }) {
+        const { branchId, type, page = 1, limit = 50 } = params;
+        const skip = (page - 1) * limit;
+
+        const where: Prisma.StockMovementWhereInput = {
+            ...(type && { type: type as StockMovementType }),
+            ...(branchId && { item: { branchId } }),
+        };
+
+        const [data, total] = await Promise.all([
+            this.prisma.stockMovement.findMany({
+                where,
+                include: {
+                    item: { select: { id: true, name: true, branch: { select: { id: true, name: true } } } },
+                    performedBy: { select: { id: true, name: true } },
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit,
+            }),
+            this.prisma.stockMovement.count({ where }),
+        ]);
+
+        return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    }
+
     async receiveGoods(itemId: string, dto: ReceiveGoodsDto, staffId: string) {
         const item = await this.findOne(itemId);
 

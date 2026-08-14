@@ -32,6 +32,7 @@ import { QueryApplicationDto } from './dto/query-application.dto';
 import { RecordInterviewOutcomeDto } from './dto/record-interview-outcome.dto';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto';
+import { QueryRecruitmentReportDto } from './dto/query-recruitment-report.dto';
 
 
 @ApiTags('Admin - Applications')
@@ -59,16 +60,24 @@ export class AdminApplicationController {
 
   @Get('report')
   @ApiOperation({
-    summary: 'Basic recruitment report',
-    description: 'Applicants per role, status breakdown, and average time-to-hire.',
+    summary: 'Basic recruitment report — filterable by date range, role, status, and branch',
+    description: 'Applicants per role, status breakdown, and average time-to-hire — every card computed over the same filtered set, so e.g. role + status together show the actual filtered hired count, not the global total.',
   })
   @ApiResponse({ status: 200, description: 'Recruitment report retrieved successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
   @ApiResponse({ status: 403, description: 'Forbidden - Missing application:read permission' })
   @Permission(PERMISSIONS.APPLICATION_READ)
-  async getRecruitmentReport() {
-    const data = await this.applicationService.getRecruitmentReport();
+  async getRecruitmentReport(@Query() filters: QueryRecruitmentReportDto) {
+    const data = await this.applicationService.getRecruitmentReport(filters);
     return { success: true, message: 'Recruitment report retrieved successfully', data };
+  }
+
+  @Get('report/roles')
+  @ApiOperation({ summary: 'Distinct appliedRole values across all applications — powers the Role filter dropdown' })
+  @Permission(PERMISSIONS.APPLICATION_READ)
+  async getDistinctAppliedRoles() {
+    const data = await this.applicationService.getDistinctAppliedRoles();
+    return { success: true, message: 'Roles retrieved successfully', data };
   }
 
   @Get(':id')

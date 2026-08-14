@@ -24,6 +24,7 @@ import { RecordInterviewOutcomeDto } from './dto/record-interview-outcome.dto';
 import { OfferResponseAction, RespondToOfferDto } from './dto/respond-to-offer.dto';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto';
+import { QueryRecruitmentReportDto } from './dto/query-recruitment-report.dto';
 
 const TTL = 300;
 
@@ -732,8 +733,29 @@ export class ApplicationService {
      * that this is simpler than adding groupBy typing to the model delegate,
      * and keeps this consistent with the "basic" scope the brief asked for.
      */
-  async getRecruitmentReport() {
+  /**
+   * Every card and breakdown (Total Applicants, Hired, Avg Time to Hire,
+   * By Role, By Status) is computed from the SAME filtered set — never
+   * independently — so e.g. Role=Stylist + Status=Employed shows the
+   * actual Stylists-hired count, not the global hired total across every
+   * role. Admins never see DRAFT applications here either, matching
+   * findAllForAdmin's convention, regardless of which filters are applied.
+   */
+  async getRecruitmentReport(filters: QueryRecruitmentReportDto = {}) {
+    const where: Record<string, unknown> = { status: { not: ApplicationStatus.DRAFT } };
+
+    if (filters.status) where.status = filters.status;
+    if (filters.appliedRole) where.appliedRole = filters.appliedRole;
+    if (filters.preferredLocationId) where.preferredLocationId = filters.preferredLocationId;
+    if (filters.dateFrom || filters.dateTo) {
+      where.createdAt = {
+        ...(filters.dateFrom && { gte: new Date(filters.dateFrom) }),
+        ...(filters.dateTo && { lte: new Date(`${filters.dateTo}T23:59:59`) }),
+      };
+    }
+
     const applications = await this.applicationModel.findMany({
+      where,
       select: {
         appliedRole: true,
         status: true,
@@ -745,6 +767,7 @@ export class ApplicationService {
     const byRoleMap = new Map<string, number>();
     const byStatusMap = new Map<string, number>();
     const hireDurationsDays: number[] = [];
+    let hiredInSet = 0;
 
     for (const app of applications as unknown as Array<{
       appliedRole: string | null;
@@ -756,9 +779,12 @@ export class ApplicationService {
       byRoleMap.set(role, (byRoleMap.get(role) ?? 0) + 1);
       byStatusMap.set(app.status, (byStatusMap.get(app.status) ?? 0) + 1);
 
-      if (app.status === 'EMPLOYED' && app.employedAt) {
-        const days = (new Date(app.employedAt).getTime() - new Date(app.createdAt).getTime()) / 86400000;
-        if (days >= 0) hireDurationsDays.push(days);
+      if (app.status === 'EMPLOYED') {
+        hiredInSet += 1;
+        if (app.employedAt) {
+          const days = (new Date(app.employedAt).getTime() - new Date(app.createdAt).getTime()) / 86400000;
+          if (days >= 0) hireDurationsDays.push(days);
+        }
       }
     }
 
@@ -775,8 +801,24 @@ export class ApplicationService {
         .map(([status, count]) => ({ status, count }))
         .sort((a, b) => b.count - a.count),
       averageTimeToHireDays,
-      hiredCount: hireDurationsDays.length,
+      // Total EMPLOYED applications within the filtered set — not the
+      // "count of durations we could compute" (hireDurationsDays.length),
+      // which silently undercounts anyone missing a valid employedAt.
+      hiredCount: hiredInSet,
     };
+  }
+
+  /** Distinct appliedRole values across every non-draft application — powers the Role filter dropdown, unaffected by whatever filters are currently applied so the option list never shrinks based on the user's own selection. */
+  async getDistinctAppliedRoles(): Promise<string[]> {
+    const rows = await this.applicationModel.findMany({
+      where: { status: { not: ApplicationStatus.DRAFT }, appliedRole: { not: null } } as unknown as QueryArgs,
+      select: { appliedRole: true } as unknown as QueryArgs,
+      distinct: ['appliedRole'],
+    } as unknown as QueryArgs);
+    return (rows as unknown as Array<{ appliedRole: string | null }>)
+      .map((r) => r.appliedRole)
+      .filter((r): r is string => !!r)
+      .sort();
   }
 
   private async sanitize(application: ApplicationRecord) {

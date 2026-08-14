@@ -162,6 +162,31 @@ export class AdminInventoryController {
         return { success: true, message: 'Stock adjusted successfully', data };
     }
 
+    @Get('movements/all')
+    @ApiOperation({ summary: 'Full stock movement log across every item — receipts, sales, adjustments, transfers — optionally filtered by branch or type' })
+    async getAllMovements(
+        @Query('branchId') branchId?: string,
+        @Query('type') type?: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+    ) {
+        const data = await this.inventoryService.getAllMovements({
+            branchId,
+            type,
+            page: page ? Number(page) : undefined,
+            limit: limit ? Number(limit) : undefined,
+        });
+        return { success: true, message: 'Movement log retrieved successfully', data };
+    }
+
+    @Get(':id/movements')
+    @ApiOperation({ summary: 'Full movement history for a single item — receipts, sales, adjustments, transfers in/out' })
+    @ApiParam({ name: 'id' })
+    async getItemMovements(@Param('id', ParseUUIDPipe) id: string, @Query('page') page?: string, @Query('limit') limit?: string) {
+        const data = await this.inventoryService.getMovementHistory(id, page ? Number(page) : undefined, limit ? Number(limit) : undefined);
+        return { success: true, message: 'Movement history retrieved successfully', data };
+    }
+
     @Get(':id')
     @ApiOperation({ summary: 'Get a single inventory item' })
     @ApiParam({ name: 'id' })

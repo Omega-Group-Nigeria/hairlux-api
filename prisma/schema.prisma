@@ -22,6 +22,15 @@ enum UserStatus {
   INACTIVE
 }
 
+// HCS CRM & Retention Engine — Customer Source per spec (only 3 acquisition
+// sources: WEB, APP, WALK-IN). Applies to User.signupSource for Web/App
+// signups specifically; a walk-in has no User.signupSource value at all
+// (its source is implicit — it's a Customer record, not tracked here).
+enum CustomerSignupSource {
+  WEB
+  APP
+}
+
 enum MatchingExhaustedReason {
   NO_BEAUTICIANS_ONLINE
   NO_CANDIDATES_IN_AREA
@@ -260,6 +269,24 @@ enum JobPostingStatus {
   ARCHIVED
 }
 
+enum StaffWorkDayType {
+  WORKING
+  OFF
+  HALF_DAY
+}
+
+// HCS v1.0 Part B, Phase 4 — fixed categories for attendance corrections,
+// replacing free-text-only reasons so overrides are consistent and
+// reportable rather than whatever an admin happens to type.
+enum AttendanceOverrideReason {
+  OFFICIAL_ASSIGNMENT
+  BUSINESS_TRAVEL
+  TRAINING
+  DEVICE_FINGERPRINT_FAILURE
+  APPROVED_MANUAL_ATTENDANCE
+  OTHER
+}
+
 enum AttendanceStatus {
   PRESENT
   LATE
@@ -267,6 +294,7 @@ enum AttendanceStatus {
   ON_LEAVE
   APPROVED_PERMISSION
   PUBLIC_HOLIDAY
+  EXTRA_WORK_DAY_PENDING
 }
 
 enum LeaveRequestType {
@@ -455,6 +483,11 @@ model User {
   dateOfBirth      DateTime?  @map("date_of_birth") @db.Date
   role             UserRole   @default(USER)
   status           UserStatus @default(ACTIVE)
+  // Nullable — only meaningful for role=USER (Web/App customers); existing
+  // rows created before this field existed have no known value. Null does
+  // NOT mean walk-in; walk-ins are Customer records, not User records with
+  // this field unset.
+  signupSource     CustomerSignupSource? @map("signup_source")
   emailVerified    Boolean    @default(false) @map("email_verified")
   otpCode          String?    @map("otp_code")
   otpExpiry        DateTime?  @map("otp_expiry")
@@ -496,6 +529,7 @@ model User {
   offerLettersGenerated      OfferLetter[]               @relation("OfferLetterGeneratedBy")
   employmentApprovalsGranted EmploymentApproval[]        @relation("EmploymentApprovalApprovedBy")
   attendanceCorrections      AttendanceRecord[]          @relation("AttendanceAdjustedBy")
+  extraWorkDayDecisions      AttendanceRecord[]          @relation("AttendanceExtraWorkDayDecidedBy")
   beauticianServicesAssigned BeauticianService[]         @relation("BeauticianServiceAssignedBy")
   profileReviewsPerformed    BeauticianProfile[]         @relation("ProfileReviewedBy")
   payoutRequests             PayoutRequest[]             @relation("UserPayoutRequests")
@@ -807,7 +841,8 @@ model Booking {
 // and assigns an on-site Stylist. This is the SRS's Sales & Bookings module.
 
 model SalonBooking {
-  id              String             @id @default(uuid())
+  id                String              @id @default(uuid())
+  bookingNumber     Int                 @default(autoincrement()) @map("booking_number") // Display as "HLB-" + zero-padded (e.g. HLB-001057) at the API/frontend layer — the raw integer here is what's actually unique/sequential
   branchId        String             @map("branch_id")
   customerId      String?            @map("customer_id")
   customerName    String             @map("customer_name")
@@ -952,6 +987,19 @@ model Review {
   @@map("reviews")
 }
 
+// HCS CRM & Retention Engine — VIP/Premium spend thresholds must be
+// admin-configurable, not hard-coded, per spec. Single-row settings table,
+// same pattern as BusinessSettings.
+model CustomerValueSettings {
+  id                    String   @id @default(uuid())
+  premiumSpendThreshold Decimal  @default(50000) @map("premium_spend_threshold") @db.Decimal(10, 2)
+  vipSpendThreshold     Decimal  @default(200000) @map("vip_spend_threshold") @db.Decimal(10, 2)
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  updatedById           String?  @map("updated_by_id")
+
+  @@map("customer_value_settings")
+}
+
 model BusinessSettings {
   id                 String   @id @default(uuid())
   businessName       String   @map("business_name")
@@ -982,9 +1030,17 @@ model BusinessHours {
   @@map("business_hours")
 }
 
+// HCS v1.0 Part B, Phase 4 — branchId null means company-wide (the original
+// behavior, unchanged); a set branchId scopes the exception to just that
+// branch. No DB-level unique constraint on (date, branchId): Postgres
+// treats NULL as distinct in unique indexes, so it can't correctly express
+// "one company-wide row per date" — that's enforced in application code
+// instead (see AvailabilityService.createBusinessException), scoped
+// separately per branchId value.
 model BusinessException {
   id        String   @id @default(uuid())
-  date      DateTime @unique // Specific calendar date
+  date      DateTime // Specific calendar date
+  branchId  String?  @map("branch_id")
   isClosed  Boolean  @default(true) @map("is_closed")
   openTime  String?  @map("open_time") // Override open time (only if not closed)
   closeTime String?  @map("close_time") // Override close time (only if not closed)
@@ -992,6 +1048,10 @@ model BusinessException {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  branch StaffLocation? @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([date])
+  @@index([branchId, date])
   @@map("business_exceptions")
 }
 
@@ -1196,10 +1256,10 @@ model AdminRole {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  permissions    AdminRolePermission[]
-  users          User[]
-  additionalUsers UserAdminRole[]        @relation("UserAdminRoleRole")
-  auditLogs      RoleAuditLog[]
+  permissions     AdminRolePermission[]
+  users           User[]
+  additionalUsers UserAdminRole[]       @relation("UserAdminRoleRole")
+  auditLogs       RoleAuditLog[]
 
   @@map("admin_roles")
 }
@@ -1222,11 +1282,11 @@ model AdminRolePermission {
 // need to break. Effective permissions are the union of the primary role's
 // permissions plus every active role in this table.
 model UserAdminRole {
-  id           String    @id @default(uuid())
-  userId       String    @map("user_id")
-  adminRoleId  String    @map("admin_role_id")
-  assignedAt   DateTime  @default(now()) @map("assigned_at")
-  assignedById String?   @map("assigned_by_id")
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  adminRoleId  String   @map("admin_role_id")
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+  assignedById String?  @map("assigned_by_id")
 
   user       User      @relation("UserAdminRoles", fields: [userId], references: [id], onDelete: Cascade)
   adminRole  AdminRole @relation("UserAdminRoleRole", fields: [adminRoleId], references: [id], onDelete: Cascade)
@@ -1252,15 +1312,15 @@ enum RoleAuditAction {
 // action type. adminRoleId is nullable so a record survives the role
 // itself being deleted later (SetNull, not Cascade).
 model RoleAuditLog {
-  id          String           @id @default(uuid())
-  action      RoleAuditAction
-  adminRoleId String?          @map("admin_role_id")
-  roleName    String           @map("role_name") // snapshot — survives role deletion or rename
+  id           String          @id @default(uuid())
+  action       RoleAuditAction
+  adminRoleId  String?         @map("admin_role_id")
+  roleName     String          @map("role_name") // snapshot — survives role deletion or rename
   targetUserId String?         @map("target_user_id") // set for USER_ROLE_* actions
-  actorId     String?          @map("actor_id") // nullable — a system/seed action has no human actor
-  before      Json?
-  after       Json?
-  createdAt   DateTime         @default(now()) @map("created_at")
+  actorId      String?         @map("actor_id") // nullable — a system/seed action has no human actor
+  before       Json?
+  after        Json?
+  createdAt    DateTime        @default(now()) @map("created_at")
 
   adminRole  AdminRole? @relation(fields: [adminRoleId], references: [id], onDelete: SetNull)
   targetUser User?      @relation("RoleAuditTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
@@ -1292,9 +1352,9 @@ model JobPosting {
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
 
-  branch       StaffLocation? @relation("JobPostingPrimaryBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  branch       StaffLocation?     @relation("JobPostingPrimaryBranch", fields: [branchId], references: [id], onDelete: SetNull)
   branches     JobPostingBranch[]
-  applications Application[]  @relation("ApplicationJobPosting")
+  applications Application[]      @relation("ApplicationJobPosting")
   offerLetters OfferLetter[]
 
   @@index([status])
@@ -1307,18 +1367,19 @@ model JobPosting {
 // with existing data and queries, but new postings created via the admin
 // form populate this table instead, supporting more than one branch.
 model JobPostingBranch {
-  id           String      @id @default(uuid())
-  jobPostingId String      @map("job_posting_id")
-  branchId     String      @map("branch_id")
+  id           String @id @default(uuid())
+  jobPostingId String @map("job_posting_id")
+  branchId     String @map("branch_id")
 
-  jobPosting JobPosting     @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
-  branch     StaffLocation  @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  jobPosting JobPosting    @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  branch     StaffLocation @relation(fields: [branchId], references: [id], onDelete: Cascade)
 
   @@unique([jobPostingId, branchId])
   @@index([jobPostingId])
   @@index([branchId])
   @@map("job_posting_branches")
 }
+
 model Staff {
   id                      String                @id @default(uuid())
   userId                  String?               @unique @map("user_id")
@@ -1397,13 +1458,15 @@ model Staff {
   referencePhone        String? @map("reference_phone")
   referenceRelationship String? @map("reference_relationship")
 
-  inventoryMovements      StockMovement[]
-  llowStockAlertsResolved LowStockAlert[]
-  expiryAlertsResolved    ExpiryAlert[]
-  transfersRequested      StockTransfer[] @relation("TransferRequestedBy")
-  transfersApproved       StockTransfer[] @relation("TransferApprovedBy")
-  productSales            ProductSale[]
-  bookingsAsInHouseStaff  Booking[]       @relation("BookingAssignedInHouseStaff")
+  inventoryMovements       StockMovement[]
+  dailyCashReconciliations DailyCashReconciliation[]
+  workCalendar             StaffWorkCalendar[]
+  llowStockAlertsResolved  LowStockAlert[]
+  expiryAlertsResolved     ExpiryAlert[]
+  transfersRequested       StockTransfer[]           @relation("TransferRequestedBy")
+  transfersApproved        StockTransfer[]           @relation("TransferApprovedBy")
+  productSales             ProductSale[]
+  bookingsAsInHouseStaff   Booking[]                 @relation("BookingAssignedInHouseStaff")
 
   bankAccount             StaffBankAccount?
   compensationHistory     StaffCompensationHistory[] @relation("StaffCompensationHistory")
@@ -1590,12 +1653,13 @@ model Payslip {
   payrollPeriodId String @map("payroll_period_id")
   staffId         String @map("staff_id")
 
-  baseSalary       Decimal @map("base_salary") @db.Decimal(10, 2)
-  allowances       Decimal @default(0) @db.Decimal(10, 2)
-  overtimeAmount   Decimal @default(0) @map("overtime_amount") @db.Decimal(10, 2)
-  commissionEarned Decimal @default(0) @map("commission_earned") @db.Decimal(10, 2)
-  commissionPaid   Decimal @default(0) @map("commission_paid") @db.Decimal(10, 2) // 0 in the first month per policy — earned and recorded, not paid
-  bonusTotal       Decimal @default(0) @map("bonus_total") @db.Decimal(10, 2)
+  baseSalary           Decimal @map("base_salary") @db.Decimal(10, 2)
+  allowances           Decimal @default(0) @db.Decimal(10, 2)
+  overtimeAmount       Decimal @default(0) @map("overtime_amount") @db.Decimal(10, 2)
+  commissionEarned     Decimal @default(0) @map("commission_earned") @db.Decimal(10, 2)
+  commissionPaid       Decimal @default(0) @map("commission_paid") @db.Decimal(10, 2) // 0 in the first month per policy — earned and recorded, not paid
+  bonusTotal           Decimal @default(0) @map("bonus_total") @db.Decimal(10, 2)
+  extraWorkDayEarnings Decimal @default(0) @map("extra_work_day_earnings") @db.Decimal(10, 2) // approved-only (HCS v1.0 Part B, Phase 3) — daily rate × count of approved Extra Work Days this period
 
   attendanceDeduction  Decimal @default(0) @map("attendance_deduction") @db.Decimal(10, 2)
   latePenaltyDeduction Decimal @default(0) @map("late_penalty_deduction") @db.Decimal(10, 2)
@@ -1761,14 +1825,16 @@ model StaffLocation {
   managerId String? @unique @map("manager_id")
   manager   Staff?  @relation("BranchManager", fields: [managerId], references: [id], onDelete: SetNull)
 
-  staff                 Staff[]
-  histories             StaffEmploymentHistory[]
-  codeHistory           StaffCodeHistory[]
-  branchServices        BranchService[]
-  interviewApplications Application[]            @relation("ApplicationInterviewLocation")
-  jobPostings           JobPosting[]             @relation("JobPostingPrimaryBranch")
-  jobPostingBranches    JobPostingBranch[]
-  offerLetters          OfferLetter[]            @relation("OfferLetterBranch")
+  staff                    Staff[]
+  histories                StaffEmploymentHistory[]
+  codeHistory              StaffCodeHistory[]
+  branchServices           BranchService[]
+  interviewApplications    Application[]             @relation("ApplicationInterviewLocation")
+  jobPostings              JobPosting[]              @relation("JobPostingPrimaryBranch")
+  jobPostingBranches       JobPostingBranch[]
+  dailyCashReconciliations DailyCashReconciliation[]
+  businessExceptions       BusinessException[]
+  offerLetters             OfferLetter[]             @relation("OfferLetterBranch")
 
   bookings              Booking[]
   targetedAnnouncements Announcement[]
@@ -1904,6 +1970,7 @@ model Announcement {
   expiresAt        DateTime?          @map("expires_at")
   createdById      String?            @map("created_by_id")
   createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
 
   targetLocation StaffLocation?     @relation(fields: [targetLocationId], references: [id], onDelete: Cascade)
   targetStaff    Staff?             @relation("AnnouncementTargetStaff", fields: [targetStaffId], references: [id], onDelete: Cascade)
@@ -1950,12 +2017,51 @@ model Directive {
   @@map("directives")
 }
 
+// One row per (staff, day-of-week) — an employee's own weekly work
+// pattern, replacing reliance on the single global BusinessHours for
+// attendance decisions (HCS v1.0 Part B, Section 1). A day not present in
+// this table for a given staff member is treated as WORKING using the
+// company's own BusinessHours for that day, so a brand-new staff member
+// with nothing configured yet still behaves sensibly by default.
+model StaffWorkCalendar {
+  id          String           @id @default(uuid())
+  staffId     String           @map("staff_id")
+  dayOfWeek   Int              @map("day_of_week") // 0=Sunday ... 6=Saturday
+  dayType     StaffWorkDayType @default(WORKING) @map("day_type")
+  resumeTime  String?          @map("resume_time") // "HH:mm" — null when dayType is OFF
+  closingTime String?          @map("closing_time") // "HH:mm" — null when dayType is OFF
+
+  // "Alternate Saturdays" and similar biweekly patterns: when set, dayType
+  // above only applies on weeks matching activeWeekParity (ISO week number
+  // parity — 0 or 1); the opposite weeks use alternateDayType instead
+  // (typically OFF), so "working every other Saturday" is expressed
+  // without needing a second row or a separate table.
+  alternatesBiweekly Boolean           @default(false) @map("alternates_biweekly")
+  activeWeekParity   Int?              @map("active_week_parity")
+  alternateDayType   StaffWorkDayType? @map("alternate_day_type")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  staff Staff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, dayOfWeek])
+  @@index([staffId])
+  @@map("staff_work_calendars")
+}
+
+enum ExtraWorkDayApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model AttendanceRecord {
   id         String    @id @default(uuid())
   staffId    String    @map("staff_id")
   locationId String    @map("location_id")
   date       DateTime  @db.Date
-  checkInAt  DateTime  @map("check_in_at")
+  checkInAt  DateTime? @map("check_in_at")
   checkOutAt DateTime? @map("check_out_at")
 
   checkInLat  Decimal? @map("check_in_lat") @db.Decimal(10, 7)
@@ -1969,18 +2075,32 @@ model AttendanceRecord {
   overtimeMinutes       Int?             @map("overtime_minutes")
   earlyDepartureMinutes Int?             @map("early_departure_minutes")
 
-  isManuallyAdjusted Boolean @default(false) @map("is_manually_adjusted")
-  adjustmentReason   String? @map("adjustment_reason")
-  adjustedById       String? @map("adjusted_by_id")
+  isManuallyAdjusted       Boolean                   @default(false) @map("is_manually_adjusted")
+  adjustmentReasonCategory AttendanceOverrideReason? @map("adjustment_reason_category")
+  adjustmentReason         String?                   @map("adjustment_reason") // free-text detail — required when adjustmentReasonCategory is OTHER, optional otherwise
+  adjustedById             String?                   @map("adjusted_by_id")
+
+  // HCS v1.0 Part B, Phase 3 — set only when status is EXTRA_WORK_DAY_PENDING
+  // (a clock-in on a day the staff member's own calendar marks OFF). status
+  // itself stays EXTRA_WORK_DAY_PENDING permanently as the record-type
+  // marker; the approval decision lives here instead, separately, so
+  // approving/rejecting doesn't require inventing more AttendanceStatus
+  // values or reinterpreting what "pending" means once decided.
+  extraWorkDayApproval    ExtraWorkDayApprovalStatus? @map("extra_work_day_approval")
+  extraWorkDayDecidedById String?                     @map("extra_work_day_decided_by_id")
+  extraWorkDayDecidedAt   DateTime?                   @map("extra_work_day_decided_at")
+  extraWorkDayNote        String?                     @map("extra_work_day_note") // admin's reason, especially for a rejection
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  staff      Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  location   StaffLocation @relation(fields: [locationId], references: [id])
-  adjustedBy User?         @relation("AttendanceAdjustedBy", fields: [adjustedById], references: [id], onDelete: SetNull)
+  staff                 Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  location              StaffLocation @relation(fields: [locationId], references: [id])
+  adjustedBy            User?         @relation("AttendanceAdjustedBy", fields: [adjustedById], references: [id], onDelete: SetNull)
+  extraWorkDayDecidedBy User?         @relation("AttendanceExtraWorkDayDecidedBy", fields: [extraWorkDayDecidedById], references: [id], onDelete: SetNull)
 
   @@unique([staffId, date])
   @@index([locationId, date])
+  @@index([status, extraWorkDayApproval])
   @@map("attendance_records")
 }
 
@@ -2478,6 +2598,38 @@ model ProductSaleItem {
   item InventoryItem @relation(fields: [itemId], references: [id])
 
   @@map("product_sale_items")
+}
+
+// One end-of-day cash count per branch per date. Both revenue figures are
+// snapshotted at submission time rather than recalculated live later, so a
+// past reconciliation stays meaningful even if underlying records are
+// edited afterward.
+//
+// expectedCash excludes wallet-paid customer self-service bookings (money
+// already collected digitally, not physically) — everything else (walk-in
+// SalonBooking, ProductSale, and non-wallet self-service Booking) is
+// treated as cash for now, since neither SalonBooking nor ProductSale
+// record a payment method yet, and MONNIFY/PAYSTACK on Booking aren't a
+// live gateway in this flow yet either. Revisit this once real payment
+// tracking exists across all three.
+model DailyCashReconciliation {
+  id            String   @id @default(uuid())
+  branchId      String   @map("branch_id")
+  date          DateTime @db.Date
+  totalRevenue  Decimal  @map("total_revenue") @db.Decimal(10, 2) // every revenue source, wallet included
+  expectedCash  Decimal  @map("expected_cash") @db.Decimal(10, 2) // totalRevenue minus wallet-paid bookings
+  cashCounted   Decimal  @map("cash_counted") @db.Decimal(10, 2)
+  variance      Decimal  @db.Decimal(10, 2) // cashCounted - expectedCash
+  notes         String?
+  submittedById String?  @map("submitted_by_id")
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+
+  branch      StaffLocation @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  submittedBy Staff?        @relation(fields: [submittedById], references: [id], onDelete: SetNull)
+
+  @@unique([branchId, date])
+  @@index([branchId, date])
+  @@map("daily_cash_reconciliations")
 }
 
 model StockMovement {

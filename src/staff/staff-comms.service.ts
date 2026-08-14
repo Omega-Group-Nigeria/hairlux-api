@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnnouncementTargetDto, CreateAnnouncementDto } from './dto/create-announcement.dto';
+import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 import { CreateDirectiveDto } from './dto/create-directive.dto';
+import { sanitizeAnnouncementHtml } from '../common/utils/announcement-sanitize.util';
 
 const DIRECTIVE_STATUS_ORDER = ['PENDING', 'ACKNOWLEDGED', 'COMPLETED'] as const;
 
@@ -49,7 +51,7 @@ export class StaffCommsService {
     return this.announcementModel.create({
       data: {
         title: dto.title,
-        body: dto.body,
+        body: sanitizeAnnouncementHtml(dto.body),
         target: dto.target,
         targetLocationId: dto.target === AnnouncementTargetDto.BRANCH ? dto.targetLocationId : null,
         targetStaffId: dto.target === AnnouncementTargetDto.INDIVIDUAL ? dto.targetStaffId : null,
@@ -57,6 +59,66 @@ export class StaffCommsService {
         createdById: createdById ?? null,
       },
     });
+  }
+
+  /**
+   * Full edit — target, audience, expiry, title, body can all change.
+   * Every field optional; only what's actually sent gets validated and
+   * updated. Re-runs the same targetLocationId/targetStaffId existence
+   * checks createAnnouncement enforces whenever the target actually
+   * changes to something requiring one.
+   */
+  async updateAnnouncement(id: string, dto: UpdateAnnouncementDto) {
+    const existing = await this.announcementModel.findFirst({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Announcement not found');
+    }
+
+    const effectiveTarget = dto.target ?? existing.target;
+
+    if (effectiveTarget === AnnouncementTargetDto.BRANCH) {
+      const targetLocationId = dto.targetLocationId ?? existing.targetLocationId;
+      if (!targetLocationId) {
+        throw new BadRequestException('targetLocationId is required when target is BRANCH');
+      }
+      const location = await this.prisma.staffLocation.findUnique({ where: { id: targetLocationId } });
+      if (!location) {
+        throw new NotFoundException('targetLocationId does not match an existing branch');
+      }
+    }
+    if (effectiveTarget === AnnouncementTargetDto.INDIVIDUAL) {
+      const targetStaffId = dto.targetStaffId ?? existing.targetStaffId;
+      if (!targetStaffId) {
+        throw new BadRequestException('targetStaffId is required when target is INDIVIDUAL');
+      }
+      const staff = await this.staffModel.findFirst({ where: { id: targetStaffId } });
+      if (!staff) {
+        throw new NotFoundException('targetStaffId does not match an existing staff record');
+      }
+    }
+
+    return this.announcementModel.update({
+      where: { id },
+      data: {
+        ...(dto.title !== undefined && { title: dto.title }),
+        ...(dto.body !== undefined && { body: sanitizeAnnouncementHtml(dto.body) }),
+        ...(dto.target !== undefined && { target: dto.target }),
+        ...(dto.target !== undefined && {
+          targetLocationId: dto.target === AnnouncementTargetDto.BRANCH ? (dto.targetLocationId ?? existing.targetLocationId) : null,
+          targetStaffId: dto.target === AnnouncementTargetDto.INDIVIDUAL ? (dto.targetStaffId ?? existing.targetStaffId) : null,
+        }),
+        ...(dto.expiresAt !== undefined && { expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null }),
+      },
+    });
+  }
+
+  async deleteAnnouncement(id: string) {
+    const existing = await this.announcementModel.findFirst({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Announcement not found');
+    }
+    await this.announcementModel.delete({ where: { id } });
+    return { deleted: true, id };
   }
 
   async getAllAnnouncements() {
