@@ -1,17 +1,48 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PayoutMode } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
+  IsString,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
+export class ServiceableAreaDto {
+  @ApiProperty({
+    description:
+      'State name where home service is offered (matched case-insensitively).',
+    example: 'Lagos',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  state: string;
+
+  @ApiProperty({
+    description:
+      'City name where home service is offered, or "*" to allow every city in the state (matched case-insensitively).',
+    example: 'Lagos',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  city: string;
+}
+
 export class UpdateHomeServiceSettingsDto {
-  @ApiPropertyOptional({ example: 0.7, description: 'Beautician commission rate (0–1)' })
+  @ApiPropertyOptional({
+    example: 0.7,
+    description: 'Beautician commission rate (0–1)',
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)
@@ -78,4 +109,20 @@ export class UpdateHomeServiceSettingsDto {
   @Min(7)
   @Max(180)
   noShowWindowDays?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Serviceable areas for home service: array of { state, city } pairs where city may be "*" for all cities in that state. Sending an empty array disables home service everywhere.',
+    example: [
+      { state: 'Lagos', city: 'Lagos' },
+      { state: 'Ogun', city: '*' },
+    ],
+    type: [ServiceableAreaDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ServiceableAreaDto)
+  serviceableAreas?: ServiceableAreaDto[];
 }

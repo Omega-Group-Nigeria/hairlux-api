@@ -204,10 +204,42 @@ export class CreateBookingDto {
       'tempFullAddress is required when addressId is omitted for HOME_SERVICE bookings',
   })
   @IsString()
-  @Transform(({ value }) =>
-    typeof value === 'string' ? value.trim() : value,
-  )
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   tempFullAddress?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Temporary service city (current location). Required with tempLatitude/tempLongitude/tempFullAddress when addressId is omitted for HOME_SERVICE bookings.',
+    example: 'Lagos',
+  })
+  @ValidateIf(
+    (o: CreateBookingDto) =>
+      requiresHomeServiceAddress(o.services, o.bookingType) && !o.addressId,
+  )
+  @IsNotEmpty({
+    message:
+      'tempCity is required when addressId is omitted for HOME_SERVICE bookings',
+  })
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  tempCity?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Temporary service state (current location). Required with tempLatitude/tempLongitude/tempFullAddress when addressId is omitted for HOME_SERVICE bookings.',
+    example: 'Lagos',
+  })
+  @ValidateIf(
+    (o: CreateBookingDto) =>
+      requiresHomeServiceAddress(o.services, o.bookingType) && !o.addressId,
+  )
+  @IsNotEmpty({
+    message:
+      'tempState is required when addressId is omitted for HOME_SERVICE bookings',
+  })
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  tempState?: string;
 
   @ApiPropertyOptional({
     description:

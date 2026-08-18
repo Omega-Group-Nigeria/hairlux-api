@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { HomeServiceSettings, PayoutMode } from '@prisma/client';
+import { HomeServiceSettings, PayoutMode, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateHomeServiceSettingsDto } from '../dto/update-home-service-settings.dto';
 
@@ -66,7 +66,8 @@ export class HomeServiceSettingsService {
           kycAutoApprove: dto.kycAutoApprove,
         }),
         ...(dto.arrivalVerificationExpiryMinutes !== undefined && {
-          arrivalVerificationExpiryMinutes: dto.arrivalVerificationExpiryMinutes,
+          arrivalVerificationExpiryMinutes:
+            dto.arrivalVerificationExpiryMinutes,
         }),
         ...(dto.serviceCompletionBufferMinutes !== undefined && {
           serviceCompletionBufferMinutes: dto.serviceCompletionBufferMinutes,
@@ -86,6 +87,12 @@ export class HomeServiceSettingsService {
         }),
         ...(dto.noShowWindowDays !== undefined && {
           noShowWindowDays: dto.noShowWindowDays,
+        }),
+        ...(dto.serviceableAreas !== undefined && {
+          serviceableAreas: dto.serviceableAreas.map((area) => ({
+            state: area.state,
+            city: area.city,
+          })) as Prisma.InputJsonValue,
         }),
       },
     });
@@ -122,7 +129,7 @@ export class HomeServiceSettingsService {
         settings.dailyPayoutLimit == null
           ? null
           : Number(settings.dailyPayoutLimit),
-      payoutMode: settings.payoutMode as PayoutMode,
+      payoutMode: settings.payoutMode,
     };
   }
 }

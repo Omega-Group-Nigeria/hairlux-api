@@ -40,7 +40,12 @@ import {
   buildBookingLocationCreateData,
   hasTemporaryServiceLocation,
   resolveBookingAddressLabel,
+  resolveBookingServiceLocation,
 } from '../utils/booking-location.utils';
+import {
+  isLocationServiceable,
+  parseServiceableAreas,
+} from '../utils/serviceable-area.utils';
 import { WalletDebitService } from '../../wallet/wallet-debit.service';
 import { ReservationService } from './reservation.service';
 import { BookingLinePricingService } from './booking-line-pricing.service';
@@ -337,6 +342,21 @@ export class BookingPaymentService {
     return influencer.userId;
   }
 
+  private async assertServiceableArea(
+    location: ReturnType<typeof resolveBookingServiceLocation>,
+  ) {
+    const settings = await this.prisma.homeServiceSettings.findFirst({
+      select: { serviceableAreas: true },
+    });
+    const areas = parseServiceableAreas(settings?.serviceableAreas);
+
+    if (!isLocationServiceable(location, areas)) {
+      throw new BadRequestException(
+        'Home service is not yet available in your area',
+      );
+    }
+  }
+
   async create(userId: string, createBookingDto: CreateBookingDto) {
     const {
       services,
@@ -399,6 +419,18 @@ export class BookingPaymentService {
           'addressId or temporary location (tempLatitude, tempLongitude, tempFullAddress) is required for HOME_SERVICE bookings',
         );
       }
+
+      await this.assertServiceableArea(
+        resolveBookingServiceLocation({
+          address,
+          addressId: locationData.addressId,
+          tempLatitude: locationData.tempLatitude,
+          tempLongitude: locationData.tempLongitude,
+          tempFullAddress: locationData.tempFullAddress,
+          tempCity: createBookingDto.tempCity ?? null,
+          tempState: createBookingDto.tempState ?? null,
+        }),
+      );
     }
 
     const user = await this.prisma.user.findUnique({
@@ -896,6 +928,8 @@ export class BookingPaymentService {
       tempLatitude,
       tempLongitude,
       tempFullAddress,
+      tempCity,
+      tempState,
       bookingType,
       discountCode,
       branchId,
@@ -934,6 +968,18 @@ export class BookingPaymentService {
           'addressId or temporary location (tempLatitude, tempLongitude, tempFullAddress) is required for HOME_SERVICE bookings',
         );
       }
+
+      await this.assertServiceableArea(
+        resolveBookingServiceLocation({
+          address,
+          addressId: locationData.addressId,
+          tempLatitude: locationData.tempLatitude,
+          tempLongitude: locationData.tempLongitude,
+          tempFullAddress: locationData.tempFullAddress,
+          tempCity: tempCity ?? null,
+          tempState: tempState ?? null,
+        }),
+      );
     }
 
     const user = await this.prisma.user.findUnique({

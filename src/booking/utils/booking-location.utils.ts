@@ -3,19 +3,22 @@
  * Address relation or inline temporary (current-location) fields on Booking.
  */
 
-export type SavedAddressLike = {
-  fullAddress: string;
-  latitude?: unknown;
-  longitude?: unknown;
-  city?: string | null;
-  state?: string | null;
-  placeId?: string | null;
-  streetAddress?: string | null;
-  country?: string | null;
-  addressComponents?: unknown;
-  id?: string;
-  isDefault?: boolean;
-} | null | undefined;
+export type SavedAddressLike =
+  | {
+      fullAddress: string;
+      latitude?: unknown;
+      longitude?: unknown;
+      city?: string | null;
+      state?: string | null;
+      placeId?: string | null;
+      streetAddress?: string | null;
+      country?: string | null;
+      addressComponents?: unknown;
+      id?: string;
+      isDefault?: boolean;
+    }
+  | null
+  | undefined;
 
 export type BookingLocationSource = {
   address?: SavedAddressLike;
@@ -23,6 +26,8 @@ export type BookingLocationSource = {
   tempLatitude?: unknown;
   tempLongitude?: unknown;
   tempFullAddress?: string | null;
+  tempCity?: string | null;
+  tempState?: string | null;
 };
 
 export type ResolvedBookingLocation = {
@@ -88,8 +93,8 @@ export function resolveBookingServiceLocation(
       fullAddress: String(booking.tempFullAddress).trim(),
       lat: toCoord(booking.tempLatitude),
       lng: toCoord(booking.tempLongitude),
-      city: null,
-      state: null,
+      city: booking.tempCity ?? null,
+      state: booking.tempState ?? null,
       placeId: null,
     };
   }
@@ -160,14 +165,14 @@ export function formatBookingServiceAddress(
     id: null,
     fullAddress: location.fullAddress,
     streetAddress: null,
-    city: null,
-    state: null,
+    city: location.city,
+    state: location.state,
     country: 'Nigeria',
     placeId: null,
     addressComponents: {
       streetAddress: null,
-      city: null,
-      state: null,
+      city: location.city,
+      state: location.state,
       country: 'Nigeria',
     },
     isDefault: false,

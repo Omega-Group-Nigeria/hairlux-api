@@ -2216,6 +2216,9 @@ model HomeServiceSettings {
   noShowPenaltyEnabled             Boolean    @default(true) @map("no_show_penalty_enabled")
   noShowSuspendThreshold           Int        @default(3) @map("no_show_suspend_threshold")
   noShowWindowDays                 Int        @default(30) @map("no_show_window_days")
+  /// City/state pairs where home service is offered. Array of { state, city }, where
+  /// city may be "*" to allow every city in that state. Empty array disables home service everywhere.
+  serviceableAreas                 Json       @default("[]") @map("serviceable_areas")
   createdAt                        DateTime   @default(now()) @map("created_at")
   updatedAt                        DateTime   @updatedAt @map("updated_at")
 

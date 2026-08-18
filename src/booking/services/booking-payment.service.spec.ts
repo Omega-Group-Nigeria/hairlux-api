@@ -41,6 +41,9 @@ describe('BookingPaymentService security', () => {
     address: {
       findFirst: jest.fn(),
     },
+    homeServiceSettings: {
+      findFirst: jest.fn(),
+    },
     user: {
       findUnique: jest.fn(),
     },
@@ -90,8 +93,14 @@ describe('BookingPaymentService security', () => {
         BookingPaymentService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: MonnifyService, useValue: mockMonnifyService },
-        { provide: MailService, useValue: { sendBookingConfirmationEmail: jest.fn() } },
-        { provide: RedisService, useValue: { del: jest.fn(), delByPattern: jest.fn() } },
+        {
+          provide: MailService,
+          useValue: { sendBookingConfirmationEmail: jest.fn() },
+        },
+        {
+          provide: RedisService,
+          useValue: { del: jest.fn(), delByPattern: jest.fn() },
+        },
         { provide: DiscountService, useValue: mockDiscountService },
         { provide: WalletDebitService, useValue: mockWalletDebitService },
         {
@@ -150,6 +159,137 @@ describe('BookingPaymentService security', () => {
       },
     });
     mockPrisma.transaction.create.mockResolvedValue({ id: 'intent-1' });
+    mockPrisma.homeServiceSettings.findFirst.mockResolvedValue(null);
+  });
+
+  describe('serviceable area restriction', () => {
+    const homeServicePayload = {
+      services: [{ serviceId: 'svc-1', serviceMode: 'HOME_SERVICE' as const }],
+      date: '2026-06-23',
+      time: '14:00',
+      tempLatitude: 6.524379,
+      tempLongitude: 3.379206,
+      tempFullAddress: '12 Admiralty Way, Lekki',
+      tempCity: 'Lagos',
+      tempState: 'Lagos',
+    };
+
+    beforeEach(() => {
+      mockBookingLinePricingService.buildServiceRecords.mockResolvedValue([
+        {
+          serviceId: 'svc-1',
+          name: 'Cut',
+          price: 8500,
+          quantity: 1,
+          serviceMode: 'HOME_SERVICE',
+        },
+      ]);
+    });
+
+    it('allows a home-service booking inside a configured city/state', async () => {
+      mockPrisma.homeServiceSettings.findFirst.mockResolvedValue({
+        serviceableAreas: [{ state: 'Lagos', city: 'Lagos' }],
+      });
+
+      const result = await service.initializeBookingPayment('user-1', {
+        bookingPayload: homeServicePayload,
+        provider: 'monnify',
+        idempotencyKey: 'bookpay-hs-1',
+      });
+
+      expect(result.amountToPay).toBe(3500);
+      expect(mockMonnifyService.initializePayment).toHaveBeenCalled();
+    });
+
+    it('allows any city in a state configured with the wildcard', async () => {
+      mockPrisma.homeServiceSettings.findFirst.mockResolvedValue({
+        serviceableAreas: [{ state: 'Lagos', city: '*' }],
+      });
+
+      await service.initializeBookingPayment('user-1', {
+        bookingPayload: { ...homeServicePayload, tempCity: 'Ikeja' },
+        provider: 'monnify',
+        idempotencyKey: 'bookpay-hs-2',
+      });
+
+      expect(mockMonnifyService.initializePayment).toHaveBeenCalled();
+    });
+
+    it('rejects a home-service booking outside configured areas before any gateway call', async () => {
+      mockPrisma.homeServiceSettings.findFirst.mockResolvedValue({
+        serviceableAreas: [{ state: 'Ogun', city: '*' }],
+      });
+
+      await expect(
+        service.initializeBookingPayment('user-1', {
+          bookingPayload: homeServicePayload,
+          provider: 'monnify',
+          idempotencyKey: 'bookpay-hs-3',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockMonnifyService.initializePayment).not.toHaveBeenCalled();
+    });
+
+    it('rejects home-service bookings when the area list is empty (disabled everywhere)', async () => {
+      mockPrisma.homeServiceSettings.findFirst.mockResolvedValue({
+        serviceableAreas: [],
+      });
+
+      await expect(
+        service.initializeBookingPayment('user-1', {
+          bookingPayload: homeServicePayload,
+          provider: 'monnify',
+          idempotencyKey: 'bookpay-hs-4',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a temp location missing city/state (fails closed)', async () => {
+      mockPrisma.homeServiceSettings.findFirst.mockResolvedValue({
+        serviceableAreas: [{ state: 'Lagos', city: 'Lagos' }],
+      });
+
+      const { tempCity, tempState, ...noCityState } = homeServicePayload;
+
+      await expect(
+        service.initializeBookingPayment('user-1', {
+          bookingPayload: {
+            ...noCityState,
+            tempCity: undefined,
+            tempState: undefined,
+          },
+          provider: 'monnify',
+          idempotencyKey: 'bookpay-hs-5',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('resolves city/state from a saved address for the check', async () => {
+      mockPrisma.homeServiceSettings.findFirst.mockResolvedValue({
+        serviceableAreas: [{ state: 'Lagos', city: 'Lagos' }],
+      });
+      mockPrisma.address.findFirst.mockResolvedValue({
+        id: 'addr-1',
+        fullAddress: '12 Admiralty Way, Lekki',
+        city: 'Lagos',
+        state: 'Lagos',
+        country: 'Nigeria',
+      });
+
+      await service.initializeBookingPayment('user-1', {
+        bookingPayload: {
+          ...homeServicePayload,
+          addressId: 'addr-1',
+          tempCity: undefined,
+          tempState: undefined,
+        },
+        provider: 'monnify',
+        idempotencyKey: 'bookpay-hs-6',
+      });
+
+      expect(mockMonnifyService.initializePayment).toHaveBeenCalled();
+    });
   });
 
   describe('initializeBookingPayment', () => {
@@ -223,7 +363,9 @@ describe('BookingPaymentService security', () => {
         },
       });
       mockPrisma.transaction.updateMany.mockResolvedValue({ count: 1 });
-      mockReservationService.generateReservationCode.mockResolvedValue('HLX-TEST');
+      mockReservationService.generateReservationCode.mockResolvedValue(
+        'HLX-TEST',
+      );
     });
 
     it('persists gateway payment before fulfillment and allows retry after fulfillment failure', async () => {
@@ -234,27 +376,27 @@ describe('BookingPaymentService security', () => {
         callback: (tx: typeof mockPrisma) => unknown,
       ) =>
         callback({
-            ...mockPrisma,
-            transaction: {
-              ...mockPrisma.transaction,
-              findUnique: jest.fn().mockResolvedValue(paymentIntent),
-            },
-            booking: {
-              create: jest.fn().mockResolvedValue({
-                id: 'booking-1',
-                reservationCode: 'HLX-TEST',
-                status: BookingStatus.CONFIRMED,
-                paymentMethod: PaymentMethod.MONNIFY,
-                totalAmount: 8500,
-                bookingDate: new Date('2026-06-23T14:00:00.000Z'),
-                bookingTime: '14:00',
-                bookingType: 'WALK_IN',
-                services: [],
-                address: null,
-                branch: null,
-              }),
-            },
-          } as typeof mockPrisma);
+          ...mockPrisma,
+          transaction: {
+            ...mockPrisma.transaction,
+            findUnique: jest.fn().mockResolvedValue(paymentIntent),
+          },
+          booking: {
+            create: jest.fn().mockResolvedValue({
+              id: 'booking-1',
+              reservationCode: 'HLX-TEST',
+              status: BookingStatus.CONFIRMED,
+              paymentMethod: PaymentMethod.MONNIFY,
+              totalAmount: 8500,
+              bookingDate: new Date('2026-06-23T14:00:00.000Z'),
+              bookingTime: '14:00',
+              bookingType: 'WALK_IN',
+              services: [],
+              address: null,
+              branch: null,
+            }),
+          },
+        } as typeof mockPrisma);
 
       mockPrisma.$transaction
         .mockRejectedValueOnce(prismaError)
