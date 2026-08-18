@@ -72,6 +72,29 @@ export class MailService {
     }
   }
 
+  /**
+   * Generic send for admin-authored, free-form content -- unlike every
+   * other method here, there's no fixed template, since this is what
+   * Lifecycle Campaign templates (arbitrary subject/body an admin typed
+   * into a form) actually need. Reuses the exact same queue/retry
+   * infrastructure as every templated send above; EmailJobData was
+   * already generic ({ to, subject, html }), so no processor changes
+   * were needed for this to work.
+   */
+  async sendGenericEmail(to: string, subject: string, html: string) {
+    try {
+      await this.emailQueue.add(
+        'send',
+        { to, subject, html },
+        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+      );
+      this.logger.log(`Generic email queued for ${to}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Error queuing generic email:`, errorMessage);
+    }
+  }
+
   async sendPasswordResetEmail(
     email: string,
     resetToken: string,

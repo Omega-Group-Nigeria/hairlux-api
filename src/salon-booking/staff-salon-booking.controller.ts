@@ -104,6 +104,16 @@ export class StaffSalonBookingController {
         return { success: true, message: 'Customers retrieved successfully', data };
     }
 
+    @Get('customers/check-phone')
+    @ApiOperation({
+        summary: 'Check whether a phone matches a verified account, before creating a booking',
+        description: 'Call as staff enters/confirms the customer phone field. hasMatch:true means show an "Is this <accountName>? Link this visit to their account?" prompt.',
+    })
+    async checkPhoneMatch(@Query('phone') phone: string) {
+        const data = await this.salonBookingService.checkPhoneMatch(phone);
+        return { success: true, message: 'Checked successfully', data };
+    }
+
     @Get(':id')
     @ApiOperation({ summary: 'Get a single booking — restricted to your own branch' })
     @ApiParam({ name: 'id' })

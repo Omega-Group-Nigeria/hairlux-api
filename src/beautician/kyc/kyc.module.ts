@@ -5,6 +5,7 @@ import { PrismaModule } from '../../prisma/prisma.module';
 import { RedisModule } from '../../redis/redis.module';
 import { CloudinaryModule } from '../../cloudinary/cloudinary.module';
 import { StorageModule } from '../../storage/storage.module';
+import { StaffModule } from '../../staff/staff.module';
 import { KycController } from './kyc.controller';
 import { QoreidWebhookController } from './qoreid-webhook.controller';
 import { QoreidSessionService } from './services/qoreid-session.service';
@@ -28,6 +29,7 @@ import { BeauticianMeCacheService } from '../services/beautician-me-cache.servic
     BeauticianNotificationModule,
     OnboardingNotificationsModule,
     BullModule.registerQueue({ name: QOREID_PROFILE_PHOTO_QUEUE }),
+    StaffModule,
   ],
   controllers: [KycController, QoreidWebhookController],
   providers: [

@@ -110,6 +110,10 @@ export const PERMISSIONS = {
   STAFF_PORTAL_BOOKINGS: 'staff-portal:bookings', // See the Bookings module
   STAFF_PORTAL_SALES: 'staff-portal:sales', // See the Sell Products module
   STAFF_PORTAL_APPROVALS: 'staff-portal:approvals', // See My Approvals (in addition to branch managers, who always see it)
+
+  // ── Lifecycle Campaigns ──────────────────────────────────────────────────────
+  LIFECYCLE_CAMPAIGNS_READ: 'lifecycle_campaigns:read', // View templates & transition history
+  LIFECYCLE_CAMPAIGNS_MANAGE: 'lifecycle_campaigns:manage', // Create/edit/delete templates
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -382,6 +386,14 @@ export const PERMISSION_GROUPS = [
         key: PERMISSIONS.STAFF_PORTAL_APPROVALS,
         label: 'See My Approvals on the staff dashboard (branch managers always see this regardless)',
       },
+    ],
+  },
+
+  {
+    group: 'Lifecycle Campaigns',
+    permissions: [
+      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_READ, label: 'View campaign templates & transition history' },
+      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE, label: 'Create, edit, and delete campaign templates' },
     ],
   },
 ];

@@ -3,7 +3,7 @@ import { SalonBookingStatus, StockMovementType } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { BookingService } from '../booking/booking.service';
 import { resolveBusinessException } from '../common/utils/business-exception.util';
-import { classifyCustomerLifecycle, classifyCustomerValue, CustomerLifecycle, CustomerValue, getCustomerValueThresholds } from '../common/utils/customer-status.util';
+import { classifyCustomerLifecycle, classifyCustomerValue, CustomerLifecycle, CustomerValue, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
 import { watTodayDateStr } from '../common/utils/wat-time.util';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +13,7 @@ import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
 import { ReserveSalonBookingDto } from './dto/reserve-salon-booking.dto';
 import { VerifyReservationDto } from './dto/verify-reservation.dto';
+import { UpdateCustomerClassificationSettingsDto } from './dto/update-customer-classification-settings.dto';
 import { EditSalonBookingDto, AddServiceToCompletedBookingDto } from './dto/edit-salon-booking.dto';
 
 /**
@@ -132,7 +133,7 @@ export class SalonBookingService {
         const totalAmount = this.computeTotal(serviceLines, inventoryLines);
 
         const customerId = dto.customerPhone
-            ? (await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail)).id
+            ? (await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail, dto.linkToVerifiedUser)).id
             : undefined;
 
         const booking = await this.prisma.salonBooking.create({
@@ -270,7 +271,7 @@ export class SalonBookingService {
         }
 
         const now = new Date();
-        const valueThresholds = await getCustomerValueThresholds(this.prisma);
+        const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
         let withStats = allMatching.map((c) => {
             const s = statsByCustomer.get(c.id);
             const visitCount = s?.visitCount ?? 0;
@@ -297,6 +298,7 @@ export class SalonBookingService {
                     completedVisitCount: visitCount,
                     accountCreatedAt: c.createdAt,
                     now,
+                    thresholds: lifecycleThresholds,
                 }),
                 value: classifyCustomerValue(totalSpend, valueThresholds),
             };
@@ -382,7 +384,7 @@ export class SalonBookingService {
         const lastVisitDate = completed.length ? completed[0].bookingDate : null;
         const branchesVisited = Array.from(new Map(bookings.map((b) => [b.branch.id, b.branch.name])).entries()).map(([id, name]) => ({ id, name }));
 
-        const valueThresholds = await getCustomerValueThresholds(this.prisma);
+        const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
 
         return {
             customer,
@@ -396,6 +398,7 @@ export class SalonBookingService {
                 lastVisitDate,
                 completedVisitCount: visitCount,
                 accountCreatedAt: customer.createdAt,
+                thresholds: lifecycleThresholds,
             }),
             value: classifyCustomerValue(totalSpend, valueThresholds),
             bookingHistory: bookings.map((b) => ({
@@ -408,6 +411,29 @@ export class SalonBookingService {
                 services: b.services.map((s) => ({ name: s.service.name, category: s.service.category.name, price: Number(s.price), quantity: s.quantity })),
             })),
         };
+    }
+
+    /** Both dimensions live on one settings row — always returned together, since the admin config page edits them as one form. */
+    async getCustomerClassificationSettings() {
+        const row = await this.prisma.customerValueSettings.findFirst();
+        return {
+            premiumSpendThreshold: row ? Number(row.premiumSpendThreshold) : 50_000,
+            vipSpendThreshold: row ? Number(row.vipSpendThreshold) : 200_000,
+            newAccountAgeDays: row ? row.newAccountAgeDays : 30,
+            newVisitCountThreshold: row ? row.newVisitCountThreshold : 3,
+            activeDaysThreshold: row ? row.activeDaysThreshold : 30,
+            atRiskDaysThreshold: row ? row.atRiskDaysThreshold : 90,
+            dormantDaysThreshold: row ? row.dormantDaysThreshold : 180,
+        };
+    }
+
+    async updateCustomerClassificationSettings(dto: UpdateCustomerClassificationSettingsDto, updatedById: string | undefined) {
+        const existing = await this.prisma.customerValueSettings.findFirst();
+        const data = { ...dto, updatedById: updatedById ?? null };
+
+        return existing
+            ? this.prisma.customerValueSettings.update({ where: { id: existing.id }, data })
+            : this.prisma.customerValueSettings.create({ data });
     }
 
     async searchCustomers(query: string) {
@@ -570,10 +596,54 @@ export class SalonBookingService {
         return { deleted: true, id };
     }
 
-    private async findOrCreateCustomer(name: string, phone: string, email?: string) {
+    private async findOrCreateCustomer(name: string, phone: string, email?: string, linkToVerifiedUser?: boolean) {
         const existing = await this.prisma.customer.findUnique({ where: { phone } });
-        if (existing) return existing;
-        return this.prisma.customer.create({ data: { name, phone, email } });
+
+        // Only actually link when staff explicitly confirmed it (see
+        // checkPhoneMatch) -- a phone matching a verified account is never
+        // enough on its own to silently attach someone's visit history to
+        // that account.
+        let verifiedUserId: string | undefined;
+        if (linkToVerifiedUser) {
+            const verifiedUser = await this.prisma.user.findFirst({ where: { phone, phoneVerified: true } });
+            verifiedUserId = verifiedUser?.id;
+        }
+
+        if (existing) {
+            if (verifiedUserId && existing.userId !== verifiedUserId) {
+                return this.prisma.customer.update({ where: { id: existing.id }, data: { userId: verifiedUserId } });
+            }
+            return existing;
+        }
+        return this.prisma.customer.create({ data: { name, phone, email, userId: verifiedUserId } });
+    }
+
+    /**
+     * Called as staff types/confirms a phone number on the booking form --
+     * before creation, not as a side effect of it. Tells the frontend
+     * whether to show an "Is this <name>? Link this visit to their
+     * account?" prompt at all: no prompt when there's no verified match,
+     * and no prompt when the existing Customer record (if any) is already
+     * linked to that exact account, since there's nothing left to confirm.
+     */
+    async checkPhoneMatch(phone: string) {
+        const verifiedUser = await this.prisma.user.findFirst({
+            where: { phone, phoneVerified: true },
+            select: { id: true, firstName: true, lastName: true },
+        });
+        if (!verifiedUser) {
+            return { hasMatch: false as const };
+        }
+
+        const existingCustomer = await this.prisma.customer.findUnique({ where: { phone } });
+        if (existingCustomer?.userId === verifiedUser.id) {
+            return { hasMatch: false as const }; // already linked -- nothing to confirm
+        }
+
+        return {
+            hasMatch: true as const,
+            accountName: `${verifiedUser.firstName} ${verifiedUser.lastName}`.trim(),
+        };
     }
 
     private generateReservationCode(): string {

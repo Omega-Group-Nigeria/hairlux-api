@@ -16,6 +16,47 @@ export type VerifyNinResult =
   | { verified: true; bio: NinBio }
   | { verified: false; reason: 'NAME_MISMATCH' };
 
+export interface SubmitAddressVerificationParams {
+  customerReference: string;
+  street: string;
+  city: string;
+  lgaName: string;
+  stateName: string;
+  landmark?: string;
+  applicant: {
+    firstname: string;
+    lastname: string;
+    phone: string;
+    dob?: string; // YYYY-MM-DD
+    gender?: string;
+    idType?: 'nin' | 'bvn' | 'drivers_license';
+    idNumber?: string;
+  };
+  addressExtraData: {
+    houseNumber?: string;
+    generalDescription: string;
+    latitude: number;
+    longitude: number;
+    buildingDescription: 'Residential' | 'Commercial';
+    hasGateAndFence: boolean;
+    buildingStatus: 'Completed' | 'Painted' | 'Completed and Painted';
+    buildingType: 'Multi-story' | 'Flats & Apartment' | 'Bungalow' | 'Office Complex';
+    buildingColour: string;
+    // base64, no data: prefix -- caller (StaffAddressVerificationService) is
+    // responsible for stripping any data: URI prefix before this point.
+    applicantPhoto1?: string;
+    applicantPhoto2?: string;
+    applicantPhoto3?: string;
+  };
+}
+
+export interface SubmitAddressVerificationResult {
+  qoreidVerificationId: string;
+  status: string;
+  subStatus: string;
+  state: string;
+}
+
 export class QoreidRequestError extends Error {
   constructor(public readonly status: number, public readonly detail?: unknown) {
     super(`QoreID request failed (${status})`);
@@ -120,5 +161,48 @@ export class QoreidService {
     return [residence.address1, residence.town, residence.lga, residence.state]
       .filter(Boolean)
       .join(', ');
+  }
+
+  /**
+   * Physical Address Verification Pro -- genuinely asynchronous, unlike
+   * NIN verification above. This call only ever returns an IN_PROGRESS
+   * acknowledgement; QoreID's ~30,000 field agents physically visit the
+   * address over the next 24-48h, and the real result arrives later via
+   * webhook (see StaffAddressVerificationService.handleWebhook).
+   */
+  async submitAddressVerification(params: SubmitAddressVerificationParams): Promise<SubmitAddressVerificationResult> {
+    const token = await this.getAccessToken();
+
+    const res = await fetch(`${QOREID_BASE}/v1/addresses/pro`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        customerReference: params.customerReference,
+        street: params.street,
+        city: params.city,
+        lgaName: params.lgaName,
+        stateName: params.stateName,
+        landmark: params.landmark,
+        applicant: params.applicant,
+        addressExtraData: params.addressExtraData,
+      }),
+    });
+
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok || !data) {
+      this.logger.error(`QoreID address verification submission failed (${res.status})`);
+      throw new QoreidRequestError(res.status, data);
+    }
+
+    return {
+      qoreidVerificationId: String(data.id),
+      status: data.address?.status?.status ?? data.summary?.address_check ?? 'IN_PROGRESS',
+      subStatus: data.address?.status?.subStatus ?? '',
+      state: data.address?.status?.state ?? 'IN_PROGRESS',
+    };
   }
 }

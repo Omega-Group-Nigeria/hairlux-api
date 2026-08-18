@@ -29,10 +29,10 @@ import { ApproveEmploymentDto } from './dto/approve-employment.dto';
 import { ConvertToStaffDto } from './dto/convert-to-staff.dto';
 import { GenerateOfferLetterDto } from './dto/generate-offer-letter.dto';
 import { QueryApplicationDto } from './dto/query-application.dto';
+import { QueryRecruitmentReportDto } from './dto/query-recruitment-report.dto';
 import { RecordInterviewOutcomeDto } from './dto/record-interview-outcome.dto';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto';
-import { QueryRecruitmentReportDto } from './dto/query-recruitment-report.dto';
 
 
 @ApiTags('Admin - Applications')
@@ -212,5 +212,29 @@ export class AdminApplicationController {
   ) {
     const data = await this.applicationService.convertToStaff(id, dto.locationId, req.user?.id);
     return { success: true, message: 'Applicant converted to staff successfully', data };
+  }
+
+  @Get('compensation-backfill/preview')
+  @ApiOperation({
+    summary: 'DRY RUN — preview which staff have a null currentBaseSalary despite an accepted offer letter on record',
+    description: 'Nothing is modified. Staff converted before compensation seeding existed at convertToStaff time would otherwise be silently calculated at ₦0 base salary in payroll.',
+  })
+  @ApiResponse({ status: 200, description: 'Preview retrieved successfully — nothing was changed' })
+  @Permission(PERMISSIONS.APPLICATION_CONVERT)
+  async previewCompensationBackfill() {
+    const data = await this.applicationService.previewCompensationBackfill();
+    return { success: true, message: 'Preview retrieved successfully — nothing was changed', data };
+  }
+
+  @Post('compensation-backfill/run')
+  @ApiOperation({
+    summary: 'REAL ACTION — applies the compensation backfill to every staff member matching the preview',
+    description: 'Re-checks each record at execution time and skips anyone whose currentBaseSalary is no longer null, so this never overwrites a real figure regardless of when it was set.',
+  })
+  @ApiResponse({ status: 201, description: 'Backfill run — see appliedCount/skippedCount/failedCount in the response' })
+  @Permission(PERMISSIONS.APPLICATION_CONVERT)
+  async runCompensationBackfill(@Req() req: any) {
+    const data = await this.applicationService.runCompensationBackfill(req.user?.id);
+    return { success: true, message: 'Backfill run', data };
   }
 }

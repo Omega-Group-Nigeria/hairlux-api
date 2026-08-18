@@ -11,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import { UserRole, UserStatus } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { randomBytes, randomInt } from 'crypto';
+import { OAuth2Client } from 'google-auth-library';
 import { ErrorMessages } from '../common/constants/error-messages';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +19,7 @@ import { RedisService } from '../redis/redis.service';
 import { ReferralService } from '../referral/referral.service';
 import { CreatePinDto } from './dto/create-pin.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { GoogleSignInDto } from './dto/google-signin.dto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterBeauticianDto } from './dto/register-beautician.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -32,6 +34,7 @@ import { JwtPayload } from './types/jwt-payload.interface';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly googleClient: OAuth2Client;
 
   constructor(
     private prisma: PrismaService,
@@ -41,7 +44,9 @@ export class AuthService {
     private referralService: ReferralService,
     private redis: RedisService,
     private pinService: PinService,
-  ) { }
+  ) {
+    this.googleClient = new OAuth2Client(this.configService.get<string>('GOOGLE_CLIENT_ID'));
+  }
 
   async register(registerDto: RegisterDto) {
     const { email, password, firstName, lastName, phone, referralCode } =
@@ -163,6 +168,89 @@ export class AuthService {
       message:
         'Registration successful. Please verify your email with the OTP sent to your email address.',
     };
+  }
+
+  /**
+   * Verifies the ID token server-side (never trusts a client-supplied
+   * email/name directly). Three outcomes: an existing googleId match logs
+   * straight in; an existing email match (someone who originally signed up
+   * with email+password) gets Google linked onto that same account rather
+   * than creating a duplicate; otherwise a new account is created --
+   * emailVerified: true immediately, since Google's own verification of
+   * the email is what payload.email_verified confirms, no OTP email
+   * needed the way a plain email+password signup requires one.
+   */
+  async googleSignIn(dto: GoogleSignInDto) {
+    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    let payload: {
+      sub?: string;
+      email?: string;
+      email_verified?: boolean;
+      given_name?: string;
+      family_name?: string;
+    };
+    try {
+      const ticket = await this.googleClient.verifyIdToken({ idToken: dto.idToken, audience: clientId });
+      payload = ticket.getPayload() ?? {};
+    } catch (err) {
+      throw new UnauthorizedException('Invalid or expired Google sign-in token.');
+    }
+
+    if (!payload.sub || !payload.email) {
+      throw new UnauthorizedException('Google did not return the expected account details.');
+    }
+    if (!payload.email_verified) {
+      throw new UnauthorizedException('Your Google account email is not verified. Please verify it with Google first.');
+    }
+
+    const email = payload.email.toLowerCase();
+
+    let user = await this.prisma.user.findUnique({ where: { googleId: payload.sub } });
+
+    if (!user) {
+      const existingByEmail = await this.prisma.user.findUnique({ where: { email } });
+      if (existingByEmail) {
+        // Same person, previously signed up with email+password -- link
+        // rather than duplicate. Does not touch their existing password.
+        user = await this.prisma.user.update({
+          where: { id: existingByEmail.id },
+          data: { googleId: payload.sub },
+        });
+      } else {
+        const newUser = await this.prisma.$transaction(async (tx) => {
+          const created = await tx.user.create({
+            data: {
+              email,
+              password: null,
+              googleId: payload.sub,
+              firstName: payload.given_name || 'Google',
+              lastName: payload.family_name || 'User',
+              role: UserRole.USER,
+              status: UserStatus.ACTIVE,
+              emailVerified: true,
+            },
+          });
+          await tx.wallet.create({ data: { userId: created.id, balance: 0 } });
+          return created;
+        });
+
+        try {
+          await this.referralService.createReferralCode(newUser.id, newUser.firstName);
+        } catch (referralErr) {
+          this.logger.warn(
+            `Referral code generation failed for user ${newUser.id} (non-fatal): ${referralErr instanceof Error ? referralErr.message : String(referralErr)}`,
+          );
+        }
+
+        user = newUser;
+      }
+    }
+
+    if (user.status === UserStatus.INACTIVE) {
+      throw new UnauthorizedException(ErrorMessages.ACCOUNT_INACTIVE);
+    }
+
+    return this.buildAuthenticatedResponse(user);
   }
 
   async registerBeautician(registerDto: RegisterBeauticianDto) {
@@ -287,11 +375,36 @@ export class AuthService {
       );
     }
 
+    // A Google-signup account has no local password at all -- argon2.verify
+    // would throw on a null hash rather than fail cleanly, so this is
+    // checked explicitly first with a message that actually explains what
+    // to do, rather than a generic "invalid credentials".
+    if (!user.password) {
+      throw new UnauthorizedException(
+        'This account signed up with Google. Please use "Sign in with Google" instead.',
+      );
+    }
+
     // Verify password
     const isPasswordValid = await argon2.verify(user.password, password);
 
     if (!isPasswordValid) {
       throw new UnauthorizedException(ErrorMessages.INVALID_CREDENTIALS);
+    }
+
+    // A staff member's User.status (checked above) and their Staff record's
+    // employmentStatus are two separate fields on two separate models — a
+    // User can be ACTIVE while the linked Staff record is EXITED, SUSPENDED,
+    // or ARCHIVED. Only ACTIVE and ON_LEAVE staff may log in; this has no
+    // effect on accounts with no linked Staff record (ordinary customers).
+    const staffRecord = await this.prisma.staff.findUnique({
+      where: { userId: user.id },
+      select: { employmentStatus: true },
+    });
+    if (staffRecord && !['ACTIVE', 'ON_LEAVE'].includes(staffRecord.employmentStatus)) {
+      throw new UnauthorizedException(
+        'This staff account is not currently active. Contact an administrator if you believe this is an error.',
+      );
     }
 
     return this.buildAuthenticatedResponse(user);
@@ -610,7 +723,9 @@ export class AuthService {
     adminRoleId: string | null;
     adminRole?: { id: string; name: string } | null;
     influencer?: { id: string; isActive: boolean } | null;
-    password: string;
+    // Nullable since this schema change -- a Google-signup account has no
+    // local password at all.
+    password: string | null;
     otpCode: string | null;
     otpExpiry: Date | null;
     resetToken: string | null;
@@ -641,6 +756,11 @@ export class AuthService {
 
 
     const hasPin = !!user.pin;
+    // Google-signup accounts have password: null -- this drives the
+    // dashboard's blocking "set a password" prompt, since a password is
+    // also a prerequisite for PIN setup (see PinService) and for signing
+    // in with email+password as an alternative to Google.
+    const hasPassword = !!user.password;
 
     const {
       password: _,
@@ -659,6 +779,7 @@ export class AuthService {
         permissions,
         roles,
         hasPin,
+        hasPassword,
       },
       ...tokens,
     };

@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -10,6 +11,7 @@ import { StaffBankAccountService } from './staff-bank-account.service';
 import { StaffCompensationService } from './staff-compensation.service';
 import { PayrollAdjustmentService } from './payroll-adjustment.service';
 import { StaffPayoutService } from './staff-payout.service';
+import { PayrollEngineService } from './payroll-engine.service';
 import { SubmitBankAccountDto } from './dto/submit-bank-account.dto';
 import { RequestWithdrawalDto } from './dto/request-withdrawal.dto';
 
@@ -26,6 +28,7 @@ export class StaffPayrollController {
         private readonly compensationService: StaffCompensationService,
         private readonly adjustmentService: PayrollAdjustmentService,
         private readonly payoutService: StaffPayoutService,
+        private readonly payrollEngineService: PayrollEngineService,
     ) { }
 
     private async myStaffId(req: any): Promise<string> {
@@ -76,6 +79,14 @@ export class StaffPayrollController {
         return { success: true, message: 'Retrieved successfully', data };
     }
 
+    @Get('current-fines')
+    @ApiOperation({ summary: 'My running late-penalty and absent-fee total for the in-progress payroll period, visible before payroll actually runs' })
+    async getCurrentFines(@Req() req: any) {
+        const staffId = await this.myStaffId(req);
+        const data = await this.payrollEngineService.getCurrentFinesForStaff(staffId);
+        return { success: true, message: 'Retrieved successfully', data };
+    }
+
     // -- Payslips --------------------------------------------------------
 
     @Get('payslips')
@@ -88,6 +99,29 @@ export class StaffPayrollController {
             orderBy: { createdAt: 'desc' },
         });
         return { success: true, message: 'Retrieved successfully', data };
+    }
+
+    @Get('payslips/:id.pdf')
+    @ApiOperation({ summary: 'Download one of my own payslips as a PDF' })
+    @ApiResponse({ status: 200, description: 'PDF stream' })
+    @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
+    @ApiResponse({ status: 404, description: 'Payslip not found, or does not belong to this staff member' })
+    async downloadMyPayslip(
+        @Req() req: any,
+        @Param('id', ParseUUIDPipe) id: string,
+        @Res({ passthrough: true }) res: Response,
+    ): Promise<StreamableFile> {
+        const staffId = await this.myStaffId(req);
+        // staffId is passed to generatePayslipPdf itself (not just checked
+        // here first) so ownership is enforced inside the one shared method,
+        // the same way it's designed to be reused safely by any future
+        // admin download path too.
+        const pdfBuffer = await this.payrollEngineService.generatePayslipPdf(id, staffId);
+        res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="payslip-${id}.pdf"`,
+        });
+        return new StreamableFile(pdfBuffer);
     }
 
     @Get('adjustments')

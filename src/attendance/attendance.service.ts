@@ -170,6 +170,32 @@ export class AttendanceService {
         return penalizedMinutes * Number(settings.amountPerMinute);
     }
 
+    /**
+     * Absent-day fee — that day's expected working minutes × the same
+     * per-minute rate late penalties use, computed and frozen the moment
+     * ABSENT is recorded (never recomputed later at payroll time, matching
+     * calculateLatePenalty's freeze-at-check-in convention). Returns null
+     * when the penalty system is off or no rate is configured, meaning the
+     * absence is deliberately uncharged rather than falling back to some
+     * other number. A date with no resolvable resume/close time (shouldn't
+     * normally happen, since ABSENT is only ever recorded for days someone
+     * was actually expected to work) also returns null rather than throwing.
+     */
+    private async calculateAbsentFee(staffId: string, dateStr: string): Promise<number | null> {
+        const settings = await this.getLatePenaltySettings();
+        if (!settings?.isActive) return null;
+
+        const effectiveDay = await this.workCalendarService.resolveEffectiveDay(staffId, dateStr);
+        if (!effectiveDay.resumeTime || !effectiveDay.closingTime) return null;
+
+        const [resumeHour, resumeMinute] = effectiveDay.resumeTime.split(':').map(Number);
+        const [closeHour, closeMinute] = effectiveDay.closingTime.split(':').map(Number);
+        const expectedMinutes = (closeHour * 60 + closeMinute) - (resumeHour * 60 + resumeMinute);
+        if (expectedMinutes <= 0) return null;
+
+        return expectedMinutes * Number(settings.amountPerMinute);
+    }
+
     async getLatePenaltySettings() {
         return this.prisma.latePenaltySettings.findFirst();
     }
@@ -200,6 +226,19 @@ export class AttendanceService {
         }
         if (record.checkOutAt) {
             throw new BadRequestException('Already clocked out today');
+        }
+
+        // Checkout is capped at 10pm WAT — past that, the window has closed
+        // for the day. This is intentionally NOT treated as "just late": a
+        // missed checkout by this point means the day resolves to ABSENT
+        // via the next morning's markAbsencesForYesterday job, not a normal
+        // (if overdue) checkout here.
+        const todayForCutoff = watTodayDateStr(new Date());
+        const checkoutCutoff = watDateAtTime(todayForCutoff, '22:00');
+        if (new Date() > checkoutCutoff) {
+            throw new BadRequestException(
+                'Checkout is no longer available for today — the 10:00 PM cutoff has passed. Today will be recorded as Absent.',
+            );
         }
 
         const staffLocation = record.staff.location;
@@ -319,12 +358,24 @@ export class AttendanceService {
             throw new NotFoundException('Attendance record not found');
         }
 
+        // Recompute the frozen fee whenever a correction lands the record on
+        // ABSENT (whether it's newly set to ABSENT here, or was already
+        // ABSENT and something else about the record is being corrected) —
+        // and clear it if a correction moves the record OFF ABSENT, since a
+        // stale fee shouldn't survive a status change away from Absent.
+        const resultingStatus = dto.status ?? record.status;
+        const dateStr = record.date.toISOString().slice(0, 10);
+        const absentFeeAmount = resultingStatus === AttendanceStatus.ABSENT
+            ? await this.calculateAbsentFee(record.staffId, dateStr)
+            : null;
+
         return this.prisma.attendanceRecord.update({
             where: { id: recordId },
             data: {
                 ...(dto.checkInAt !== undefined && { checkInAt: new Date(dto.checkInAt) }),
                 ...(dto.checkOutAt !== undefined && { checkOutAt: new Date(dto.checkOutAt) }),
                 ...(dto.status !== undefined && { status: dto.status }),
+                absentFeeAmount,
                 isManuallyAdjusted: true,
                 adjustmentReasonCategory: dto.reasonCategory,
                 adjustmentReason: dto.reason,
@@ -343,6 +394,11 @@ export class AttendanceService {
             throw new BadRequestException('A record already exists for this staff member on this date — use the correction endpoint instead');
         }
 
+        const finalStatus = dto.status ?? AttendanceStatus.PRESENT;
+        const absentFeeAmount = finalStatus === AttendanceStatus.ABSENT
+            ? await this.calculateAbsentFee(staffId, dto.date)
+            : null;
+
         return this.prisma.attendanceRecord.create({
             data: {
                 staffId,
@@ -350,9 +406,10 @@ export class AttendanceService {
                 date: new Date(dto.date),
                 checkInAt: dto.checkInAt
                     ? new Date(dto.checkInAt)
-                    : (dto.status === AttendanceStatus.ABSENT ? null : new Date(dto.date)),
+                    : (finalStatus === AttendanceStatus.ABSENT ? null : new Date(dto.date)),
                 checkOutAt: dto.checkOutAt ? new Date(dto.checkOutAt) : null,
-                status: dto.status ?? AttendanceStatus.PRESENT,
+                status: finalStatus,
+                absentFeeAmount,
                 isManuallyAdjusted: true,
                 adjustmentReasonCategory: dto.reasonCategory,
                 adjustmentReason: dto.reason,
@@ -384,11 +441,34 @@ export class AttendanceService {
         });
 
         let marked = 0;
+        let markedNoCheckout = 0;
         for (const staff of activeStaff) {
             const existing = await this.prisma.attendanceRecord.findUnique({
                 where: { staffId_date: { staffId: staff.id, date: new Date(yesterday) } },
             });
-            if (existing) continue; // already accounted for, one way or another
+
+            if (existing) {
+                // Not a no-show — they clocked in. But if they never checked out
+                // (the 10pm cutoff in clockOut() means this can only happen by
+                // genuinely forgetting, not by checking out late), the day still
+                // resolves to ABSENT rather than staying PRESENT/LATE with an
+                // open-ended checkout. Anything already resolved another way
+                // (on leave, public holiday, extra work day, or already flipped)
+                // is left untouched.
+                if (
+                    existing.checkInAt &&
+                    !existing.checkOutAt &&
+                    (existing.status === AttendanceStatus.PRESENT || existing.status === AttendanceStatus.LATE)
+                ) {
+                    const absentFeeAmount = await this.calculateAbsentFee(staff.id, yesterday);
+                    await this.prisma.attendanceRecord.update({
+                        where: { id: existing.id },
+                        data: { status: AttendanceStatus.ABSENT, absentFeeAmount },
+                    });
+                    markedNoCheckout += 1;
+                }
+                continue; // already accounted for, one way or another
+            }
 
             const effectiveDay = await this.workCalendarService.resolveEffectiveDay(staff.id, yesterday);
             if (effectiveDay.dayType === 'OFF') continue; // not expected to work at all
@@ -407,6 +487,7 @@ export class AttendanceService {
             });
             if (onApprovedLeave) continue;
 
+            const absentFeeAmount = await this.calculateAbsentFee(staff.id, yesterday);
             await this.prisma.attendanceRecord.create({
                 data: {
                     staffId: staff.id,
@@ -414,13 +495,16 @@ export class AttendanceService {
                     date: new Date(yesterday),
                     checkInAt: null,
                     status: AttendanceStatus.ABSENT,
+                    absentFeeAmount,
                 },
             });
             marked += 1;
         }
 
-        if (marked > 0) {
-            this.logger.log(`Auto-marked ${marked} staff member(s) absent for ${yesterday}`);
+        if (marked > 0 || markedNoCheckout > 0) {
+            this.logger.log(
+                `Auto-marked ${marked} no-show(s) and ${markedNoCheckout} no-checkout(s) absent for ${yesterday}`,
+            );
         }
     }
 

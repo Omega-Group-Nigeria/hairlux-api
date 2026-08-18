@@ -19,13 +19,4 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   lastName?: string;
-
-  @ApiProperty({
-    example: '+2348098765432',
-    description: 'User phone number',
-    required: false,
-  })
-  @IsOptional()
-  @IsString()
-  phone?: string;
 }

@@ -11,6 +11,7 @@ import { ApprovalService } from '../approval/approval.service';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { BulkCreateInventoryItemDto } from './dto/bulk-create-inventory-item.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { QueryInventoryDto } from './dto/query-inventory.dto';
 import { ReceiveGoodsDto } from './dto/receive-goods.dto';
@@ -60,6 +61,52 @@ export class InventoryService {
                 price: dto.category === 'FOR_SALE' ? dto.price : (dto.price ?? undefined),
             },
         });
+    }
+
+    /**
+     * Creates one InventoryItem row per selected branch, each with its own
+     * independent starting quantity — InventoryItem is branch-scoped, so
+     * "the same item across several branches" is genuinely several rows,
+     * not one row shared between them. A branch that already has this
+     * exact name+category combination is skipped rather than failing the
+     * whole request — the admin gets back exactly what was created and
+     * what was skipped, rather than having one pre-existing duplicate
+     * block every other branch in the selection.
+     */
+    async createItemForBranches(dto: BulkCreateInventoryItemDto) {
+        if (dto.category === 'FOR_SALE' && (dto.price === undefined || dto.price === null)) {
+            throw new BadRequestException('A price is required for items in the "For Sale" category');
+        }
+
+        const created: Array<{ branchId: string; id: string }> = [];
+        const skipped: Array<{ branchId: string; reason: string }> = [];
+
+        for (const entry of dto.branches) {
+            const existing = await this.prisma.inventoryItem.findFirst({
+                where: { branchId: entry.branchId, name: dto.name, category: dto.category },
+            });
+            if (existing) {
+                skipped.push({ branchId: entry.branchId, reason: 'An item with this name and category already exists at this branch' });
+                continue;
+            }
+
+            const item = await this.prisma.inventoryItem.create({
+                data: {
+                    name: dto.name,
+                    category: dto.category,
+                    branchId: entry.branchId,
+                    supplierId: dto.supplierId,
+                    unit: dto.unit,
+                    lowStockThreshold: dto.lowStockThreshold ?? 5,
+                    currentQuantity: entry.initialQuantity ?? 0,
+                    expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
+                    price: dto.category === 'FOR_SALE' ? dto.price : (dto.price ?? undefined),
+                },
+            });
+            created.push({ branchId: entry.branchId, id: item.id });
+        }
+
+        return { createdCount: created.length, skippedCount: skipped.length, created, skipped };
     }
 
     async updateItem(id: string, dto: UpdateInventoryItemDto) {

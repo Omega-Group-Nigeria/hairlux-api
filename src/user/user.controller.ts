@@ -21,6 +21,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { RequestPhoneVerificationDto } from './dto/request-phone-verification.dto';
+import { VerifyPhoneOtpDto } from './dto/verify-phone-otp.dto';
+import { SetPasswordDto } from './dto/set-password.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';
 import { ResponseUtil } from '../common/utils/response.util';
@@ -111,6 +114,36 @@ export class UserController {
     return ResponseUtil.success(user, 'Profile updated successfully');
   }
 
+  @Post('phone/request-otp')
+  @ApiOperation({
+    summary: 'Add and start verifying a phone number',
+    description: 'Sends a 6-digit OTP via SMS. The phone is stored immediately but stays unverified until verify-otp succeeds — this is the only way to set a phone number on the account.',
+  })
+  @ApiResponse({ status: 201, description: 'Verification code sent' })
+  @ApiResponse({ status: 400, description: 'Could not send the code' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 409, description: 'Phone number already belongs to a different account' })
+  async requestPhoneOtp(
+    @GetUser('id') userId: string,
+    @Body() dto: RequestPhoneVerificationDto,
+  ) {
+    const data = await this.userService.requestPhoneVerification(userId, dto.phone);
+    return ResponseUtil.success(data, 'Verification code sent');
+  }
+
+  @Post('phone/verify-otp')
+  @ApiOperation({ summary: 'Verify the phone number with the OTP just sent' })
+  @ApiResponse({ status: 201, description: 'Phone verified successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired code, or no code was requested' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async verifyPhoneOtp(
+    @GetUser('id') userId: string,
+    @Body() dto: VerifyPhoneOtpDto,
+  ) {
+    const data = await this.userService.verifyPhoneOtp(userId, dto.otpCode);
+    return ResponseUtil.success(data, 'Phone verified successfully');
+  }
+
   @Put('password')
   @ApiOperation({ summary: 'Change user password' })
   @ApiResponse({
@@ -133,6 +166,21 @@ export class UserController {
       userId,
       changePasswordDto,
     );
+    return ResponseUtil.success(result, result.message);
+  }
+
+  @Post('set-password')
+  @ApiOperation({
+    summary: 'Set a password for the first time (Google-signup accounts only)',
+    description: 'Rejects if the account already has a password -- use PUT /user/password (change) for that case instead.',
+  })
+  @ApiResponse({ status: 201, description: 'Password set successfully' })
+  @ApiResponse({ status: 400, description: 'Account already has a password set' })
+  async setPassword(
+    @GetUser('id') userId: string,
+    @Body() dto: SetPasswordDto,
+  ) {
+    const result = await this.userService.setPassword(userId, dto.newPassword);
     return ResponseUtil.success(result, result.message);
   }
 

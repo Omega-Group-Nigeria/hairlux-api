@@ -10,6 +10,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { MailModule } from './mail/mail.module';
+import { SmsModule } from './sms/sms.module';
 import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
 import { PaymentModule } from './payment/payment.module';
 import { BookingModule } from './booking/booking.module';
@@ -39,6 +40,7 @@ import { SalonBookingModule } from './salon-booking/salon-booking.module';
 import { ProductSaleModule } from './product-sale/product-sale.module';
 import { SupplierModule } from './supplier/supplier.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { CrmModule } from './crm/crm.module';
 
 @Module({
   imports: [
@@ -83,6 +85,7 @@ import { PayrollModule } from './payroll/payroll.module';
     PrismaModule,
     RedisModule,
     MailModule,
+    SmsModule,
     AuthModule,
     UserModule,
     ServiceCatalogModule,
@@ -106,6 +109,7 @@ import { PayrollModule } from './payroll/payroll.module';
     ApplicationModule,
     StorageModule,
     AttendanceModule,
+    CrmModule,
     LeaveModule,
     InventoryModule,
     BranchFinanceModule,
@@ -115,6 +119,8 @@ import { PayrollModule } from './payroll/payroll.module';
     SupplierModule,
     PayrollModule,
     BranchFinanceModule,
+    SmsModule,
+    CrmModule,
     
   ],
   controllers: [AppController],

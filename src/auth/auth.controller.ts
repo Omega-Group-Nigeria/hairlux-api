@@ -18,6 +18,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { RegisterBeauticianDto } from './dto/register-beautician.dto';
 import { LoginDto } from './dto/login.dto';
+import { GoogleSignInDto } from './dto/google-signin.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -166,6 +167,22 @@ export class AuthController {
   async login(@Body() loginDto: LoginDto) {
     const result = await this.authService.login(loginDto);
     return ResponseUtil.success(result, 'Login successful');
+  }
+
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Sign in or sign up with Google',
+    description:
+      'Accepts the ID token from the frontend Google Sign-In flow, verifies it server-side. ' +
+      'Matches an existing account by googleId, links Google onto an existing email+password ' +
+      'account by matching email, or creates a new account — same response shape as /auth/login.',
+  })
+  @ApiResponse({ status: 200, description: 'Signed in successfully' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired Google token, or email not verified with Google' })
+  async googleSignIn(@Body() dto: GoogleSignInDto) {
+    const result = await this.authService.googleSignIn(dto);
+    return ResponseUtil.success(result, 'Signed in successfully');
   }
 
   @Get('me')
