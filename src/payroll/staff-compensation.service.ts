@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StaffService } from '../staff/staff.service';
 import { SetCompensationDto } from './dto/set-compensation.dto';
 
 @Injectable()
 export class StaffCompensationService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly staffService: StaffService,
+    ) { }
 
     /**
      * Sets the staff member's current pay and records the change in history.
@@ -35,6 +39,8 @@ export class StaffCompensationService {
                 },
             }),
         ]);
+
+        await this.staffService.invalidateCache(staffId);
 
         return updated;
     }

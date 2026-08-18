@@ -31,6 +31,12 @@ enum CustomerSignupSource {
   APP
 }
 
+enum CommunicationChannel {
+  EMAIL
+  SMS
+  PUSH
+}
+
 enum MatchingExhaustedReason {
   NO_BEAUTICIANS_ONLINE
   NO_CANDIDATES_IN_AREA
@@ -245,6 +251,7 @@ enum OnboardingItemType {
   ADDRESS_VERIFICATION
   PASSPORT_PHOTO
   POLICY_ACKNOWLEDGMENT
+  PHYSICAL_ADDRESS_VERIFICATION
 }
 
 enum OnboardingItemReviewStatus {
@@ -311,6 +318,66 @@ enum LeaveRequestStatus {
   PENDING
   APPROVED
   REJECTED
+}
+
+// Mirrors the meaningful states of this feature's actual lifecycle --
+// NOT QoreID's own status.state values directly, since those only exist
+// once QoreID has been called at all. REQUESTED/SUBMITTED are ours,
+// covering the two stages before that ever happens.
+enum AddressVerificationStatus {
+  REQUESTED    // admin asked; staff hasn't filled the form yet
+  SUBMITTED    // staff submitted; QoreID has it, physical visit in progress (24-48h)
+  VERIFIED
+  REJECTED
+  FAILED       // e.g. QoreID couldn't complete the visit at all
+}
+
+model StaffAddressVerification {
+  id            String                     @id @default(uuid())
+  staffId       String                     @unique @map("staff_id")
+  status        AddressVerificationStatus  @default(REQUESTED)
+  requestedById String?                    @map("requested_by_id") // Staff.id of the admin who requested it -- nullable, admin-elevated action with no linked staff record
+  requestedAt   DateTime                   @default(now()) @map("requested_at")
+
+  // Submitted by the staff member on the Staff Portal form
+  street              String?
+  city                String?
+  lgaName             String?              @map("lga_name")
+  stateName           String?              @map("state_name")
+  landmark            String?
+  houseNumber         String?              @map("house_number")
+  generalDescription  String?              @map("general_description")
+  latitude            Decimal?             @db.Decimal(10, 7)
+  longitude           Decimal?             @db.Decimal(10, 7)
+  buildingDescription String?              @map("building_description") // Residential | Commercial
+  hasGateAndFence     Boolean?             @map("has_gate_and_fence")
+  buildingStatus      String?              @map("building_status") // Completed | Painted | Completed and Painted
+  buildingType        String?              @map("building_type") // Multi-story | Flats & Apartment | Bungalow | Office Complex
+  buildingColour      String?              @map("building_colour")
+  // S3 object keys, same private-bucket + fresh-presigned-URL-on-view
+  // convention as Staff.passportPhotoUrl -- never a permanent public link.
+  photo1Key           String?              @map("photo1_key")
+  photo2Key           String?              @map("photo2_key")
+  photo3Key           String?              @map("photo3_key")
+  submittedAt         DateTime?            @map("submitted_at")
+
+  // From QoreID
+  qoreidVerificationId String?             @unique @map("qoreid_verification_id")
+  qoreidStatus         String?             @map("qoreid_status")
+  qoreidSubStatus      String?             @map("qoreid_sub_status")
+  qoreidState          String?             @map("qoreid_state")
+  reportUrl            String?             @map("report_url")
+  resultReceivedAt     DateTime?           @map("result_received_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  staff       Staff  @relation("StaffAddressVerification", fields: [staffId], references: [id], onDelete: Cascade)
+  requestedBy Staff? @relation("AddressVerificationRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([staffId])
+  @@index([status])
+  @@map("staff_address_verifications")
 }
 
 model StaffOnboardingItem {
@@ -476,19 +543,25 @@ model StaffDocumentAcknowledgment {
 model User {
   id               String     @id @default(uuid())
   email            String     @unique
-  password         String
+
+  password         String?
+
+  googleId         String?    @unique @map("google_id")
   firstName        String     @map("first_name")
   lastName         String     @map("last_name")
-  phone            String?
+  phone            String?    @unique
   dateOfBirth      DateTime?  @map("date_of_birth") @db.Date
   role             UserRole   @default(USER)
   status           UserStatus @default(ACTIVE)
-  // Nullable — only meaningful for role=USER (Web/App customers); existing
-  // rows created before this field existed have no known value. Null does
-  // NOT mean walk-in; walk-ins are Customer records, not User records with
-  // this field unset.
+
   signupSource     CustomerSignupSource? @map("signup_source")
+  lastKnownLifecycle     String?   @map("last_known_lifecycle")
+  lastLifecycleCheckedAt DateTime? @map("last_lifecycle_checked_at")
   emailVerified    Boolean    @default(false) @map("email_verified")
+  phoneVerified    Boolean    @default(false) @map("phone_verified")
+  phoneVerifiedAt  DateTime?  @map("phone_verified_at")
+  phoneOtpCode     String?    @map("phone_otp_code")
+  phoneOtpExpiry   DateTime?  @map("phone_otp_expiry")
   otpCode          String?    @map("otp_code")
   otpExpiry        DateTime?  @map("otp_expiry")
   resetToken       String?    @map("reset_token")
@@ -542,6 +615,8 @@ model User {
   customerProfile            Customer?
   createdAnnouncements       Announcement[]              @relation("AnnouncementCreatedBy")
   createdDirectives          Directive[]                 @relation("DirectiveCreatedBy")
+  lifecycleTransitions       CustomerLifecycleTransition[]
+  communicationProfiles      CustomerCommunicationProfile[]
 
   @@index([role])
   @@index([status])
@@ -757,11 +832,132 @@ model Customer {
   userId    String?  @unique @map("user_id")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  lastKnownLifecycle     String?   @map("last_known_lifecycle")
+  lastLifecycleCheckedAt DateTime? @map("last_lifecycle_checked_at")
 
   user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
   salonBookings SalonBooking[]
+  lifecycleTransitions CustomerLifecycleTransition[]
+  communicationProfiles CustomerCommunicationProfile[]
 
   @@map("customers")
+}
+
+model CustomerLifecycleTransition {
+  id            String    @id @default(uuid())
+  customerId    String?   @map("customer_id")
+  userId        String?   @map("user_id")
+  fromLifecycle String    @map("from_lifecycle")
+  toLifecycle   String    @map("to_lifecycle")
+  detectedAt    DateTime  @default(now()) @map("detected_at")
+  processedAt   DateTime? @map("processed_at")
+
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sends    LifecycleCampaignSend[]
+
+  @@index([customerId])
+  @@index([userId])
+  @@index([processedAt])
+  @@map("customer_lifecycle_transitions")
+}
+
+/**
+ * One row per (subject, channel) -- exactly one of customerId/userId set,
+ * same pattern as CustomerLifecycleTransition. Owns ONLY consent/opt-out
+ * state, which can't be derived from anything else -- deliberately does
+ * NOT store channel "availability" (do they have a valid email/phone/push
+ * token right now), since that's already on User.email/phone or
+ * Customer.email/phone and would just go stale duplicated here; the send
+ * pipeline checks availability directly against those fields at send time.
+ *
+ * marketingConsent's default is CHANNEL-SPECIFIC and decided by
+ * application code at row-creation time, not a DB column default (a
+ * single column can't vary its default by another column's value):
+ * EMAIL and PUSH default to true (an existing customer relationship, or
+ * an explicit OS-level notification-permission grant, already implies
+ * consent); SMS defaults to false (more intrusive, real per-message
+ * cost -- requires an explicit opt-in).
+ */
+model CustomerCommunicationProfile {
+  id               String               @id @default(uuid())
+  customerId       String?              @map("customer_id")
+  userId           String?              @map("user_id")
+  channel          CommunicationChannel
+  marketingConsent Boolean              @map("marketing_consent")
+  optedOutAt       DateTime?            @map("opted_out_at")
+  optedOutReason   String?              @map("opted_out_reason")
+  lastDeliveryStatus String?            @map("last_delivery_status")
+  lastDeliveredAt  DateTime?            @map("last_delivered_at")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, channel])
+  @@unique([userId, channel])
+  @@index([customerId])
+  @@index([userId])
+  @@map("customer_communication_profiles")
+}
+
+/**
+ * One row per (targetLifecycle, channel) -- keyed by the "to" state a
+ * transition landed on, not the full (from, to) pair (see build-order
+ * discussion: message content is about where someone ended up, not where
+ * they came from). targetLifecycle stays a plain String, matching
+ * CustomerLifecycleTransition's fromLifecycle/toLifecycle -- avoids a
+ * second, parallel enum drifting from classifyCustomerLifecycle's
+ * existing TS union type. delayDays/cooldownDays are the "timing/
+ * frequency" config the send pipeline (not yet built) will read:
+ * delayDays = how long after detection to send; cooldownDays = minimum
+ * gap before this same template can send to the same subject again, so
+ * someone oscillating between two lifecycle states isn't re-messaged
+ * every single time.
+ */
+model LifecycleCampaignTemplate {
+  id             String               @id @default(uuid())
+  targetLifecycle String              @map("target_lifecycle")
+  channel        CommunicationChannel
+  isEnabled      Boolean              @default(true) @map("is_enabled")
+  subject        String?              // EMAIL only
+  bodyTemplate   String               @map("body_template") // supports {{firstName}}, {{lastName}}, {{lastVisitDate}}
+  delayDays      Int                  @default(0) @map("delay_days")
+  cooldownDays   Int                  @default(30) @map("cooldown_days")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  @@unique([targetLifecycle, channel])
+  @@map("lifecycle_campaign_templates")
+
+  sends LifecycleCampaignSend[]
+}
+
+/**
+ * One row per (transition, template) SEND ATTEMPT -- not per transition.
+ * Needed because a single transition can match up to 3 templates (one per
+ * channel), each with its own independent delayDays; a single processedAt
+ * flag on the transition can't represent "email already sent, SMS still
+ * waiting on its delay window" without this. The cooldown check reads
+ * status='SENT' rows here specifically -- a SKIPPED attempt (no consent,
+ * no contact info, etc.) must never satisfy a future cooldown check, only
+ * an actual send does.
+ */
+model LifecycleCampaignSend {
+  id           String    @id @default(uuid())
+  transitionId String    @map("transition_id")
+  templateId   String    @map("template_id")
+  status       String    // SENT | SKIPPED_NO_CONSENT | SKIPPED_NO_CONTACT | SKIPPED_COOLDOWN | SKIPPED_TEMPLATE_DISABLED | FAILED
+  sentAt       DateTime? @map("sent_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  transition CustomerLifecycleTransition @relation(fields: [transitionId], references: [id], onDelete: Cascade)
+  template   LifecycleCampaignTemplate   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([transitionId, templateId])
+  @@index([templateId, status])
+  @@map("lifecycle_campaign_sends")
 }
 
 model Booking {
@@ -990,12 +1186,29 @@ model Review {
 // HCS CRM & Retention Engine — VIP/Premium spend thresholds must be
 // admin-configurable, not hard-coded, per spec. Single-row settings table,
 // same pattern as BusinessSettings.
+// Despite the name (kept as-is to avoid touching every existing
+// prisma.customerValueSettings reference across the codebase), this single
+// row now holds BOTH Value thresholds (spend-based) AND Lifecycle
+// thresholds (day/visit-count-based) — the two independent CRM
+// classification dimensions share one admin-configurable settings row.
 model CustomerValueSettings {
   id                    String   @id @default(uuid())
   premiumSpendThreshold Decimal  @default(50000) @map("premium_spend_threshold") @db.Decimal(10, 2)
   vipSpendThreshold     Decimal  @default(200000) @map("vip_spend_threshold") @db.Decimal(10, 2)
-  updatedAt             DateTime @updatedAt @map("updated_at")
-  updatedById           String?  @map("updated_by_id")
+
+  // Lifecycle thresholds — see classifyCustomerLifecycle for exactly how
+  // each is applied. newAccountAgeDays/newVisitCountThreshold gate the NEW
+  // bucket; activeDaysThreshold/atRiskDaysThreshold/dormantDaysThreshold
+  // are the days-since-last-visit cutoffs for ACTIVE/AT_RISK/DORMANT
+  // (anything beyond dormantDaysThreshold is INACTIVE).
+  newAccountAgeDays      Int @default(30) @map("new_account_age_days")
+  newVisitCountThreshold Int @default(3) @map("new_visit_count_threshold")
+  activeDaysThreshold    Int @default(30) @map("active_days_threshold")
+  atRiskDaysThreshold    Int @default(90) @map("at_risk_days_threshold")
+  dormantDaysThreshold   Int @default(180) @map("dormant_days_threshold")
+
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by_id")
 
   @@map("customer_value_settings")
 }
@@ -1469,6 +1682,8 @@ model Staff {
   bookingsAsInHouseStaff   Booking[]                 @relation("BookingAssignedInHouseStaff")
 
   bankAccount             StaffBankAccount?
+  addressVerification         StaffAddressVerification? @relation("StaffAddressVerification")
+  addressVerificationsRequested StaffAddressVerification[] @relation("AddressVerificationRequestedBy")
   compensationHistory     StaffCompensationHistory[] @relation("StaffCompensationHistory")
   compensationChangesMade StaffCompensationHistory[] @relation("CompensationChangedBy")
   payrollPeriodsGenerated PayrollPeriod[]            @relation("PayrollGeneratedBy")
@@ -2008,7 +2223,14 @@ model Directive {
   targetStaffId String          @map("target_staff_id")
   createdById   String?         @map("created_by_id")
   createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
   respondedAt   DateTime?       @map("responded_at")
+  dueDate       DateTime?       @map("due_date")
+  // Set by the staff member themselves, optionally, alongside marking the
+  // directive COMPLETED — proof of completion (e.g. a photo). S3 key, same
+  // private-storage + fresh-presigned-URL-on-view convention as
+  // Staff.passportPhotoUrl, never a permanent public link.
+  evidenceUrl   String?         @map("evidence_url")
 
   targetStaff Staff @relation(fields: [targetStaffId], references: [id], onDelete: Cascade)
   createdBy   User? @relation("DirectiveCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -2072,6 +2294,7 @@ model AttendanceRecord {
   status                AttendanceStatus @default(PRESENT)
   lateMinutes           Int?             @map("late_minutes")
   latePenaltyAmount     Decimal?         @map("late_penalty_amount") @db.Decimal(10, 2) // minutes late beyond grace period × LatePenaltySettings.amountPerMinute, captured at check-in time
+  absentFeeAmount       Decimal?         @map("absent_fee_amount") @db.Decimal(10, 2) // that day's expected working minutes × LatePenaltySettings.amountPerMinute, captured the moment ABSENT is recorded — never recomputed later, same freeze-at-the-moment convention as latePenaltyAmount
   overtimeMinutes       Int?             @map("overtime_minutes")
   earlyDepartureMinutes Int?             @map("early_departure_minutes")
 

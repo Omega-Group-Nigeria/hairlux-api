@@ -5,17 +5,30 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { AnnouncementTargetDto, CreateAnnouncementDto } from './dto/create-announcement.dto';
-import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
-import { CreateDirectiveDto } from './dto/create-directive.dto';
 import { sanitizeAnnouncementHtml } from '../common/utils/announcement-sanitize.util';
+import { PrismaService } from '../prisma/prisma.service';
+import { S3Service } from '../storage/s3.service';
+import { AnnouncementTargetDto, CreateAnnouncementDto } from './dto/create-announcement.dto';
+import { BulkCreateDirectivesDto, CreateDirectiveDto } from './dto/create-directive.dto';
+import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
+import { UpdateDirectiveDto } from './dto/update-directive.dto';
 
 const DIRECTIVE_STATUS_ORDER = ['PENDING', 'ACKNOWLEDGED', 'COMPLETED'] as const;
 
+export interface DirectiveFilters {
+  status?: string;
+  targetStaffId?: string;
+  locationId?: string;
+  dueBefore?: string;
+  dueAfter?: string;
+}
+
 @Injectable()
 export class StaffCommsService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3Service: S3Service,
+  ) { }
 
   private get announcementModel() {
     return (this.prisma as unknown as { announcement: any }).announcement;
@@ -197,6 +210,7 @@ export class StaffCommsService {
         data: {
           title: dto.title,
           body: dto.body,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
           targetStaffId: dto.targetStaffId,
           createdById: createdById ?? null,
         },
@@ -225,6 +239,7 @@ export class StaffCommsService {
           data: {
             title: dto.title,
             body: dto.body,
+            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
             targetStaffId: s.id,
             createdById: createdById ?? null,
           },
@@ -233,6 +248,62 @@ export class StaffCommsService {
     );
 
     return { fannedOutTo: created.length, directives: created };
+  }
+
+  /**
+   * Several distinct task definitions sent together in one action -- each
+   * entry independently follows createDirective's own individual-or-branch
+   * rule, so a batch can freely mix single-recipient and whole-branch tasks.
+   * One entry failing (e.g. a bad targetLocationId) does not roll back the
+   * others -- each result records success or its own error, since these are
+   * genuinely independent tasks, not one atomic unit.
+   */
+  async bulkCreateDirectives(dto: BulkCreateDirectivesDto, createdById?: string) {
+    const results = await Promise.allSettled(
+      dto.tasks.map((task) => this.createDirective(task, createdById)),
+    );
+
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results
+      .map((r, i) => ({ r, i }))
+      .filter(({ r }) => r.status === 'rejected')
+      .map(({ r, i }) => ({
+        taskIndex: i,
+        title: dto.tasks[i].title,
+        error: (r as PromiseRejectedResult).reason?.message ?? 'Unknown error',
+      }));
+
+    return { succeededCount: succeeded, failedCount: failed.length, failed };
+  }
+
+  /**
+   * Edits exactly one Directive row. A branch-fanned batch has no shared
+   * parent identifier across its rows -- this always edits a single
+   * person's task, never the original batch as a whole.
+   */
+  async updateDirective(directiveId: string, dto: UpdateDirectiveDto) {
+    const directive = await this.directiveModel.findFirst({ where: { id: directiveId } });
+    if (!directive) {
+      throw new NotFoundException('Directive not found');
+    }
+
+    return this.directiveModel.update({
+      where: { id: directiveId },
+      data: {
+        ...(dto.title !== undefined && { title: dto.title }),
+        ...(dto.body !== undefined && { body: dto.body }),
+        ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
+      },
+    });
+  }
+
+  async deleteDirective(directiveId: string) {
+    const directive = await this.directiveModel.findFirst({ where: { id: directiveId } });
+    if (!directive) {
+      throw new NotFoundException('Directive not found');
+    }
+    await this.directiveModel.delete({ where: { id: directiveId } });
+    return { success: true };
   }
 
   async getDirectivesForStaff(staffId: string) {
@@ -249,14 +320,22 @@ export class StaffCommsService {
   }
 
   /** Admin-wide view across all staff -- used by the Tasks & Directives admin page and the dashboard's HR Snapshot count. */
-  async getAllDirectives(filters: { status?: string } = {}) {
+  async getAllDirectives(filters: DirectiveFilters = {}) {
     return this.directiveModel.findMany({
       where: {
         ...(filters.status && { status: filters.status }),
+        ...(filters.targetStaffId && { targetStaffId: filters.targetStaffId }),
+        ...(filters.locationId && { targetStaff: { locationId: filters.locationId } }),
+        ...((filters.dueBefore || filters.dueAfter) && {
+          dueDate: {
+            ...(filters.dueAfter && { gte: new Date(filters.dueAfter) }),
+            ...(filters.dueBefore && { lte: new Date(filters.dueBefore) }),
+          },
+        }),
       },
       include: {
         createdBy: { select: { firstName: true, lastName: true } },
-        targetStaff: { select: { id: true, name: true, staffCode: true } },
+        targetStaff: { select: { id: true, name: true, staffCode: true, locationId: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 500,
@@ -290,5 +369,52 @@ export class StaffCommsService {
       where: { id: directiveId },
       data: { status: newStatus, respondedAt: new Date() },
     });
+  }
+
+  /**
+   * Optional proof of completion, submitted by the staff member themselves.
+   * Same private-storage + presigned-URL-on-view convention as passport
+   * photos -- never a permanent public link. Can be submitted independent
+   * of the status-update call (multipart upload vs. plain JSON status
+   * change), typically right around when the staff member marks the
+   * directive COMPLETED.
+   */
+  async submitDirectiveEvidence(
+    staffId: string,
+    directiveId: string,
+    file: { buffer: Buffer; originalname: string; mimetype: string },
+  ) {
+    const directive = await this.directiveModel.findFirst({ where: { id: directiveId } });
+    if (!directive) {
+      throw new NotFoundException('Directive not found');
+    }
+    if (directive.targetStaffId !== staffId) {
+      throw new ForbiddenException('This directive was not sent to you');
+    }
+
+    const key = await this.s3Service.uploadObject(
+      file.buffer,
+      'directives/evidence',
+      file.originalname,
+      file.mimetype,
+    );
+
+    return this.directiveModel.update({
+      where: { id: directiveId },
+      data: { evidenceUrl: key },
+    });
+  }
+
+  /** Fresh presigned view URL, generated on demand. Staff can view their own; admins can view any (see admin controller). */
+  async getDirectiveEvidenceViewUrl(directiveId: string, requestingStaffId?: string) {
+    const directive = await this.directiveModel.findFirst({ where: { id: directiveId } });
+    if (!directive) {
+      throw new NotFoundException('Directive not found');
+    }
+    if (requestingStaffId && directive.targetStaffId !== requestingStaffId) {
+      throw new ForbiddenException('This directive was not sent to you');
+    }
+    if (!directive.evidenceUrl) return null;
+    return this.s3Service.getPresignedUrl(directive.evidenceUrl);
   }
 }

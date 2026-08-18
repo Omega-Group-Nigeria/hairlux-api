@@ -8,6 +8,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { StaffService } from '../staff/staff.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
+import { BulkCreateInventoryItemDto } from './dto/bulk-create-inventory-item.dto';
 import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
 import { QueryInventoryDto } from './dto/query-inventory.dto';
 import { RejectStockAdjustmentDto } from './dto/reject-stock-adjustment.dto';
@@ -30,6 +31,13 @@ export class AdminInventoryController {
     async findAll(@Query() query: QueryInventoryDto) {
         const data = await this.inventoryService.findAll(query);
         return { success: true, message: 'Inventory items retrieved successfully', data };
+    }
+
+    @Post('bulk')
+    @ApiOperation({ summary: 'Create the same item across multiple branches at once, with an independent starting quantity per branch' })
+    async createBulk(@Body() dto: BulkCreateInventoryItemDto) {
+        const data = await this.inventoryService.createItemForBranches(dto);
+        return { success: true, message: 'Item created successfully', data };
     }
 
     @Post()

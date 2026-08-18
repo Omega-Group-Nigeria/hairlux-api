@@ -1,31 +1,33 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
-  BadRequestException,
   UnauthorizedException,
-  ConflictException,
 } from '@nestjs/common';
-import * as argon2 from 'argon2';
-import { PrismaService } from '../prisma/prisma.service';
-import { UpdateProfileDto } from './dto/update-profile.dto';
-import { ChangePasswordDto } from './dto/change-password.dto';
-import { CreateAddressDto } from './dto/create-address.dto';
-import { UpdateAddressDto } from './dto/update-address.dto';
-import { ADMIN_USER_IDENTITY_SELECT } from '../common/constants/admin-user-select';
-import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
-import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import {
   Prisma,
+  TransactionStatus,
+  TransactionType,
   UserRole,
   UserStatus,
-  TransactionType,
-  TransactionStatus,
 } from '@prisma/client';
-import { GetTransactionsDto } from '../wallet/dto/get-transactions.dto';
+import * as argon2 from 'argon2';
+import { ADMIN_USER_IDENTITY_SELECT } from '../common/constants/admin-user-select';
 import { ErrorMessages } from '../common/constants/error-messages';
+import { classifyCustomerLifecycle, classifyCustomerValue, CustomerLifecycle, CustomerValue, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
+import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { AfricasTalkingService } from '../sms/africas-talking.service';
+import { GetTransactionsDto } from '../wallet/dto/get-transactions.dto';
+import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { CreateAddressDto } from './dto/create-address.dto';
+import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import { AddressComponentsDto } from './dto/shared-address-components.dto';
-import { classifyCustomerLifecycle, classifyCustomerValue, getCustomerValueThresholds, CustomerLifecycle, CustomerValue } from '../common/utils/customer-status.util';
+import { UpdateAddressDto } from './dto/update-address.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+
 
 interface CustomerUsersFilterParams {
   query?: string;
@@ -78,6 +80,7 @@ export class UserService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
+    private smsService: AfricasTalkingService,
   ) { }
 
   async getProfile(userId: string) {
@@ -89,6 +92,8 @@ export class UserService {
         firstName: true,
         lastName: true,
         phone: true,
+        phoneVerified: true,
+        phoneVerifiedAt: true,
         role: true,
         status: true,
         emailVerified: true,
@@ -96,6 +101,7 @@ export class UserService {
         adminRole: { select: { id: true, name: true } },
         createdAt: true,
         updatedAt: true,
+        password: true,
       },
     });
 
@@ -103,7 +109,12 @@ export class UserService {
       throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
     }
 
-    return user;
+    // Never expose the hash itself -- same destructure-and-compute pattern
+    // AuthService.buildAuthenticatedResponse uses for hasPassword at login.
+    // Needed here too since a returning user with a still-valid token loads
+    // the dashboard via a profile fetch, not a fresh login response.
+    const { password, ...userWithoutPassword } = user;
+    return { ...userWithoutPassword, hasPassword: !!password };
   }
 
   async updateProfile(userId: string, updateProfileDto: UpdateProfileDto) {
@@ -128,6 +139,72 @@ export class UserService {
     return user;
   }
 
+  /**
+   * Stores the phone unverified and sends an OTP. Uniqueness is checked
+   * against phone alone (the column itself is @unique) -- but only a
+   * DIFFERENT account already having this exact phone blocks the request;
+   * re-requesting for your own already-set-but-unverified phone is fine
+   * (e.g. retrying after the first SMS didn't arrive).
+   */
+  async requestPhoneVerification(userId: string, phone: string) {
+    const existing = await this.prisma.user.findUnique({ where: { phone } });
+    if (existing && existing.id !== userId) {
+      throw new ConflictException('This phone number is already associated with another account.');
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes, matching the email-OTP convention
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        phone,
+        phoneVerified: false,
+        phoneVerifiedAt: null,
+        phoneOtpCode: otpCode,
+        phoneOtpExpiry: otpExpiry,
+      },
+    });
+
+    const sent = await this.smsService.sendOtpSms(phone, otpCode);
+    if (!sent) {
+      throw new BadRequestException('Could not send the verification code. Please check the number and try again.');
+    }
+
+    return { message: 'Verification code sent.' };
+  }
+
+  async verifyPhoneOtp(userId: string, otpCode: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (!user.phoneOtpCode || !user.phoneOtpExpiry) {
+      throw new BadRequestException('No verification code was requested for this account. Please request one first.');
+    }
+    if (user.phoneOtpExpiry < new Date()) {
+      throw new BadRequestException('This code has expired. Please request a new one.');
+    }
+    if (user.phoneOtpCode !== otpCode) {
+      throw new BadRequestException('Invalid verification code.');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        phoneVerified: true,
+        phoneVerifiedAt: new Date(),
+        phoneOtpCode: null,
+        phoneOtpExpiry: null,
+      },
+      select: { id: true, phone: true, phoneVerified: true, phoneVerifiedAt: true },
+    });
+
+    void this.redis.del(`user:profile:${userId}`);
+
+    return updated;
+  }
+
   async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
     const { currentPassword, newPassword } = changePasswordDto;
 
@@ -138,6 +215,14 @@ export class UserService {
 
     if (!user) {
       throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    }
+
+    // A Google-signup account has no local password to change -- there is
+    // nothing for this endpoint to verify against.
+    if (!user.password) {
+      throw new BadRequestException(
+        'This account has no password set (it uses Google sign-in). There is no password to change.',
+      );
     }
 
     // Verify current password
@@ -162,6 +247,40 @@ export class UserService {
     });
 
     return { message: 'Password changed successfully' };
+  }
+
+  /**
+   * For an account that currently has NO password (Google-signup only) --
+   * sets one for the first time. Deliberately rejects if a password
+   * already exists, since that case must go through changePassword
+   * instead (which correctly requires the current password) -- this
+   * method has no way to verify identity beyond the JWT itself, which is
+   * appropriate only for the "nothing to confirm against yet" case.
+   */
+  async setPassword(userId: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    }
+    if (user.password) {
+      throw new BadRequestException(
+        'This account already has a password set. Use the change-password flow instead.',
+      );
+    }
+
+    const hashedPassword = await argon2.hash(newPassword, {
+      type: argon2.argon2id,
+      memoryCost: 65536,
+      timeCost: 4,
+      parallelism: 1,
+    });
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+
+    return { message: 'Password set successfully' };
   }
 
   // Address Management (soft delete via deletedAt)
@@ -565,6 +684,8 @@ export class UserService {
         firstName: true,
         lastName: true,
         phone: true,
+        phoneVerified: true,
+        phoneVerifiedAt: true,
         role: true,
         status: true,
         emailVerified: true,
@@ -838,7 +959,7 @@ export class UserService {
     }
 
     const now = new Date();
-    const valueThresholds = await getCustomerValueThresholds(this.prisma);
+    const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
     let withStats = allMatching.map((u) => {
       const s = statsByUser.get(u.id);
       const visitCount = s?.visitCount ?? 0;
@@ -872,6 +993,7 @@ export class UserService {
           completedVisitCount: visitCount,
           accountCreatedAt: u.createdAt,
           now,
+          thresholds: lifecycleThresholds,
         }),
         value: classifyCustomerValue(totalSpend, valueThresholds),
       };
@@ -968,7 +1090,7 @@ export class UserService {
       new Map(bookings.filter((b) => b.branch).map((b) => [b.branch!.id, b.branch!.name])).entries(),
     ).map(([id, name]) => ({ id, name }));
 
-    const valueThresholds = await getCustomerValueThresholds(this.prisma);
+    const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
 
     return {
       customer: user,
@@ -982,6 +1104,7 @@ export class UserService {
         lastVisitDate,
         completedVisitCount: visitCount,
         accountCreatedAt: user.createdAt,
+        thresholds: lifecycleThresholds,
       }),
       value: classifyCustomerValue(totalSpend, valueThresholds),
       bookingHistory: bookings.map((b) => {

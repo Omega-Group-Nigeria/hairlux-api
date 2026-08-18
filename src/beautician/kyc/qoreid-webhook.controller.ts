@@ -16,6 +16,7 @@ import type { Queue } from 'bull';
 import { Public } from '../../auth/decorators/public.decorator';
 import { KycStatusService } from './services/kyc-status.service';
 import { QoreidWebhookService } from './services/qoreid-webhook.service';
+import { StaffAddressVerificationService } from '../../staff/staff-address-verification.service';
 import type { Request } from 'express';
 import {
   QOREID_PROFILE_PHOTO_JOB,
@@ -31,9 +32,10 @@ export class QoreidWebhookController {
   constructor(
     private readonly webhookService: QoreidWebhookService,
     private readonly kycStatusService: KycStatusService,
+    private readonly addressVerificationService: StaffAddressVerificationService,
     @InjectQueue(QOREID_PROFILE_PHOTO_QUEUE)
     private readonly profilePhotoQueue: Queue<QoreidProfilePhotoJobData>,
-  ) {}
+  ) { }
 
   @Public()
   @Post('qoreid')
@@ -71,6 +73,16 @@ export class QoreidWebhookController {
 
     if (!body || Object.keys(body).length === 0) {
       throw new BadRequestException('Webhook payload is required');
+    }
+
+    // QoreID sends every event type to this one shared webhook URL --
+    // "address" events (Physical Address Verification Pro, used by
+    // Staff, not Beautician KYC) are routed to their own handler here
+    // rather than through kycStatusService, which only knows about the
+    // KYC/identity event shape.
+    if (body.event === 'address') {
+      await this.addressVerificationService.handleWebhook(body);
+      return { success: true, message: 'Webhook processed' };
     }
 
     // Fast path: KYC status only (DB). Never await Cloudinary here.

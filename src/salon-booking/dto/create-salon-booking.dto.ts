@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
     ArrayMinSize,
     IsArray,
+    IsBoolean,
     IsDateString,
     IsInt,
     IsOptional,
@@ -55,6 +56,16 @@ export class CreateSalonBookingDto {
     @IsString()
     customerEmail?: string;
 
+    @ApiPropertyOptional({
+        description:
+            'Set only after staff explicitly confirmed a "Is this <name>? Link this visit to their account?" ' +
+            'prompt shown by the customers/check-phone endpoint -- never set automatically just because the ' +
+            'phone happens to match a verified account.',
+    })
+    @IsOptional()
+    @IsBoolean()
+    linkToVerifiedUser?: boolean;
+    
     @ApiPropertyOptional({ description: 'The Stylist/staff member providing the service — can be left unset and assigned later (e.g. at reservation verification).' })
     @IsOptional()
     @IsUUID()

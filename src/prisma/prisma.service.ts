@@ -424,6 +424,23 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.stockTransfer;
   }
 
+  get customerLifecycleTransition() {
+    return this.client.customerLifecycleTransition;
+  }
 
+  get customerCommunicationProfile() {
+    return this.client.customerCommunicationProfile;
+  }
 
+  get lifecycleCampaignTemplate() {
+    return this.client.lifecycleCampaignTemplate;
+  }
+
+  get lifecycleCampaignSend() {
+    return this.client.lifecycleCampaignSend;
+  }
+
+  get staffAddressVerification() {
+    return this.client.staffAddressVerification;
+  }
 }

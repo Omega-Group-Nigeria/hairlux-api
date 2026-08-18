@@ -7,12 +7,14 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as crypto from 'crypto';
-import { Prisma } from '@prisma/client';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import * as QRCode from 'qrcode';
 import { AuthService } from 'src/auth/auth.service';
+import { HAIRLUX_LOGO_BASE64 } from '../common/assets/hairlux-logo';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
@@ -219,6 +221,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     private mailService: MailService,
     private authService: AuthService,
     private s3Service: S3Service,
+    private configService: ConfigService,
   ) { }
 
   private get staffModel(): StaffModelDelegate {
@@ -294,7 +297,8 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async invalidateCache(staffId?: string) {
+  
+   async invalidateCache(staffId?: string) {
     await Promise.all([
       this.redis.delByPattern('staff:list:*'),
       this.redis.delByPattern('staff:birthdays:*'),
@@ -1765,7 +1769,14 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     // credit card, just held vertically (a standard lanyard badge size).
     const W = 153, H = 243;
 
-    const qrDataUrl = await QRCode.toDataURL(staff.staffCode, { margin: 1, width: 200 });
+    // Verification page base URL, defaulting to the production domain --
+    // the QR code must point at a page a phone camera opens directly, not
+    // the raw API endpoint (which would just show JSON).
+    const verificationBaseUrl =
+      this.configService.get<string>('STAFF_ID_VERIFICATION_URL') ||
+      'https://hairlux.com.ng/verify-staff.html';
+    const verificationUrl = `${verificationBaseUrl}?code=${encodeURIComponent(staff.staffCode)}`;
+    const qrDataUrl = await QRCode.toDataURL(verificationUrl, { margin: 1, width: 200 });
     const qrPngBytes = Buffer.from(qrDataUrl.split(',')[1], 'base64');
 
     const pdfDoc = await PDFDocument.create();
@@ -1773,6 +1784,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const qrImage = await pdfDoc.embedPng(qrPngBytes);
+    const logoImage = await pdfDoc.embedPng(Buffer.from(HAIRLUX_LOGO_BASE64, 'base64'));
 
     const dark = rgb(0.071, 0.063, 0.051);
     const gold = rgb(0.616, 0.510, 0.290);
@@ -1786,20 +1798,120 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       page.drawText(text, { x: (W - width) / 2, y, size, font, color });
     };
 
-    page.drawRectangle({ x: 0, y: 0, width: W, height: H, color: dark });
-    centerText('HAIRLUX SALON & SPA', H - 20, boldFont, 7, gold);
+    // Force-breaks a single word character-by-character at minSize -- the
+    // hard-guarantee fallback for a word with no spaces at all (word-wrap
+    // alone can never break it) that's still too wide even at the
+    // smallest allowed font size. Physical print material can never be
+    // allowed to silently overflow, verified against a pathological
+    // 30-character single-word test case.
+    const forceBreakWord = (word: string, font: typeof boldFont, size: number, maxWidth: number): string[] => {
+      const lines: string[] = [];
+      let current = '';
+      for (const ch of word) {
+        const candidate = current + ch;
+        if (font.widthOfTextAtSize(candidate, size) <= maxWidth || !current) {
+          current = candidate;
+        } else {
+          lines.push(current);
+          current = ch;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    };
 
-    const panelTop = H - 32;
+    /**
+     * Greedy word-wrap into as many lines as needed to fit maxWidth at the
+     * given font size, shrinking the font (down to minSize) only if a
+     * single word is still too wide to fit even alone -- fixes the name-
+     * overflow bug, where a long name at a fixed size just ran off the
+     * card with no wrapping or shrinking at all. Falls back to
+     * forceBreakWord as a last resort if even minSize isn't enough.
+     */
+    const wrapText = (text: string, font: typeof boldFont, startSize: number, minSize: number, maxWidth: number): { lines: string[]; size: number } => {
+      let size = startSize;
+      while (size >= minSize) {
+        const words = text.split(' ');
+        const lines: string[] = [];
+        let current = '';
+        let overflowed = false;
+        for (const word of words) {
+          const candidate = current ? current + ' ' + word : word;
+          if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+            current = candidate;
+          } else {
+            if (!current) { overflowed = true; break; }
+            lines.push(current);
+            current = word;
+          }
+        }
+        if (!overflowed) {
+          if (current) lines.push(current);
+          return { lines, size };
+        }
+        size -= 1;
+      }
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let current = '';
+      for (const word of words) {
+        if (font.widthOfTextAtSize(word, minSize) > maxWidth) {
+          if (current) { lines.push(current); current = ''; }
+          lines.push(...forceBreakWord(word, font, minSize, maxWidth));
+        } else {
+          const candidate = current ? current + ' ' + word : word;
+          if (font.widthOfTextAtSize(candidate, minSize) <= maxWidth) {
+            current = candidate;
+          } else {
+            if (current) lines.push(current);
+            current = word;
+          }
+        }
+      }
+      if (current) lines.push(current);
+      return { lines, size: minSize };
+    };
+
+    page.drawRectangle({ x: 0, y: 0, width: W, height: H, color: dark });
+
+    // Logo + wordmark header. All numbers below were verified by actually
+    // rendering test cards (short name, a wrapped long name, and a
+    // pathological 30-character single word with no spaces) rather than
+    // hand-calculated -- an earlier version of this math had the wordmark
+    // sitting ~26pt below the logo instead of directly under it.
+    // No separate "HAIRLUX SALON & SPA" text label -- the logo image
+    // itself is the full lockup (mark + wordmark baked in), verified
+    // legible at this render size against the card's dark background
+    // before removing the redundant duplicate text underneath it.
+    const logoDims = logoImage.scale(1);
+    const logoDisplayHeight = 24;
+    const logoDisplayWidth = (logoDims.width / logoDims.height) * logoDisplayHeight;
+    const logoTop = H - 12;
+    const logoBottom = logoTop - logoDisplayHeight;
+    page.drawImage(logoImage, {
+      x: (W - logoDisplayWidth) / 2, y: logoBottom, width: logoDisplayWidth, height: logoDisplayHeight,
+    });
+
+    const panelTop = logoBottom - 10;
     const panelBottom = 14;
     page.drawRectangle({
       x: 10, y: panelBottom, width: W - 20, height: panelTop - panelBottom,
       borderColor: panelBorder, borderWidth: 1,
     });
 
+    // Name is wrapped/measured BEFORE the photo, since photo size and every
+    // gap below it now adapt to whether the name needed 1 or 2+ lines --
+    // reclaiming exactly the extra space a wrapped name costs, rather than
+    // a fixed budget that only worked for short names (which is what
+    // caused the original overflow bug this whole section fixes).
+    const nameMaxWidth = W - 24;
+    const { lines: nameLines, size: nameSize } = wrapText(staff.name.toUpperCase(), boldFont, 12, 8, nameMaxWidth);
+    const isTwoLineName = nameLines.length > 1;
+
     // Only embed the photo if it's actually been admin-approved -- an
     // uploaded-but-unreviewed photo shouldn't appear on an official ID card.
-    const photoSize = 52;
-    const photoTop = panelTop - 12;
+    const photoSize = isTwoLineName ? 44 : 50;
+    const photoTop = panelTop - (isTwoLineName ? 8 : 9);
     const photoY = photoTop - photoSize;
     let hasPhoto = false;
     const photoKey = (staff as unknown as { passportPhotoUrl: string | null }).passportPhotoUrl;
@@ -1835,23 +1947,74 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       centerText('PHOTO', photoY + photoSize / 2 - 3, regularFont, 7, lightGray);
     }
 
-    const nameY = photoY - 18;
-    const roleY = nameY - 15;
-    const branchY = roleY - 13;
-    centerText(staff.name, nameY, boldFont, 12, white);
+    const nameLineHeight = nameSize + 2;
+    let nameCursorY = photoY - (isTwoLineName ? 14 : 16);
+    nameLines.forEach((line) => {
+      centerText(line, nameCursorY, boldFont, nameSize, white);
+      nameCursorY -= nameLineHeight;
+    });
+
+    const roleY = nameCursorY - (isTwoLineName ? 2 : 4);
+    const branchY = roleY - (isTwoLineName ? 11 : 12);
     centerText(staff.currentRole, roleY, regularFont, 8, lightGray);
     centerText(location?.name ?? 'Branch unassigned', branchY, regularFont, 8, lightGray);
 
-    const codeY = branchY - 20;
-    centerText(staff.staffCode, codeY, boldFont, 11, gold);
+    const codeY = branchY - (isTwoLineName ? 14 : 18);
+    centerText(staff.staffCode, codeY, boldFont, 10, gold);
 
-    const qrSize = 40;
-    const qrTop = codeY - 14;
+    const qrSize = isTwoLineName ? 34 : 38;
+    const qrTop = codeY - (isTwoLineName ? 8 : 12);
     const qrY = qrTop - qrSize;
     page.drawImage(qrImage, { x: (W - qrSize) / 2, y: qrY, width: qrSize, height: qrSize });
 
     const bytes = await pdfDoc.save();
     return Buffer.from(bytes);
+  }
+
+  /**
+   * Powers the public ID-card QR verification page -- deliberately returns
+   * only non-sensitive fields (name, photo, role, branch, staff code).
+   * Never phone, email, salary, NIN, address, or anything else on the
+   * Staff record. A person no longer ACTIVE/ON_LEAVE (exited, suspended,
+   * archived) does NOT verify as a current employee -- an ID card must
+   * stop confirming someone's employment the moment that's no longer
+   * true, which is the whole point of this being a live lookup rather
+   * than static text printed on the card.
+   */
+  async verifyByStaffCode(staffCode: string) {
+    const staff = await this.staffModel.findFirst({
+      where: { staffCode },
+      include: { location: true },
+    } as QueryArgs);
+
+    if (!staff || !['ACTIVE', 'ON_LEAVE'].includes(staff.employmentStatus)) {
+      return { verified: false as const };
+    }
+
+    const location = (staff as unknown as { location?: StaffLocationRecord }).location;
+    let photoUrl: string | null = null;
+    const photoKey = (staff as unknown as { passportPhotoUrl: string | null }).passportPhotoUrl;
+    if (photoKey) {
+      const photoItem = await this.onboardingItemModel.findFirst({
+        where: { staffId: staff.id, type: 'PASSPORT_PHOTO' },
+      });
+      if (photoItem?.isComplete) {
+        try {
+          photoUrl = await this.s3Service.getPresignedUrl(photoKey);
+        } catch {
+          photoUrl = null;
+        }
+      }
+    }
+
+    return {
+      verified: true as const,
+      name: staff.name,
+      role: staff.currentRole,
+      branch: location?.name ?? null,
+      staffCode: staff.staffCode,
+      photoUrl,
+    };
   }
 
   async getUpcomingBirthdays(queryDto: QueryUpcomingBirthdaysDto) {

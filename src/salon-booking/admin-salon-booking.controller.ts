@@ -11,6 +11,7 @@ import { ConfirmReservationDto } from './dto/confirm-reservation.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
 import { VerifyReservationDto } from './dto/verify-reservation.dto';
+import { UpdateCustomerClassificationSettingsDto } from './dto/update-customer-classification-settings.dto';
 import { EditSalonBookingDto, AddServiceToCompletedBookingDto } from './dto/edit-salon-booking.dto';
 import { SalonBookingService } from './salon-booking.service';
 import type { CustomerLifecycle, CustomerValue } from '../common/utils/customer-status.util';
@@ -181,11 +182,38 @@ export class AdminSalonBookingController {
         return { success: true, message: 'Customer profile retrieved successfully', data };
     }
 
+    @Get('customers/classification-settings')
+    @ApiOperation({
+        summary: 'Get the Customer Contacts / Users lifecycle and value classification thresholds',
+        description: 'Both dimensions (Lifecycle: New/Active/At Risk/Dormant/Inactive/Never Visited, and Value: Standard/Premium/VIP) live on one admin-configurable settings row.',
+    })
+    async getCustomerClassificationSettings() {
+        const data = await this.salonBookingService.getCustomerClassificationSettings();
+        return { success: true, message: 'Classification settings retrieved successfully', data };
+    }
+
+    @Patch('customers/classification-settings')
+    @ApiOperation({ summary: 'Update the Customer Contacts / Users lifecycle and value classification thresholds' })
+    async updateCustomerClassificationSettings(@Body() dto: UpdateCustomerClassificationSettingsDto, @Req() req: any) {
+        const data = await this.salonBookingService.updateCustomerClassificationSettings(dto, req.user?.id);
+        return { success: true, message: 'Classification settings updated successfully', data };
+    }
+
     @Get('customers/search')
     @ApiOperation({ summary: 'Look up existing customers by name or phone, for prefilling a new booking' })
     async searchCustomers(@Query('q') q?: string) {
         const data = await this.salonBookingService.searchCustomers(q ?? '');
         return { success: true, message: 'Customers retrieved successfully', data };
+    }
+
+    @Get('customers/check-phone')
+    @ApiOperation({
+        summary: 'Check whether a phone matches a verified account, before creating a booking',
+        description: 'Call as staff enters/confirms the customer phone field. hasMatch:true means show an "Is this <accountName>? Link this visit to their account?" prompt.',
+    })
+    async checkPhoneMatch(@Query('phone') phone: string) {
+        const data = await this.salonBookingService.checkPhoneMatch(phone);
+        return { success: true, message: 'Checked successfully', data };
     }
 
     @Get(':id')
