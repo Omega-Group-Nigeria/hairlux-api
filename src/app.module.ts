@@ -37,6 +37,7 @@ import { SalonBookingModule } from './salon-booking/salon-booking.module';
 import { ProductSaleModule } from './product-sale/product-sale.module';
 import { SupplierModule } from './supplier/supplier.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { AdvertBannersModule } from './advert-banners/advert-banners.module';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import { PayrollModule } from './payroll/payroll.module';
     ProductSaleModule,
     SupplierModule,
     PayrollModule,
+    AdvertBannersModule,
     
   ],
   controllers: [AppController],

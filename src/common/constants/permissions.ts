@@ -75,6 +75,10 @@ export const PERMISSIONS = {
   SETTINGS_READ: 'settings:read', // View system settings
   SETTINGS_MANAGE: 'settings:manage', // Update system settings
 
+  // ── Advert Banners ────────────────────────────────────────────────────────────
+  ADVERTS_READ: 'adverts:read', // View home-screen advert banners
+  ADVERTS_MANAGE: 'adverts:manage', // Create / edit / reorder / delete advert banners
+
   // ── Beauticians ───────────────────────────────────────────────────────────────
   BEAUTICIANS_READ: 'beauticians:read', // View beautician list & profiles
   BEAUTICIANS_MANAGE: 'beauticians:manage', // Suspend, override commission, force status
@@ -317,6 +321,16 @@ export const PERMISSION_GROUPS = [
     permissions: [
       { key: PERMISSIONS.SETTINGS_READ, label: 'View system settings' },
       { key: PERMISSIONS.SETTINGS_MANAGE, label: 'Update system settings' },
+    ],
+  },
+  {
+    group: 'Advert Banners',
+    permissions: [
+      { key: PERMISSIONS.ADVERTS_READ, label: 'View home-screen advert banners' },
+      {
+        key: PERMISSIONS.ADVERTS_MANAGE,
+        label: 'Create, edit, reorder and delete advert banners',
+      },
     ],
   },
   {

@@ -416,6 +416,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.stockTransfer;
   }
 
+  get advertBanner() {
+    return this.client.advertBanner;
+  }
+
 
 
 }

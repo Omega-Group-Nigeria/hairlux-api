@@ -1955,6 +1955,22 @@ model AnnouncementRead {
   @@map("announcement_reads")
 }
 
+/// Home-screen advert banner shown to users. `isActive` controls visibility,
+/// `sortOrder` (ascending) controls carousel order.
+model AdvertBanner {
+  id            String   @id @default(uuid())
+  title         String
+  imageUrl      String   @map("image_url")
+  imagePublicId String   @map("image_public_id")
+  linkUrl       String?  @map("link_url")
+  isActive      Boolean  @default(false) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("advert_banners")
+}
+
 enum DirectiveStatus {
   PENDING
   ACKNOWLEDGED
