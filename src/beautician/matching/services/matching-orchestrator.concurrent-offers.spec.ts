@@ -184,7 +184,7 @@ describe('MatchingOrchestratorService concurrent offers', () => {
           useValue: {
             getExcludedBeauticianIds: jest.fn(async () => []),
             getLastOfferedBeauticianUserId: jest.fn(async () => null),
-            getDeclinedBeauticianIds: jest.fn(async () => []),
+            getNotAcceptedBeauticianIds: jest.fn(async () => []),
           },
         },
         { provide: OfferManagerService, useValue: mockOfferManager },

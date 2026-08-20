@@ -14,7 +14,6 @@ import {
   applicationStatusUpdateTemplate,
   arrivalVerificationNeededTemplate,
   beauticianDispatchSuspensionTemplate,
-  beauticianJobOfferTemplate,
   beauticianKycResultTemplate,
   beauticianProfileReviewTemplate,
   bookingConfirmationTemplate,
@@ -384,30 +383,6 @@ export class MailService {
     } catch (error) {
       this.logger.error(
         `Error queuing beautician KYC email: ${error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  async sendBeauticianJobOfferEmail(
-    email: string,
-    firstName: string,
-    bookingId: string,
-    estEarnings: number,
-  ) {
-    try {
-      await this.emailQueue.add(
-        'send',
-        {
-          to: email,
-          subject: 'New Home Service Job — HairLux',
-          html: beauticianJobOfferTemplate(firstName, bookingId, estEarnings),
-        },
-        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-      );
-    } catch (error) {
-      this.logger.error(
-        `Error queuing beautician job offer email: ${error instanceof Error ? error.message : String(error)
         }`,
       );
     }

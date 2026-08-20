@@ -70,9 +70,10 @@ describe('OfferExclusionService', () => {
     service = module.get<OfferExclusionService>(OfferExclusionService);
   });
 
-  it('permanently excludes declined and accepted beauticians only', async () => {
+  it('excludes declined, accepted, and expired (timed-out) beauticians', async () => {
     await expect(service.getExcludedBeauticianIds(bookingId)).resolves.toEqual(
       expect.arrayContaining([
+        'beautician-b',
         'beautician-c',
         'beautician-d',
         'beautician-e',
@@ -80,18 +81,18 @@ describe('OfferExclusionService', () => {
     );
 
     const excluded = await service.getExcludedBeauticianIds(bookingId);
-    expect(excluded).not.toContain('beautician-b');
+    expect(excluded).toHaveLength(4);
   });
 
-  it('does not treat expired offers as excluded', async () => {
+  it('treats expired offers as not-accepted exclusions', async () => {
     const excluded = await service.getExcludedBeauticianIds(bookingId);
-    expect(excluded).not.toContain('beautician-b');
+    expect(excluded).toContain('beautician-b');
   });
 
-  it('returns declined beauticians for decline-only exclusion checks', async () => {
-    await expect(service.getDeclinedBeauticianIds(bookingId)).resolves.toEqual([
-      'beautician-c',
-    ]);
+  it('returns all not-accepted beauticians (declined + expired + cancelled)', async () => {
+    await expect(
+      service.getNotAcceptedBeauticianIds(bookingId),
+    ).resolves.toEqual(['beautician-b', 'beautician-c']);
   });
 
   it('returns the most recent offer recipient for rotation', async () => {

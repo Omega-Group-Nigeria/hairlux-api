@@ -100,7 +100,7 @@ describe('MatchingOrchestratorService cycling', () => {
           ? ['beautician-b']
           : [],
     ),
-    getDeclinedBeauticianIds: jest.fn(async () =>
+    getNotAcceptedBeauticianIds: jest.fn(async () =>
       lastOffered === 'beautician-b-declined' ? ['beautician-b'] : [],
     ),
     getLastOfferedBeauticianUserId: jest.fn(async () => lastOffered),

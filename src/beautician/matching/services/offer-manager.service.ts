@@ -9,7 +9,6 @@ import {
 import { PrismaService } from '../../../prisma/prisma.service';
 import { DispatchStateService } from './dispatch-state.service';
 import { DISPATCH_EVENT_TYPES } from '../constants/dispatch-event.constants';
-import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
 import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
 import { MatchingCandidate } from './candidate-finder.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
@@ -25,7 +24,6 @@ export class OfferManagerService {
     private readonly prisma: PrismaService,
     private readonly dispatchState: DispatchStateService,
     private readonly matchingQueueService: MatchingQueueService,
-    private readonly notificationService: BeauticianNotificationService,
     private readonly realtimePublisher: RealtimePublisherService,
     private readonly locationIndex: BeauticianLocationIndexService,
     private readonly matchingConfig: MatchingConfigService,
@@ -50,12 +48,6 @@ export class OfferManagerService {
       expiresAt: Date;
       estEarningsAtOffer: Prisma.Decimal | null;
       distanceKmAtOffer: Prisma.Decimal | null;
-      beautician: {
-        id: string;
-        email: string;
-        firstName: string | null;
-        lastName: string | null;
-      };
     };
 
     const offer = await this.prisma.$transaction(async (tx) => {
@@ -99,16 +91,6 @@ export class OfferManagerService {
           scoreSnapshot: params.candidate
             .scoreSnapshot as Prisma.InputJsonValue,
         },
-        include: {
-          beautician: {
-            select: {
-              id: true,
-              email: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-        },
       });
 
       await tx.beauticianProfile.update({
@@ -147,23 +129,6 @@ export class OfferManagerService {
     });
 
     const estEarningsNum = Number(offer.estEarningsAtOffer ?? 0);
-
-    try {
-      await this.notificationService.notifyNewJobOffer(
-        {
-          id: offer.beautician.id,
-          email: offer.beautician.email,
-          firstName: offer.beautician.firstName ?? '',
-          lastName: offer.beautician.lastName ?? '',
-        },
-        params.bookingId,
-        estEarningsNum,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Offer email failed for offer ${offer.id} — continuing with push/socket: ${String(error)}`,
-      );
-    }
 
     this.jobPushNotifier.notifyOffer({
       beauticianUserId: offer.beauticianUserId,

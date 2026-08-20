@@ -36,7 +36,6 @@ describe('OfferManagerService release after offer', () => {
       mockPrisma as never,
       { transition: jest.fn() } as never,
       { scheduleExpireOffer: jest.fn() } as never,
-      { notifyNewJobOffer: jest.fn() } as never,
       { emitJobOffer: jest.fn() } as never,
       mockLocationIndex as never,
       mockMatchingConfig as never,

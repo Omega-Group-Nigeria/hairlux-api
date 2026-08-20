@@ -1,9 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  AvailabilityStatus,
-  BookingStatus,
-  JobOfferStatus,
-} from '@prisma/client';
+import { BookingStatus, JobOfferStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
   ACTIVE_HOME_SERVICE_STATUSES,
@@ -27,18 +23,18 @@ export class JobQueryService {
       select: { availabilityStatus: true },
     });
 
-    // ONLINE / OFFERED free queue, and ON_JOB near end of service (still receive offers)
-    if (
-      !profile ||
-      (profile.availabilityStatus !== AvailabilityStatus.ONLINE &&
-        profile.availabilityStatus !== AvailabilityStatus.OFFERED &&
-        profile.availabilityStatus !== AvailabilityStatus.ON_JOB)
-    ) {
+    // Unknown beautician: nothing to serve.
+    if (!profile) {
       return [];
     }
 
     const now = new Date();
 
+    // A live, unexpired OFFERED offer is the source of truth for an already
+    // decided dispatch. Surface it regardless of the profile's momentary
+    // availability state: offer creation flips the status to OFFERED, but a
+    // racing/inconsistent state can still read OFFLINE here at poll time, and
+    // hiding the offer would make the app silently drop the popup.
     const offers = await this.prisma.jobOffer.findMany({
       where: {
         beauticianUserId,

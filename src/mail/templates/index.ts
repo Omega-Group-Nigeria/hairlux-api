@@ -13,7 +13,6 @@ export {
   arrivalVerificationNeededTemplate,
   serviceCompletedTemplate
 } from './beautician-home-service-lifecycle.template';
-export { beauticianJobOfferTemplate } from './beautician-job-offer.template';
 export { beauticianKycResultTemplate } from './beautician-kyc-result.template';
 export { beauticianProfileReviewTemplate } from './beautician-profile-review.template';
 export { bookingConfirmationTemplate } from './booking-confirmation.template';

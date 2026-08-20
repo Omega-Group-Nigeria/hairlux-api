@@ -51,8 +51,8 @@ export class MatchingAttemptService {
     attempt: number,
     searchContext: MatchingSearchContext,
   ): Promise<void> {
-    const declinedIds =
-      await this.offerExclusion.getDeclinedBeauticianIds(bookingId);
+    const notAcceptedIds =
+      await this.offerExclusion.getNotAcceptedBeauticianIds(bookingId);
     const maxRadiusKm = this.matchingConfig.getMaxRadiusKm();
 
     const statsAll = await this.poolAnalyzer.analyze({
@@ -70,12 +70,12 @@ export class MatchingAttemptService {
       tierRadiusKm: searchContext.tierRadiusKm,
       maxRadiusKm,
       requiredServiceIds: searchContext.requiredServiceIds,
-      excludeBeauticianUserIds: declinedIds,
+      excludeBeauticianUserIds: notAcceptedIds,
     });
 
     if (
       statsEligible.inTierRadiusCount === 0 &&
-      declinedIds.length > 0 &&
+      notAcceptedIds.length > 0 &&
       statsAll.inTierRadiusCount > 0
     ) {
       await this.markMatchingExhausted(
@@ -99,7 +99,7 @@ export class MatchingAttemptService {
     if (statsEligible.inTierRadiusCount === 0) {
       await this.markMatchingExhaustedFromContext(bookingId, {
         ...searchContext,
-        excludeIds: declinedIds,
+        excludeIds: notAcceptedIds,
       });
       return;
     }

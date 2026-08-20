@@ -225,9 +225,9 @@ export class JobPresentationService {
         services,
         maskedAddress: location
           ? maskAddress(location.fullAddress)
-          : null,
-        city: location?.city ?? null,
-        state: location?.state ?? null,
+          : 'Address shared after acceptance',
+        city: location?.city ?? '',
+        state: location?.state ?? '',
       },
     };
   }

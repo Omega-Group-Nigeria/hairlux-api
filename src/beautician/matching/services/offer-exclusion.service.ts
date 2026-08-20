@@ -6,11 +6,24 @@ import { PrismaService } from '../../../prisma/prisma.service';
 export class OfferExclusionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getDeclinedBeauticianIds(bookingId: string): Promise<string[]> {
+  /**
+   * Beauticians who were offered and did not accept for this booking
+   * (explicit DECLINED, or timed out / expired / cancelled before accepting).
+   * Re-offering them is pointless — treat like a decline so the booking can
+   * exhaust with OFFERS_NOT_ACCEPTED instead of looping forever.
+   */
+  async getNotAcceptedBeauticianIds(bookingId: string): Promise<string[]> {
     const offers = await this.prisma.jobOffer.findMany({
       where: {
         bookingId,
-        status: JobOfferStatus.DECLINED,
+        status: {
+          in: [
+            JobOfferStatus.DECLINED,
+            JobOfferStatus.EXPIRED,
+            JobOfferStatus.TIMED_OUT,
+            JobOfferStatus.CANCELLED,
+          ],
+        },
       },
       select: { beauticianUserId: true },
     });
@@ -25,6 +38,9 @@ export class OfferExclusionService {
         status: {
           in: [
             JobOfferStatus.DECLINED,
+            JobOfferStatus.EXPIRED,
+            JobOfferStatus.TIMED_OUT,
+            JobOfferStatus.CANCELLED,
             JobOfferStatus.OFFERED,
             JobOfferStatus.ACCEPTED,
           ],
@@ -41,18 +57,17 @@ export class OfferExclusionService {
     const excluded = new Set<string>();
 
     for (const offer of offers) {
-      if (
-        offer.status === JobOfferStatus.DECLINED ||
-        offer.status === JobOfferStatus.ACCEPTED
-      ) {
+      // Any terminal outcome (accepted, declined, expired, timed out,
+      // cancelled) permanently excludes this beautician from further offers
+      // on the same booking — matching must try someone else.
+      if (offer.status !== JobOfferStatus.OFFERED) {
         excluded.add(offer.beauticianUserId);
         continue;
       }
 
-      if (
-        offer.status === JobOfferStatus.OFFERED &&
-        offer.expiresAt > now
-      ) {
+      // A still-live offer also excludes the beautician (already offered,
+      // waiting for a response) so they never get a competing concurrent offer.
+      if (offer.expiresAt > now) {
         excluded.add(offer.beauticianUserId);
       }
     }

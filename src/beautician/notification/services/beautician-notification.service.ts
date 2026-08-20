@@ -57,20 +57,6 @@ export class BeauticianNotificationService {
     );
   }
 
-  /** Email only — job offer FCM is JobPushNotifier (`job.offer`). */
-  async notifyNewJobOffer(
-    user: BeauticianUserContact,
-    bookingId: string,
-    estEarnings: number,
-  ) {
-    await this.mailService.sendBeauticianJobOfferEmail(
-      user.email,
-      user.firstName,
-      bookingId,
-      estEarnings,
-    );
-  }
-
   /**
    * Email only — customer also gets BookingPushNotifier `booking.arrived`.
    */
