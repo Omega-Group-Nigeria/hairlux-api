@@ -74,6 +74,9 @@ export class MatchingQueueService {
         delay: params.delayMs,
         jobId,
         removeOnComplete: true,
+        removeOnFail: { age: 24 * 3600, count: 5000 },
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
       },
     );
     await this.trackJob(params.bookingId, jobId);

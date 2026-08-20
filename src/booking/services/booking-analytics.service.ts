@@ -360,7 +360,9 @@ export class BookingAnalyticsService {
       if (
         status === BookingStatus.CANCELLED &&
         (booking.status === BookingStatus.CONFIRMED ||
-          booking.status === BookingStatus.PENDING)
+          booking.status === BookingStatus.PENDING) &&
+        (booking.paymentMethod === PaymentMethod.WALLET ||
+          booking.paymentMethod === PaymentMethod.MONNIFY)
       ) {
         const wallet = await prisma.wallet.findUnique({
           where: { userId: booking.userId },
@@ -396,7 +398,8 @@ export class BookingAnalyticsService {
     void Promise.all([
       this.redis.delByPattern('analytics:*'),
       ...(status === BookingStatus.CANCELLED &&
-      booking.paymentMethod === PaymentMethod.WALLET
+      (booking.paymentMethod === PaymentMethod.WALLET ||
+        booking.paymentMethod === PaymentMethod.MONNIFY)
         ? [this.redis.del(`wallet:balance:${booking.userId}`)]
         : []),
       ...(status === BookingStatus.CANCELLED

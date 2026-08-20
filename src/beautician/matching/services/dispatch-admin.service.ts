@@ -475,10 +475,30 @@ export class DispatchAdminService {
         dispatchSuspendedUntil: true,
         dispatchSuspensionReason: true,
         availabilityStatus: true,
+        currentLat: true,
+        currentLng: true,
+        lastLocationUpdate: true,
+        assignedServices: { select: { serviceId: true } },
       },
     });
 
     await this.cancelProbationJob(profile.id);
+
+    // Re-enter the geo index on reinstate so an ONLINE beautician becomes
+    // visible to dispatch matching again immediately.
+    if (
+      updated.availabilityStatus === AvailabilityStatus.ONLINE &&
+      updated.currentLat != null &&
+      updated.currentLng != null
+    ) {
+      await this.locationIndex.upsertOnline({
+        userId: updated.userId,
+        lat: Number(updated.currentLat),
+        lng: Number(updated.currentLng),
+        serviceIds: updated.assignedServices.map((s) => s.serviceId),
+        updatedAt: updated.lastLocationUpdate ?? undefined,
+      });
+    }
 
     await this.mailService.sendBeauticianDispatchSuspensionEmail(
       profile.user.email,
@@ -507,9 +527,7 @@ export class DispatchAdminService {
     };
   }
 
-  private resolveSuspendedUntil(
-    dto: UpdateBeauticianDispatchDto,
-  ): Date | null {
+  private resolveSuspendedUntil(dto: UpdateBeauticianDispatchDto): Date | null {
     if (dto.until && dto.durationHours != null) {
       throw new BadRequestException(
         'Provide either `until` or `durationHours`, not both',
@@ -620,9 +638,7 @@ export class DispatchAdminService {
     }
 
     if (beautician.availabilityStatus === AvailabilityStatus.ON_JOB) {
-      throw new BadRequestException(
-        'Beautician is already on an active job',
-      );
+      throw new BadRequestException('Beautician is already on an active job');
     }
 
     const assignedServiceIds = new Set(
@@ -630,7 +646,9 @@ export class DispatchAdminService {
     );
 
     if (
-      !requiredServiceIds.every((serviceId) => assignedServiceIds.has(serviceId))
+      !requiredServiceIds.every((serviceId) =>
+        assignedServiceIds.has(serviceId),
+      )
     ) {
       throw new BadRequestException(
         'Beautician is not assigned all services required by this booking',

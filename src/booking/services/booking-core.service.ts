@@ -205,7 +205,10 @@ export class BookingCoreService {
         include: bookingUserReadInclude,
       });
 
-      if (booking.paymentMethod === PaymentMethod.WALLET) {
+      if (
+        booking.paymentMethod === PaymentMethod.WALLET ||
+        booking.paymentMethod === PaymentMethod.MONNIFY
+      ) {
         const wallet = await tx.wallet.findUnique({
           where: { userId: booking.userId },
         });
@@ -241,7 +244,8 @@ export class BookingCoreService {
 
     void Promise.all([
       this.redis.delByPattern('analytics:*'),
-      ...(booking.paymentMethod === PaymentMethod.WALLET
+      ...(booking.paymentMethod === PaymentMethod.WALLET ||
+      booking.paymentMethod === PaymentMethod.MONNIFY
         ? [this.redis.del(`wallet:balance:${userId}`)]
         : []),
       this.noShowPenaltyService.recordIfApplicable(id),

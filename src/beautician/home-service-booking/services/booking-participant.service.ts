@@ -1,15 +1,22 @@
 import {
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AvailabilityStatus, BookingStatus, UserRole } from '@prisma/client';
+import { AvailabilityStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
 import { ACTIVE_HOME_SERVICE_STATUSES } from '../home-service-status.service';
 
 @Injectable()
 export class BookingParticipantService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => BeauticianLocationIndexService))
+    private readonly locationIndex: BeauticianLocationIndexService,
+  ) {}
 
   async getBookingForParticipant(bookingId: string) {
     const booking = await this.prisma.booking.findUnique({
@@ -44,10 +51,7 @@ export class BookingParticipantService {
     return booking;
   }
 
-  assertCustomerAccess(
-    booking: { userId: string },
-    userId: string,
-  ): void {
+  assertCustomerAccess(booking: { userId: string }, userId: string): void {
     if (booking.userId !== userId) {
       throw new ForbiddenException('You do not have access to this booking');
     }
@@ -88,10 +92,28 @@ export class BookingParticipantService {
     });
 
     if (activeCount === 0) {
-      await this.prisma.beauticianProfile.updateMany({
+      const profile = await this.prisma.beauticianProfile.update({
         where: { userId: beauticianUserId },
         data: { availabilityStatus: AvailabilityStatus.ONLINE },
+        select: {
+          currentLat: true,
+          currentLng: true,
+          lastLocationUpdate: true,
+          assignedServices: { select: { serviceId: true } },
+        },
       });
+
+      // Re-enter the geo index so the beautician is immediately visible to
+      // new dispatch matching (otherwise ONLINE-but-invisible after a job).
+      if (profile.currentLat != null && profile.currentLng != null) {
+        await this.locationIndex.upsertOnline({
+          userId: beauticianUserId,
+          lat: Number(profile.currentLat),
+          lng: Number(profile.currentLng),
+          serviceIds: profile.assignedServices.map((s) => s.serviceId),
+          updatedAt: profile.lastLocationUpdate ?? undefined,
+        });
+      }
     }
   }
 }

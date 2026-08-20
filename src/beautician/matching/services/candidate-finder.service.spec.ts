@@ -114,6 +114,7 @@ describe('CandidateFinderService dispatch pools', () => {
       { userId: freeUser, distanceKm: 2 },
     ]);
     mockPrisma.beauticianProfile.findMany
+      .mockResolvedValueOnce([freeProfile]) // ONLINE pool by status
       .mockResolvedValueOnce([freeProfile]) // free by geo user ids
       .mockResolvedValueOnce([onJobProfile]); // on-job fallback load
     mockPrisma.booking.findMany.mockResolvedValue([
@@ -227,8 +228,9 @@ describe('CandidateFinderService dispatch pools', () => {
       { userId: freeUser, distanceKm: 1 },
     ]);
     mockPrisma.beauticianProfile.findMany
-      .mockResolvedValueOnce([freeProfile])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([freeProfile]) // ONLINE pool by status
+      .mockResolvedValueOnce([freeProfile]) // free by geo user ids
+      .mockResolvedValueOnce([]); // on-job pool
     mockEligibility.coversAllServices.mockReturnValue(false);
 
     const ranked = await service.findRankedCandidates(baseParams);

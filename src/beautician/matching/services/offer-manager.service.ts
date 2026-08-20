@@ -40,9 +40,7 @@ export class OfferManagerService {
     estEarnings: number;
     offerTtlSeconds: number;
   }) {
-    const expiresAt = new Date(
-      Date.now() + params.offerTtlSeconds * 1000,
-    );
+    const expiresAt = new Date(Date.now() + params.offerTtlSeconds * 1000);
     const estEarnings = params.estEarnings;
     const maxConcurrent = this.matchingConfig.getConcurrentOffers();
 
@@ -98,7 +96,8 @@ export class OfferManagerService {
           tier: params.matchingAttempt,
           distanceKmAtOffer: params.candidate.distanceKm,
           estEarningsAtOffer: estEarnings,
-          scoreSnapshot: params.candidate.scoreSnapshot as Prisma.InputJsonValue,
+          scoreSnapshot: params.candidate
+            .scoreSnapshot as Prisma.InputJsonValue,
         },
         include: {
           beautician: {
@@ -149,16 +148,22 @@ export class OfferManagerService {
 
     const estEarningsNum = Number(offer.estEarningsAtOffer ?? 0);
 
-    await this.notificationService.notifyNewJobOffer(
-      {
-        id: offer.beautician.id,
-        email: offer.beautician.email,
-        firstName: offer.beautician.firstName ?? '',
-        lastName: offer.beautician.lastName ?? '',
-      },
-      params.bookingId,
-      estEarningsNum,
-    );
+    try {
+      await this.notificationService.notifyNewJobOffer(
+        {
+          id: offer.beautician.id,
+          email: offer.beautician.email,
+          firstName: offer.beautician.firstName ?? '',
+          lastName: offer.beautician.lastName ?? '',
+        },
+        params.bookingId,
+        estEarningsNum,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Offer email failed for offer ${offer.id} — continuing with push/socket: ${String(error)}`,
+      );
+    }
 
     this.jobPushNotifier.notifyOffer({
       beauticianUserId: offer.beauticianUserId,

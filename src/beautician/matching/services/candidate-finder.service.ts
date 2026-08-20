@@ -60,7 +60,12 @@ export class CandidateFinderService {
     const now = new Date();
     const tier = params.matchingAttempt ?? 1;
 
-    const freeCandidates = await this.findFreeOnlineCandidates(params, excludeSet, now, tier);
+    const freeCandidates = await this.findFreeOnlineCandidates(
+      params,
+      excludeSet,
+      now,
+      tier,
+    );
     const freeUserIds = new Set(freeCandidates.map((c) => c.userId));
 
     const onJobCandidates = await this.findNearCompleteOnJobCandidates(
@@ -138,15 +143,24 @@ export class CandidateFinderService {
       .map((hit) => hit.userId)
       .filter((userId) => !excludeSet.has(userId));
 
-    const profiles =
+    const [geoProfiles, onlineProfiles] = await Promise.all([
       geoUserIds.length > 0
-        ? await this.loadProfilesByUserIds(geoUserIds, [
-            AvailabilityStatus.ONLINE,
-          ])
-        : await this.loadProfilesByStatus(
-            [AvailabilityStatus.ONLINE],
-            [...excludeSet],
-          );
+        ? this.loadProfilesByUserIds(geoUserIds, [AvailabilityStatus.ONLINE])
+        : Promise.resolve([]),
+      this.loadProfilesByStatus([AvailabilityStatus.ONLINE], [...excludeSet]),
+    ]);
+
+    // DB-ONLINE beauticians who are absent from the geo index (e.g. not
+    // re-indexed after finishing a job) must still be visible to matching.
+    // Merge both sources (de-duplicated); rankProfiles falls back to
+    // haversine distance and applies the freshness / radius / travel gates.
+    const profilesByUserId = new Map<string, (typeof onlineProfiles)[number]>();
+    for (const profile of [...geoProfiles, ...onlineProfiles]) {
+      if (!profilesByUserId.has(profile.userId)) {
+        profilesByUserId.set(profile.userId, profile);
+      }
+    }
+    const profiles = [...profilesByUserId.values()];
 
     const distanceByUserId = new Map(
       geoHits.map((hit) => [hit.userId, hit.distanceKm]),
