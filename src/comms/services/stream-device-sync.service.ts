@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FcmPlatform } from '@prisma/client';
 import { FcmTokenService } from '../../beautician/fcm/fcm-token.service';
 import { StreamClientService } from './stream-client.service';
@@ -10,6 +11,7 @@ export class StreamDeviceSyncService {
   constructor(
     private readonly streamClient: StreamClientService,
     private readonly fcmTokenService: FcmTokenService,
+    private readonly configService: ConfigService,
   ) {}
 
   async syncUserDevices(userId: string): Promise<void> {
@@ -31,6 +33,7 @@ export class StreamDeviceSyncService {
             device.token,
             this.resolvePushProvider(device.platform),
             userId,
+            this.resolvePushProviderName(device.platform),
           );
         } catch (error) {
           this.logger.warn(
@@ -49,5 +52,21 @@ export class StreamDeviceSyncService {
 
   private resolvePushProvider(platform: FcmPlatform): 'firebase' | 'apn' {
     return platform === FcmPlatform.IOS ? 'apn' : 'firebase';
+  }
+
+  /**
+   * Returns the Stream push provider name matching the configured Firebase
+   * provider. Set STREAM_FCM_PUSH_PROVIDER_NAME in env to override.
+   * Defaults to "Hairlux".
+   */
+  private resolvePushProviderName(platform: FcmPlatform): string | undefined {
+    if (platform === FcmPlatform.IOS) {
+      // APN providers don't use a named Firebase provider
+      return undefined;
+    }
+    return (
+      this.configService.get<string>('STREAM_FCM_PUSH_PROVIDER_NAME') ??
+      'Hairlux'
+    );
   }
 }

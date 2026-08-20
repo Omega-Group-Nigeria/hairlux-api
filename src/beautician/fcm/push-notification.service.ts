@@ -235,9 +235,13 @@ export class PushNotificationService implements OnModuleInit {
         // Attempt base64 decode
         text = Buffer.from(text, 'base64').toString('utf8');
       }
+      // Sanitize bare control characters (Railway/Render may store \n literally
+      // inside the JSON string instead of as the two-char escape sequence \n,
+      // which makes JSON.parse throw "Bad control character").
+      text = text.replace(/\r?\n/g, '\\n');
       const parsed = JSON.parse(text) as ServiceAccountJson;
       if (typeof parsed.private_key === 'string') {
-        // Handle both literal \n (two chars) and escaped \\n sequences
+        // Normalise: convert literal \n two-char sequences to real newlines
         parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
       }
       if (!parsed.client_email || !parsed.private_key) {
