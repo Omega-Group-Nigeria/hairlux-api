@@ -1,21 +1,22 @@
 import {
   ForbiddenException,
-  forwardRef,
-  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { AvailabilityStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
+import { RedisService } from '../../../redis/redis.service';
+import {
+  BEAUTICIANS_ONLINE_GEO_KEY,
+  beauticianMetaKey,
+} from '../../matching/constants/location-index.constants';
 import { ACTIVE_HOME_SERVICE_STATUSES } from '../home-service-status.service';
 
 @Injectable()
 export class BookingParticipantService {
   constructor(
     private readonly prisma: PrismaService,
-    @Inject(forwardRef(() => BeauticianLocationIndexService))
-    private readonly locationIndex: BeauticianLocationIndexService,
+    private readonly redis: RedisService,
   ) {}
 
   async getBookingForParticipant(bookingId: string) {
@@ -105,13 +106,20 @@ export class BookingParticipantService {
 
       // Re-enter the geo index so the beautician is immediately visible to
       // new dispatch matching (otherwise ONLINE-but-invisible after a job).
+      // Mirrors BeauticianLocationIndexService.upsertOnline without importing
+      // the matching module (avoids a circular module dependency).
       if (profile.currentLat != null && profile.currentLng != null) {
-        await this.locationIndex.upsertOnline({
-          userId: beauticianUserId,
-          lat: Number(profile.currentLat),
-          lng: Number(profile.currentLng),
-          serviceIds: profile.assignedServices.map((s) => s.serviceId),
-          updatedAt: profile.lastLocationUpdate ?? undefined,
+        await this.redis.geoAdd(
+          BEAUTICIANS_ONLINE_GEO_KEY,
+          Number(profile.currentLng),
+          Number(profile.currentLat),
+          beauticianUserId,
+        );
+        await this.redis.hset(beauticianMetaKey(beauticianUserId), {
+          lat: String(profile.currentLat),
+          lng: String(profile.currentLng),
+          services: profile.assignedServices.map((s) => s.serviceId).join(','),
+          updatedAt: (profile.lastLocationUpdate ?? new Date()).toISOString(),
         });
       }
     }

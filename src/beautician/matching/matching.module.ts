@@ -1,4 +1,4 @@
-import { forwardRef, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '../../prisma/prisma.module';
@@ -53,7 +53,7 @@ import { JobNotificationsModule } from '../../notifications/job/job-notification
     BullModule.registerQueue({ name: DISPATCH_PROBATION_QUEUE }),
     CommsModule,
     PayoutModule,
-    forwardRef(() => HomeServiceSharedModule),
+    HomeServiceSharedModule,
     JobNotificationsModule,
   ],
   controllers: [AdminDispatchSettingsController],
