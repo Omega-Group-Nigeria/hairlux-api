@@ -47,6 +47,7 @@ export class PushNotificationService implements OnModuleInit {
         `Failed to initialize Firebase Admin: ${
           error instanceof Error ? error.message : String(error)
         }`,
+        error instanceof Error ? error.stack : undefined,
       );
       this.messaging = null;
       this.enabled = false;
@@ -226,11 +227,17 @@ export class PushNotificationService implements OnModuleInit {
   private parseServiceAccountJson(raw: string): ServiceAccountJson | null {
     try {
       let text = raw.trim();
+      // Strip surrounding double-quotes if present (some env loaders add them)
+      if (text.startsWith('"') && text.endsWith('"')) {
+        text = text.slice(1, -1).replace(/\\"/g, '"');
+      }
       if (!text.startsWith('{')) {
+        // Attempt base64 decode
         text = Buffer.from(text, 'base64').toString('utf8');
       }
       const parsed = JSON.parse(text) as ServiceAccountJson;
       if (typeof parsed.private_key === 'string') {
+        // Handle both literal \n (two chars) and escaped \\n sequences
         parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
       }
       if (!parsed.client_email || !parsed.private_key) {
@@ -244,7 +251,7 @@ export class PushNotificationService implements OnModuleInit {
       this.logger.error(
         `Invalid FIREBASE_SERVICE_ACCOUNT_JSON: ${
           error instanceof Error ? error.message : String(error)
-        }`,
+        } | raw first 50 chars: ${JSON.stringify(raw.slice(0, 50))}`,
       );
       return null;
     }
