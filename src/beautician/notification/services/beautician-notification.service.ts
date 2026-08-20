@@ -58,20 +58,6 @@ export class BeauticianNotificationService {
   }
 
   /**
-   * Email only — customer also gets BookingPushNotifier `booking.arrived`.
-   */
-  async notifyArrivalVerificationNeeded(
-    user: BeauticianUserContact,
-    bookingId: string,
-  ) {
-    await this.mailService.sendArrivalVerificationNeededEmail(
-      user.email,
-      user.firstName,
-      bookingId,
-    );
-  }
-
-  /**
    * @deprecated Prefer JobPushNotifier.notifyArrivalVerified.
    */
   async notifyArrivalVerified(

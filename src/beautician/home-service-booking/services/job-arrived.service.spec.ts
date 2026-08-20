@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BookingStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
 import { ArrivalPinService } from '../../arrival-verification/services/arrival-pin.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { BookingParticipantService } from './booking-participant.service';
@@ -61,10 +60,6 @@ describe('JobArrivedService', () => {
     })),
   };
 
-  const mockNotification = {
-    notifyArrivalVerificationNeeded: jest.fn().mockResolvedValue(undefined),
-  };
-
   const mockCommsRealtime = {
     emitBookingStatus: jest.fn().mockResolvedValue(undefined),
   };
@@ -83,10 +78,6 @@ describe('JobArrivedService', () => {
         { provide: BookingParticipantService, useValue: mockParticipant },
         { provide: ArrivalPinService, useValue: mockPinService },
         { provide: HomeServiceSettingsService, useValue: mockSettings },
-        {
-          provide: BeauticianNotificationService,
-          useValue: mockNotification,
-        },
         {
           provide: CommsRealtimeService,
           useValue: mockCommsRealtime,
@@ -134,7 +125,6 @@ describe('JobArrivedService', () => {
     const result = await resultPromise;
     expect(result.booking.status).toBe(BookingStatus.ARRIVED);
     expect(mockCommsRealtime.emitBookingStatus).toHaveBeenCalled();
-    expect(mockNotification.notifyArrivalVerificationNeeded).toHaveBeenCalled();
 
     resolveEmit();
   });
@@ -231,6 +221,5 @@ describe('JobArrivedService', () => {
       15 * 60,
     );
     expect(mockPrisma.booking.update).toHaveBeenCalled();
-    expect(mockNotification.notifyArrivalVerificationNeeded).toHaveBeenCalled();
   });
 });

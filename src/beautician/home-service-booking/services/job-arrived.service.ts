@@ -3,7 +3,6 @@ import { BookingStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { formatBookingResponse } from '../../../booking/utils/booking.utils';
 import { resolveBookingCoordinatesSync } from '../../../booking/utils/booking-location.utils';
-import { BeauticianNotificationService } from '../../notification/services/beautician-notification.service';
 import { haversineKm } from '../../matching/utils/geo.util';
 import { ArrivalPinService } from '../../arrival-verification/services/arrival-pin.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
@@ -20,7 +19,6 @@ export class JobArrivedService {
     private readonly statusService: HomeServiceStatusService,
     private readonly pinService: ArrivalPinService,
     private readonly settingsService: HomeServiceSettingsService,
-    private readonly notificationService: BeauticianNotificationService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly bookingPushNotifier: BookingPushNotifier,
   ) {}
@@ -37,7 +35,13 @@ export class JobArrivedService {
       beauticianUserId,
     );
 
-    const existingPin = await this.pinService.getPin(bookingId);
+    // Only reach for the stored PIN when the booking is already ARRIVED
+    // (idempotent re-issue path). A first EN_ROUTE → ARRIVED transition would
+    // otherwise pay a pointless Redis round-trip for a record it never reads.
+    const existingPin =
+      booking.status === BookingStatus.ARRIVED
+        ? await this.pinService.getPin(bookingId)
+        : null;
 
     if (booking.status === BookingStatus.ARRIVED && existingPin) {
       return {
@@ -106,14 +110,6 @@ export class JobArrivedService {
     });
 
     // Side effects: do not block the HTTP response.
-    void this.notificationService.notifyArrivalVerificationNeeded(
-      {
-        id: booking.user.id,
-        email: booking.user.email,
-        firstName: booking.user.firstName,
-      },
-      bookingId,
-    );
     this.bookingPushNotifier.notifyArrived({
       customerUserId: booking.userId,
       bookingId,

@@ -10,7 +10,6 @@ export type {
   DispatchSuspensionEmailKind
 } from './beautician-dispatch-suspension.template';
 export {
-  arrivalVerificationNeededTemplate,
   serviceCompletedTemplate
 } from './beautician-home-service-lifecycle.template';
 export { beauticianKycResultTemplate } from './beautician-kyc-result.template';

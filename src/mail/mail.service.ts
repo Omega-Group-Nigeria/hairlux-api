@@ -12,7 +12,6 @@ import {
   applicationConfirmationTemplate,
   ApplicationStatusUpdateData,
   applicationStatusUpdateTemplate,
-  arrivalVerificationNeededTemplate,
   beauticianDispatchSuspensionTemplate,
   beauticianKycResultTemplate,
   beauticianProfileReviewTemplate,
@@ -445,29 +444,6 @@ export class MailService {
     } catch (error) {
       this.logger.error(
         `Error queuing beautician dispatch suspension email: ${error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  }
-
-  async sendArrivalVerificationNeededEmail(
-    email: string,
-    firstName: string,
-    bookingId: string,
-  ) {
-    try {
-      await this.emailQueue.add(
-        'send',
-        {
-          to: email,
-          subject: 'Verify Your Beautician — HairLux',
-          html: arrivalVerificationNeededTemplate(firstName, bookingId),
-        },
-        { attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
-      );
-    } catch (error) {
-      this.logger.error(
-        `Error queuing arrival verification email: ${error instanceof Error ? error.message : String(error)
         }`,
       );
     }
