@@ -1,13 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { FinancialTransactionService } from '../finance/financial-transaction.service';
 import { CreateProductSaleDto } from './dto/create-product-sale.dto';
-
 @Injectable()
 export class ProductSaleService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly inventoryService: InventoryService,
+        private readonly financialTransactionService: FinancialTransactionService,
     ) { }
 
     /**
@@ -34,8 +35,8 @@ export class ProductSaleService {
             if (item.price == null) {
                 throw new BadRequestException(`${item.name} has no price set — set one on the item before selling it`);
             }
-            if (item.currentQuantity < line.quantity) {
-                throw new BadRequestException(`Not enough stock for ${item.name} — ${item.currentQuantity} available, ${line.quantity} requested`);
+            if (item.salesStock < line.quantity) {
+                throw new BadRequestException(`Not enough sales stock for ${item.name} — ${item.salesStock} available, ${line.quantity} requested`);
             }
         }
 
@@ -65,18 +66,38 @@ export class ProductSaleService {
             for (const line of dto.items) {
                 await tx.inventoryItem.update({
                     where: { id: line.itemId },
-                    data: { currentQuantity: { decrement: line.quantity } },
+                    // A standalone retail sale deducts from Sales Stock --
+                    // the bucket meant for selling to customers, per the
+                    // spec's Store/Sales/Usage split.
+                    data: { salesStock: { decrement: line.quantity } },
                 });
                 await tx.stockMovement.create({
                     data: {
                         itemId: line.itemId,
                         type: 'SOLD',
+                        stockType: 'SALES',
                         quantityDelta: -line.quantity,
                         referenceId: created.id,
                         performedById: soldById,
                     },
                 });
             }
+
+            // Recorded inside this same transaction -- the sale and its
+            // ledger entry either both commit or neither does.
+            await this.financialTransactionService.record(
+                {
+                    direction: 'INFLOW',
+                    category: 'PRODUCT_SALE',
+                    amount: totalAmount,
+                    branchId,
+                    description: `Product sale${dto.customerName ? ` — ${dto.customerName}` : ''}`,
+                    recordedById: soldById,
+                    sourceType: 'ProductSale',
+                    sourceId: created.id,
+                },
+                tx,
+            );
 
             return created;
         });

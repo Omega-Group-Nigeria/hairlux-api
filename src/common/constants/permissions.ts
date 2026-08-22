@@ -66,6 +66,31 @@ export const PERMISSIONS = {
   SUPPLIERS_CREATE: 'suppliers:create', // Add a new supplier/vendor
   SUPPLIERS_UPDATE: 'suppliers:update', // Edit supplier/vendor details
   SUPPLIERS_DELETE: 'suppliers:delete', // Delete a supplier/vendor (blocked while items are linked)
+  SUPPLIERS_VIEW_BANKING: 'suppliers:view_banking', // View vendor bank name/account number/verified account name -- separate from general suppliers:read per the spec's access-restriction requirement
+
+  // ── Inventory Products (Procurement Integration) ─────────────────────────────
+  INVENTORY_PRODUCTS_READ: 'inventory_products:read',
+  INVENTORY_PRODUCTS_CREATE: 'inventory_products:create',
+  INVENTORY_PRODUCTS_UPDATE: 'inventory_products:update',
+  INVENTORY_PRODUCTS_DELETE: 'inventory_products:delete',
+
+  // ── Approval Chains (Procurement Integration) ─────────────────────────────
+  APPROVAL_CHAINS_READ: 'approval_chains:read',
+  APPROVAL_CHAINS_MANAGE: 'approval_chains:manage',
+
+  // ── Purchase Requests (Procurement Integration) ───────────────────────────
+  PURCHASE_REQUESTS_READ: 'purchase_requests:read',
+  PURCHASE_REQUESTS_CREATE: 'purchase_requests:create',
+  PURCHASE_REQUESTS_UPDATE: 'purchase_requests:update',
+  PURCHASE_REQUESTS_APPROVE: 'purchase_requests:approve',
+
+  // ── Purchases (Procurement Integration) ───────────────────────────────────
+  PURCHASES_READ: 'purchases:read',
+  PURCHASES_RECORD_PAYMENT: 'purchases:record_payment',
+  PURCHASES_RECEIVE_GOODS: 'purchases:receive_goods',
+
+  // ── Financial Transactions (Procurement Integration) ──────────────────────
+  FINANCIAL_TRANSACTIONS_READ: 'financial_transactions:read',
 
   // ── Payroll (salary/financial data) ──────────────────────────────────────────
   PAYROLL_READ: 'payroll:read', // View payroll dashboard, periods, payslips, withdrawal history
@@ -110,6 +135,10 @@ export const PERMISSIONS = {
   STAFF_PORTAL_BOOKINGS: 'staff-portal:bookings', // See the Bookings module
   STAFF_PORTAL_SALES: 'staff-portal:sales', // See the Sell Products module
   STAFF_PORTAL_APPROVALS: 'staff-portal:approvals', // See My Approvals (in addition to branch managers, who always see it)
+
+  // ── LMS (staff training library) ────────────────────────────────────────────
+  LMS_READ: 'lms:read', // View courses in the admin management UI
+  LMS_MANAGE: 'lms:manage', // Create, edit, delete courses and their role assignments
 
   // ── Lifecycle Campaigns ──────────────────────────────────────────────────────
   LIFECYCLE_CAMPAIGNS_READ: 'lifecycle_campaigns:read', // View templates & transition history
@@ -280,6 +309,13 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
+    group: 'LMS (Staff Training)',
+    permissions: [
+      { key: PERMISSIONS.LMS_READ, label: 'View courses' },
+      { key: PERMISSIONS.LMS_MANAGE, label: 'Create, edit, and delete courses and their role assignments' },
+    ],
+  },
+  {
     group: 'Suppliers & Vendors',
     permissions: [
       { key: PERMISSIONS.SUPPLIERS_READ, label: 'View suppliers/vendors and what they supply' },
@@ -289,6 +325,49 @@ export const PERMISSION_GROUPS = [
         key: PERMISSIONS.SUPPLIERS_DELETE,
         label: 'Delete a supplier/vendor (blocked while inventory items are still linked)',
       },
+      { key: PERMISSIONS.SUPPLIERS_VIEW_BANKING, label: "View a vendor's bank account details" },
+    ],
+  },
+  {
+    group: 'Inventory Products (Procurement Integration)',
+    permissions: [
+      { key: PERMISSIONS.INVENTORY_PRODUCTS_READ, label: 'View products in the master catalogue' },
+      { key: PERMISSIONS.INVENTORY_PRODUCTS_CREATE, label: 'Add a new product to the master catalogue' },
+      { key: PERMISSIONS.INVENTORY_PRODUCTS_UPDATE, label: 'Edit product details, pricing, and supplying vendors' },
+      {
+        key: PERMISSIONS.INVENTORY_PRODUCTS_DELETE,
+        label: 'Delete a product (blocked while branch inventory items are still linked)',
+      },
+    ],
+  },
+  {
+    group: 'Approval Chains (Procurement Integration)',
+    permissions: [
+      { key: PERMISSIONS.APPROVAL_CHAINS_READ, label: 'View configured approval chains' },
+      { key: PERMISSIONS.APPROVAL_CHAINS_MANAGE, label: 'Configure which roles approve each request type, and in what order' },
+    ],
+  },
+  {
+    group: 'Purchase Requests (Procurement Integration)',
+    permissions: [
+      { key: PERMISSIONS.PURCHASE_REQUESTS_READ, label: 'View purchase requests' },
+      { key: PERMISSIONS.PURCHASE_REQUESTS_CREATE, label: 'Create and submit purchase requests' },
+      { key: PERMISSIONS.PURCHASE_REQUESTS_UPDATE, label: 'Edit a purchase request while still in Draft' },
+      { key: PERMISSIONS.PURCHASE_REQUESTS_APPROVE, label: 'Approve or reject purchase requests awaiting your action' },
+    ],
+  },
+  {
+    group: 'Purchases (Procurement Integration)',
+    permissions: [
+      { key: PERMISSIONS.PURCHASES_READ, label: 'View purchases, payments, and receiving history' },
+      { key: PERMISSIONS.PURCHASES_RECORD_PAYMENT, label: 'Record a payment made to a vendor' },
+      { key: PERMISSIONS.PURCHASES_RECEIVE_GOODS, label: 'Confirm goods received against a purchase' },
+    ],
+  },
+  {
+    group: 'Financial Transactions (Procurement Integration)',
+    permissions: [
+      { key: PERMISSIONS.FINANCIAL_TRANSACTIONS_READ, label: 'View the financial transaction ledger and dashboard' },
     ],
   },
   {
@@ -386,14 +465,6 @@ export const PERMISSION_GROUPS = [
         key: PERMISSIONS.STAFF_PORTAL_APPROVALS,
         label: 'See My Approvals on the staff dashboard (branch managers always see this regardless)',
       },
-    ],
-  },
-
-  {
-    group: 'Lifecycle Campaigns',
-    permissions: [
-      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_READ, label: 'View campaign templates & transition history' },
-      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE, label: 'Create, edit, and delete campaign templates' },
     ],
   },
 ];

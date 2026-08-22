@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -32,8 +32,9 @@ export class SupplierController {
     @ApiOperation({ summary: 'List suppliers/vendors, optionally filtered by type' })
     @ApiQuery({ name: 'type', required: false, enum: ['SUPPLIER', 'VENDOR'] })
     @ApiQuery({ name: 'activeOnly', required: false, type: Boolean })
-    async findAll(@Query('type') type?: 'SUPPLIER' | 'VENDOR', @Query('activeOnly') activeOnly?: string) {
-        const data = await this.supplierService.findAll(type, activeOnly === 'true');
+    async findAll(@Query('type') type: 'SUPPLIER' | 'VENDOR' | undefined, @Query('activeOnly') activeOnly: string | undefined, @Req() req: any) {
+        const canViewBanking = req.user.role === 'SUPER_ADMIN' || (req.user.permissions ?? []).includes(PERMISSIONS.SUPPLIERS_VIEW_BANKING);
+        const data = await this.supplierService.findAll(type, activeOnly === 'true', canViewBanking);
         return { success: true, message: 'Retrieved successfully', data };
     }
 
@@ -41,8 +42,9 @@ export class SupplierController {
     @Permission(PERMISSIONS.SUPPLIERS_READ)
     @ApiOperation({ summary: 'Get a single supplier/vendor, including every inventory item they supply' })
     @ApiParam({ name: 'id' })
-    async findOne(@Param('id', ParseUUIDPipe) id: string) {
-        const data = await this.supplierService.findOne(id);
+    async findOne(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+        const canViewBanking = req.user.role === 'SUPER_ADMIN' || (req.user.permissions ?? []).includes(PERMISSIONS.SUPPLIERS_VIEW_BANKING);
+        const data = await this.supplierService.findOne(id, canViewBanking);
         return { success: true, message: 'Retrieved successfully', data };
     }
 
