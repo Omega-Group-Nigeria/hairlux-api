@@ -13,6 +13,7 @@ import { RedisService } from '../redis/redis.service';
 import { ReferralService } from '../referral/referral.service';
 import { BookingService } from '../booking/booking.service';
 import { WalletPushNotifier } from '../notifications/wallet/wallet-push.notifier';
+import { FinancialTransactionService } from '../finance/financial-transaction.service';
 
 type TransactionWithWallet = Transaction & {
   wallet: Pick<Wallet, 'id' | 'userId'>;
@@ -45,7 +46,8 @@ export class MonnifyWebhookProcessor {
     private referralService: ReferralService,
     private bookingService: BookingService,
     private walletPushNotifier: WalletPushNotifier,
-  ) {}
+    private financialTransactionService: FinancialTransactionService,
+  ) { }
 
   @Process('deposit-webhook')
   async handleDepositWebhook(job: Job<MonnifyWebhookJobData>) {
@@ -154,6 +156,19 @@ export class MonnifyWebhookProcessor {
     this.logger.log(
       `Monnify webhook processed: ${transaction.reference}, ₦${transaction.amount} credited`,
     );
+
+    // Deliberately non-atomic with the wallet credit above -- same
+    // reasoning applied throughout this phase's wallet-funding wiring.
+    void this.financialTransactionService
+      .record({
+        direction: 'INFLOW',
+        category: 'WALLET_FUNDING',
+        amount: Number(transaction.amount),
+        description: `Wallet deposit via Monnify (webhook) — ref ${transaction.reference}`,
+        sourceType: 'Transaction',
+        sourceId: transaction.id,
+      })
+      .catch((err) => this.logger.error(`Failed to record financial transaction for deposit ${transaction.reference}: ${err instanceof Error ? err.message : String(err)}`));
 
     // Invalidate caches without affecting payment processing success.
     try {

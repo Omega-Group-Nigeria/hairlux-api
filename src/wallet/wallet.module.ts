@@ -12,6 +12,7 @@ import { MailModule } from '../mail/mail.module';
 import { ReferralModule } from '../referral/referral.module';
 import { BookingModule } from '../booking/booking.module';
 import { WalletNotificationsModule } from '../notifications/wallet/wallet-notifications.module';
+import { FinanceModule } from '../finance/finance.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { WalletNotificationsModule } from '../notifications/wallet/wallet-notifi
     MailModule,
     ReferralModule,
     WalletNotificationsModule,
+    FinanceModule,
     forwardRef(() => BookingModule),
     BullModule.registerQueue(
       { name: 'paystack-webhooks' },
@@ -35,4 +37,4 @@ import { WalletNotificationsModule } from '../notifications/wallet/wallet-notifi
   controllers: [WalletController, AdminWalletController],
   exports: [WalletService, WalletDebitService],
 })
-export class WalletModule {}
+export class WalletModule { }

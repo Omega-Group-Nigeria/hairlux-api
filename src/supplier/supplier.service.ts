@@ -3,35 +3,52 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 
+const BANKING_FIELDS = ['bankName', 'accountNumber', 'verifiedAccountName'] as const;
+
 @Injectable()
 export class SupplierService {
     constructor(private readonly prisma: PrismaService) { }
+
+    /**
+     * Strips banking fields from the response object entirely (not just
+     * masking with '***') when the caller lacks suppliers:view_banking --
+     * per the spec's explicit requirement that this stay restricted to
+     * authorized users. Applied at the service layer so it's enforced
+     * regardless of which controller/consumer calls this.
+     */
+    private stripBankingIfUnauthorized<T extends Record<string, any>>(record: T, canViewBanking: boolean): T {
+        if (canViewBanking) return record;
+        const result = { ...record };
+        for (const field of BANKING_FIELDS) delete (result as any)[field];
+        return result;
+    }
 
     async create(dto: CreateSupplierDto) {
         return this.prisma.supplier.create({ data: dto });
     }
 
-    async findAll(type?: 'SUPPLIER' | 'VENDOR', activeOnly?: boolean) {
-        return this.prisma.supplier.findMany({
+    async findAll(type?: 'SUPPLIER' | 'VENDOR', activeOnly?: boolean, canViewBanking = false) {
+        const suppliers = await this.prisma.supplier.findMany({
             where: {
                 ...(type && { type }),
                 ...(activeOnly && { isActive: true }),
             },
             orderBy: { name: 'asc' },
         });
+        return suppliers.map((s) => this.stripBankingIfUnauthorized(s, canViewBanking));
     }
 
-    async findOne(id: string) {
+    async findOne(id: string, canViewBanking = false) {
         const supplier = await this.prisma.supplier.findUnique({
             where: { id },
             include: {
                 inventoryItems: {
-                    select: { id: true, name: true, category: true, currentQuantity: true, branch: { select: { id: true, name: true } } },
+                    select: { id: true, name: true, category: true, storeStock: true, salesStock: true, usageStock: true, branch: { select: { id: true, name: true } } },
                 },
             },
         });
         if (!supplier) throw new NotFoundException('Supplier not found');
-        return supplier;
+        return this.stripBankingIfUnauthorized(supplier, canViewBanking);
     }
 
     async update(id: string, dto: UpdateSupplierDto) {

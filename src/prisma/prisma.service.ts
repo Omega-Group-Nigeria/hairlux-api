@@ -443,4 +443,56 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   get staffAddressVerification() {
     return this.client.staffAddressVerification;
   }
+
+  get inventoryProduct() {
+    return this.client.inventoryProduct;
+  }
+
+  get vendorProduct() {
+    return this.client.vendorProduct;
+  }
+
+  get financialTransaction() {
+    return this.client.financialTransaction;
+  }
+
+  get approvalChainStage() {
+    return this.client.approvalChainStage;
+  }
+
+  get purchaseRequest() {
+    return this.client.purchaseRequest;
+  }
+
+  get purchaseRequestLine() {
+    return this.client.purchaseRequestLine;
+  }
+
+  get purchase() {
+    return this.client.purchase;
+  }
+
+  get purchaseLine() {
+    return this.client.purchaseLine;
+  }
+
+  get purchasePayment() {
+    return this.client.purchasePayment;
+  }
+
+  get goodsReceipt() {
+    return this.client.goodsReceipt;
+  }
+
+  get goodsReceiptLine() {
+    return this.client.goodsReceiptLine;
+  }
+
+  get lmsCourse() {
+    return this.client.lmsCourse;
+  }
+
+  get lmsCourseRole() {
+    return this.client.lmsCourseRole;
+  }
 }

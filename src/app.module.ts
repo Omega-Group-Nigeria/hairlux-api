@@ -41,6 +41,10 @@ import { ProductSaleModule } from './product-sale/product-sale.module';
 import { SupplierModule } from './supplier/supplier.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { CrmModule } from './crm/crm.module';
+import { LmsModule } from './lms/lms.module';
+import { InventoryProductModule } from './inventory-product/inventory-product.module';
+import { FinanceModule } from './finance/finance.module';
+import { PurchaseModule } from './purchase/purchase.module';
 
 @Module({
   imports: [
@@ -99,6 +103,7 @@ import { CrmModule } from './crm/crm.module';
     JobsModule,
     RolesModule,
     StaffModule,
+    LmsModule,
     WaitlistModule,
     ShopModule,
     BranchModule,
@@ -121,6 +126,10 @@ import { CrmModule } from './crm/crm.module';
     BranchFinanceModule,
     SmsModule,
     CrmModule,
+    LmsModule,
+    InventoryProductModule,
+    FinanceModule,
+    PurchaseModule,
     
   ],
   controllers: [AppController],

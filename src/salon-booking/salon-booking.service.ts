@@ -7,6 +7,7 @@ import { classifyCustomerLifecycle, classifyCustomerValue, CustomerLifecycle, Cu
 import { watTodayDateStr } from '../common/utils/wat-time.util';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { FinancialTransactionService } from '../finance/financial-transaction.service';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
@@ -79,6 +80,7 @@ export class SalonBookingService {
         private prisma: PrismaService,
         private inventoryService: InventoryService,
         private bookingService: BookingService,
+        private financialTransactionService: FinancialTransactionService,
     ) { }
 
     async create(dto: CreateSalonBookingDto, createdById: string | undefined) {
@@ -157,21 +159,6 @@ export class SalonBookingService {
         return withBookingCode(booking);
     }
 
-    /** Matches by phone (the de-dup key) — repeat visits reuse the same Customer row. */
-    /**
-     * Looks up existing customers by name or phone, for the "look this
-     * person up instead of retyping their details" flow when starting a
-     * new booking. Searches both the lightweight Customer table (people
-     * who've had a walk-in before, may or may not have an app account) and
-     * real User accounts (role USER — people with an app account who may
-     * never have walked in before). A Customer already linked to a User is
-     * deduplicated so it doesn't show up twice.
-     */
-    /**
-     * Full paginated Customer Contacts list, for the Contacts module — distinct
-     * from searchCustomers, which is a lightweight capped lookup used only
-     * while creating a booking.
-     */
     async findAllCustomers(params: CustomerContactsFilterParams) {
         const {
             query, branchIds, dateFrom, dateTo, hasAccount,
@@ -204,14 +191,6 @@ export class SalonBookingService {
             };
         }
 
-        // Every filter below (visits/spend/dates/lifecycle/value/service)
-        // depends on each customer's FULL booking history, not a single
-        // row — not expressible as a plain Prisma where clause without a
-        // raw aggregation query. So this fetches every DB-filterable
-        // match, computes stats in memory, filters, and paginates last —
-        // applying pagination before that filtering would silently return
-        // short pages. Fine at Hairlux's actual customer volume; not
-        // something to do at a scale of hundreds of thousands of rows.
         const needsValueFilter = [
             minVisits, maxVisits, minSpend, maxSpend, minAvgSpend, maxAvgSpend,
             firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
@@ -291,8 +270,6 @@ export class SalonBookingService {
                 servicesPurchased: s ? Array.from(s.serviceNames) : [],
                 serviceIds: s ? Array.from(s.serviceIds) : [],
                 serviceCategoryIds: s ? Array.from(s.serviceCategoryIds) : [],
-                // Lifecycle and Value are independent dimensions (per spec) —
-                // never merge these into a single status field.
                 lifecycle: classifyCustomerLifecycle({
                     lastVisitDate: s?.lastVisitDate ?? null,
                     completedVisitCount: visitCount,
@@ -327,11 +304,6 @@ export class SalonBookingService {
         return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
     }
 
-    /**
-     * Performance cards for the Customer Contacts page — computed over the
-     * SAME filtered set findAllCustomers would return (minus pagination),
-     * so the cards and the table always agree with each other.
-     */
     async getCustomerContactsPerformance(params: Omit<CustomerContactsFilterParams, 'page' | 'limit'>) {
         const { data } = await this.findAllCustomers({ ...params, page: 1, limit: Number.MAX_SAFE_INTEGER });
 
@@ -363,7 +335,6 @@ export class SalonBookingService {
         };
     }
 
-    /** Full profile/history for a single Customer Contact — the drill-down view when an admin clicks a customer. */
     async getCustomerProfile(customerId: string) {
         const customer = await this.prisma.customer.findUnique({ where: { id: customerId } });
         if (!customer) throw new NotFoundException('Customer not found');
@@ -413,7 +384,6 @@ export class SalonBookingService {
         };
     }
 
-    /** Both dimensions live on one settings row — always returned together, since the admin config page edits them as one form. */
     async getCustomerClassificationSettings() {
         const row = await this.prisma.customerValueSettings.findFirst();
         return {
@@ -488,15 +458,6 @@ export class SalonBookingService {
         return [...fromCustomers, ...fromUsers].slice(0, 15);
     }
 
-    /**
-     * Combined Salon Bookings overview — merges SalonBooking rows with the
-     * legacy Booking table's WALK_IN entries (still the live customer
-     * self-service path), so admin sees one consistent picture of "what
-     * happened at the salon" regardless of which table a given booking
-     * actually lives in. HOME_SERVICE legacy bookings are deliberately
-     * excluded — those belong to the existing marketplace Booking
-     * Management dashboard, not this one.
-     */
     async getOverview(filters: { dateFrom?: string; dateTo?: string; branchId?: string; source?: 'salon_booking' | 'booking' | 'all' }) {
         const dateFilter = (filters.dateFrom || filters.dateTo)
             ? { gte: filters.dateFrom ? new Date(filters.dateFrom) : undefined, lte: filters.dateTo ? new Date(filters.dateTo) : undefined }
@@ -572,8 +533,6 @@ export class SalonBookingService {
 
         const summary = {
             totalBookings: rows.length,
-            // Realized revenue — only what's actually been completed, not
-            // pending or cancelled bookings that never rendered service.
             totalRevenue: rows.filter((r) => r.bucket === 'completed').reduce((sum, r) => sum + r.totalAmount, 0),
             completed: rows.filter((r) => r.bucket === 'completed').length,
             pending: rows.filter((r) => r.bucket === 'pending').length,
@@ -583,12 +542,6 @@ export class SalonBookingService {
         return { summary, bookings: rows };
     }
 
-    /**
-     * Hard-deletes a SalonBooking — Super Admin only, and only for
-     * SalonBooking rows (never the legacy marketplace Booking table, which
-     * has its own separate lifecycle and no delete concept here). Cascades
-     * to its service lines, inventory lines, and commission record.
-     */
     async deleteBooking(id: string) {
         const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException('Booking not found');
@@ -599,10 +552,6 @@ export class SalonBookingService {
     private async findOrCreateCustomer(name: string, phone: string, email?: string, linkToVerifiedUser?: boolean) {
         const existing = await this.prisma.customer.findUnique({ where: { phone } });
 
-        // Only actually link when staff explicitly confirmed it (see
-        // checkPhoneMatch) -- a phone matching a verified account is never
-        // enough on its own to silently attach someone's visit history to
-        // that account.
         let verifiedUserId: string | undefined;
         if (linkToVerifiedUser) {
             const verifiedUser = await this.prisma.user.findFirst({ where: { phone, phoneVerified: true } });
@@ -618,14 +567,6 @@ export class SalonBookingService {
         return this.prisma.customer.create({ data: { name, phone, email, userId: verifiedUserId } });
     }
 
-    /**
-     * Called as staff types/confirms a phone number on the booking form --
-     * before creation, not as a side effect of it. Tells the frontend
-     * whether to show an "Is this <name>? Link this visit to their
-     * account?" prompt at all: no prompt when there's no verified match,
-     * and no prompt when the existing Customer record (if any) is already
-     * linked to that exact account, since there's nothing left to confirm.
-     */
     async checkPhoneMatch(phone: string) {
         const verifiedUser = await this.prisma.user.findFirst({
             where: { phone, phoneVerified: true },
@@ -637,7 +578,7 @@ export class SalonBookingService {
 
         const existingCustomer = await this.prisma.customer.findUnique({ where: { phone } });
         if (existingCustomer?.userId === verifiedUser.id) {
-            return { hasMatch: false as const }; // already linked -- nothing to confirm
+            return { hasMatch: false as const };
         }
 
         return {
@@ -647,7 +588,7 @@ export class SalonBookingService {
     }
 
     private generateReservationCode(): string {
-        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I ambiguity
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
         let code = 'HLS-';
         for (let i = 0; i < 6; i++) {
             code += chars[randomInt(chars.length)];
@@ -655,12 +596,6 @@ export class SalonBookingService {
         return code;
     }
 
-    /**
-     * Customer-facing — reserving a salon visit in advance from
-     * hairlux-user-interface. No Stylist assigned yet (that happens when the
-     * customer walks in and staff verifies the code) and no `createdById`
-     * (nobody on staff created this).
-     */
     async reserve(dto: ReserveSalonBookingDto) {
         const branch = await this.prisma.staffLocation.findUnique({ where: { id: dto.branchId } });
         if (!branch) throw new NotFoundException('Branch not found');
@@ -699,8 +634,6 @@ export class SalonBookingService {
 
         const customer = await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail);
 
-        // Reservation codes are unique — collisions are astronomically rare
-        // with 6 chars from a 32-symbol alphabet, but retry once just in case.
         let reservationCode = this.generateReservationCode();
         for (let attempt = 0; attempt < 3; attempt++) {
             const clash = await this.prisma.salonBooking.findUnique({ where: { reservationCode } });
@@ -726,10 +659,6 @@ export class SalonBookingService {
         return withBookingCode(booking);
     }
 
-    /**
-     * Looks up a reservation by code. `restrictToBranchId` is passed for
-     * staff (their own branch only) and omitted for admin (any branch).
-     */
     async findByReservationCode(code: string, restrictToBranchId?: string) {
         const booking = await this.prisma.salonBooking.findUnique({
             where: { reservationCode: code },
@@ -737,12 +666,11 @@ export class SalonBookingService {
         });
         if (!booking) throw new NotFoundException('No reservation found with this code');
         if (restrictToBranchId && booking.branchId !== restrictToBranchId) {
-            throw new NotFoundException('No reservation found with this code'); // don't leak cross-branch existence
+            throw new NotFoundException('No reservation found with this code');
         }
         return withBookingCode(booking);
     }
 
-    /** Assigns the Stylist and marks the reservation redeemed — the moment the customer actually walks in. */
     async verifyReservation(id: string, dto: VerifyReservationDto, restrictToBranchId?: string) {
         const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException('Booking not found');
@@ -770,14 +698,6 @@ export class SalonBookingService {
         return this.findOne(id);
     }
 
-    /**
-     * Looks up a reservation code across both booking systems — SalonBooking
-     * (staff/admin-created walk-ins and advance reservations) and the older
-     * marketplace Booking table (still the live path for customer
-     * self-service bookings, including WALK_IN type, since it's the one
-     * with working wallet deduction). SalonBooking is checked first since
-     * that's the more common staff-facing case.
-     */
     async findReservationAnywhere(code: string, restrictToBranchId?: string) {
         const salonBooking = await this.prisma.salonBooking.findUnique({
             where: { reservationCode: code },
@@ -803,13 +723,6 @@ export class SalonBookingService {
         return { source: 'booking' as const, booking: legacyBooking };
     }
 
-    /**
-     * Verifies a reservation code found in either table. Both paths now
-     * require picking which in-house Stylist is serving the customer — a
-     * self-service customer booking never has one assigned at booking time
-     * (unlike an admin/staff-created SalonBooking walk-in), so verification
-     * is the natural moment to record it, for either table.
-     */
     async verifyReservationAnywhere(code: string, assignedStaffId: string | undefined, restrictToBranchId?: string) {
         if (!assignedStaffId) {
             throw new BadRequestException('Select which staff member is serving this customer');
@@ -850,14 +763,6 @@ export class SalonBookingService {
         return { source: 'booking' as const, booking: updated };
     }
 
-    /**
-     * Real commission summary for the logged-in staff member — this month's
-     * total, all-time total, a monthly breakdown for the last 6 months, and
-     * the individual booking-level entries behind it. No bonus-target or
-     * payout-tracking concepts here — those don't exist as real backend
-     * features yet, so this only ever shows what SalonBookingCommission
-     * actually has recorded.
-     */
     async getMyCommissionSummary(staffId: string) {
         const staff = await this.prisma.staff.findUnique({ where: { id: staffId } });
         if (!staff) throw new NotFoundException('Staff record not found');
@@ -930,13 +835,6 @@ export class SalonBookingService {
         };
     }
 
-    /**
-     * Today's Stylist Performance — branch-scoped, today only (WAT), never
-     * historical. "Completed services" here means completed bookings, not
-     * individual service line items within a booking — matching how a
-     * salon typically talks about "how many appointments a stylist got
-     * through today," not a line-item count.
-     */
     async getTodayStylistPerformance(branchId: string) {
         const todayStr = watTodayDateStr(new Date());
 
@@ -966,14 +864,6 @@ export class SalonBookingService {
         return Array.from(byStaff.values()).sort((a, z) => z.totalGenerated - a.totalGenerated);
     }
 
-    /**
-     * Resolves the effective walk-in price per service for a given branch —
-     * the branch's BranchService.walkInPrice override when one exists,
-     * otherwise the service's own base walkInPrice. This is the same
-     * override mechanism ServiceCatalogService applies for display; booking
-     * creation must use it too, or a branch's price override never actually
-     * gets charged.
-     */
     private async resolveServicePrices(branchId: string, serviceIds: string[]): Promise<Map<string, number>> {
         const overrides = await this.prisma.branchService.findMany({
             where: { branchId, serviceId: { in: serviceIds } },
@@ -1030,10 +920,6 @@ export class SalonBookingService {
 
         if (search) {
             const trimmed = search.trim();
-            // Accepts "HLB-001057", "1057", or "001057" as a Booking ID
-            // search, alongside the usual name/phone match — a search that
-            // isn't a valid Booking ID still works fine as a plain
-            // name/phone search via the same OR clause.
             const numericPart = trimmed.replace(/^HLB-?/i, '').replace(/^0+(?=\d)/, '');
             const asBookingNumber = numericPart ? Number(numericPart) : NaN;
 
@@ -1099,14 +985,6 @@ export class SalonBookingService {
         }
     }
 
-    /**
-     * Cancel is intentionally stricter than the general "modifiable" check —
-     * once a booking is In Progress, the Stylist has already started serving
-     * the customer, so cancelling it no longer makes sense. This was
-     * previously missing: assertModifiable() alone let an In Progress
-     * booking be cancelled, which the current spec explicitly says
-     * shouldn't be possible.
-     */
     private assertCancellable(status: SalonBookingStatus) {
         if (status !== SalonBookingStatus.SCHEDULED) {
             throw new BadRequestException(
@@ -1124,11 +1002,6 @@ export class SalonBookingService {
         return withBookingCode(updated);
     }
 
-    /**
-     * The single trigger point for both inventory deduction and commission
-     * calculation — mirrors the SRS's "Completed is the one event both react
-     * to" rule for the marketplace Booking model.
-     */
     async complete(id: string, actorId: string | undefined) {
         const booking = await this.prisma.salonBooking.findUnique({
             where: { id },
@@ -1140,11 +1013,11 @@ export class SalonBookingService {
             throw new BadRequestException('Cannot complete a booking with no Stylist assigned — verify the reservation or assign one first');
         }
 
-        // Re-validate stock availability at completion time, not just when items were added.
         for (const line of booking.inventoryItems) {
-            if (line.item.currentQuantity < line.quantity) {
+            const available = line.item.category === 'FOR_SALE' ? line.item.salesStock : line.item.usageStock;
+            if (available < line.quantity) {
                 throw new BadRequestException(
-                    `Insufficient stock for "${line.item.name}" — ${line.item.currentQuantity} available, ${line.quantity} needed`,
+                    `Insufficient ${line.item.category === 'FOR_SALE' ? 'sales' : 'usage'} stock for "${line.item.name}" — ${available} available, ${line.quantity} needed`,
                 );
             }
         }
@@ -1153,14 +1026,18 @@ export class SalonBookingService {
 
         await this.prisma.$transaction(async (tx) => {
             for (const line of booking.inventoryItems) {
+                const isForSale = line.item.category === 'FOR_SALE';
                 await tx.inventoryItem.update({
                     where: { id: line.itemId },
-                    data: { currentQuantity: { decrement: line.quantity } },
+                    data: isForSale
+                        ? { salesStock: { decrement: line.quantity } }
+                        : { usageStock: { decrement: line.quantity } },
                 });
                 await tx.stockMovement.create({
                     data: {
                         itemId: line.itemId,
-                        type: line.item.category === 'FOR_SALE' ? StockMovementType.SOLD : StockMovementType.CONSUMED,
+                        type: isForSale ? StockMovementType.SOLD : StockMovementType.CONSUMED,
+                        stockType: isForSale ? 'SALES' : 'USAGE',
                         quantityDelta: -line.quantity,
                         referenceId: booking.id,
                         performedById: actorId,
@@ -1185,6 +1062,20 @@ export class SalonBookingService {
                 where: { id },
                 data: { status: SalonBookingStatus.COMPLETED, completedAt: now },
             });
+
+            await this.financialTransactionService.record(
+                {
+                    direction: 'INFLOW',
+                    category: 'SALON_BOOKING_REVENUE',
+                    amount: Number(booking.totalAmount),
+                    branchId: booking.branchId,
+                    description: `Salon booking completed — ${booking.customerName}`,
+                    recordedById: actorId,
+                    sourceType: 'SalonBooking',
+                    sourceId: booking.id,
+                },
+                tx,
+            );
         });
 
         for (const line of booking.inventoryItems) {
@@ -1216,21 +1107,6 @@ export class SalonBookingService {
         return withBookingCode(updated);
     }
 
-    /**
-     * Full edit — Scheduled/In Progress bookings only. Every field is
-     * optional; only what's actually sent gets validated and changed.
-     * Re-runs the same past-date and business-hours-closure checks
-     * create() enforces whenever date/time actually changes — an edit can
-     * move a booking into an invalid state just as easily as a fresh
-     * create can, so it needs the same guardrails, not looser ones just
-     * because the booking already exists.
-     *
-     * customerId (the linked Customer record, if any) is deliberately left
-     * untouched here even if customerName/customerPhone change — silently
-     * re-linking to a different Customer record on a name/phone edit could
-     * move this booking's history to someone else's profile unexpectedly.
-     * Only the denormalized text fields on the booking itself are updated.
-     */
     async editBooking(id: string, dto: EditSalonBookingDto) {
         const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException('Booking not found');
@@ -1278,10 +1154,6 @@ export class SalonBookingService {
                 return { serviceId: service.id, price: servicePrices.get(service.id) ?? Number(service.walkInPrice), quantity: line.quantity ?? 1, bookingId: id };
             });
 
-            // Replaces the whole service-line set — an edit's "services"
-            // field represents the booking's complete new service list,
-            // not an incremental add. Existing inventory lines are
-            // untouched; editBooking() only ever changes service lines.
             await this.prisma.$transaction([
                 this.prisma.salonBookingService.deleteMany({ where: { bookingId: id } }),
                 this.prisma.salonBookingService.createMany({ data: serviceLines }),
@@ -1300,19 +1172,9 @@ export class SalonBookingService {
             },
         });
 
-        // Recomputes totalAmount from whatever service/inventory lines now
-        // exist, whether or not this particular edit touched services —
-        // cheap, and guarantees totalAmount can never drift from its lines.
         return this.recomputeTotal(id);
     }
 
-    /**
-     * Completed bookings only — the ONE way a Completed booking can still
-     * change: adding a new service line. Existing service lines are
-     * completely untouched here (no delete, no price/quantity edit) — that
-     * immutability is enforced in this method, not just implied by the
-     * DTO's shape.
-     */
     async addServiceToCompletedBooking(id: string, dto: AddServiceToCompletedBookingDto) {
         const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException('Booking not found');

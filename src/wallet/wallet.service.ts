@@ -17,6 +17,7 @@ import { TransactionType, TransactionStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { RedisService } from '../redis/redis.service';
 import { WalletPushNotifier } from '../notifications/wallet/wallet-push.notifier';
+import { FinancialTransactionService } from '../finance/financial-transaction.service';
 
 const TRANSACTION_GATEWAY = {
   PAYSTACK: 'PAYSTACK',
@@ -36,6 +37,7 @@ export class WalletService {
     private configService: ConfigService,
     private redis: RedisService,
     private walletPushNotifier: WalletPushNotifier,
+    private financialTransactionService: FinancialTransactionService,
   ) {
     this.MAX_DEPOSITS_PER_MINUTE = this.configService.get<number>(
       'WALLET_MAX_DEPOSITS_PER_MINUTE',
@@ -333,6 +335,23 @@ export class WalletService {
       this.logger.log(
         `Monnify deposit completed for user ${userId}: ₦${transaction.amount}, ref: ${reference}`,
       );
+      // Deliberately NOT inside the $transaction above -- see the reasoning
+      // this session settled on for wallet funding specifically: a
+      // customer's deposit succeeding matters more than the internal
+      // ledger record being perfectly atomic with it. If this call ever
+      // failed, the wallet credit -- the customer-facing operation --
+      // must not be put at risk by an unrelated ledger write.
+      void this.financialTransactionService
+        .record({
+          direction: 'INFLOW',
+          category: 'WALLET_FUNDING',
+          amount: Number(transaction.amount),
+          description: `Wallet deposit via Monnify — ref ${reference}`,
+          recordedById: userId,
+          sourceType: 'Transaction',
+          sourceId: transaction.id,
+        })
+        .catch((err) => this.logger.error(`Failed to record financial transaction for deposit ${reference}: ${err instanceof Error ? err.message : String(err)}`));
       void Promise.all([
         this.redis.del(`wallet:balance:${userId}`),
         this.redis.del('wallet:admin-stats'),
@@ -412,6 +431,19 @@ export class WalletService {
     this.logger.log(
       `Deposit completed for user ${userId}: ₦${transaction.amount}, ref: ${reference}`,
     );
+    // Same reasoning as the Monnify branch above -- non-atomic with the
+    // wallet credit itself, deliberately.
+    void this.financialTransactionService
+      .record({
+        direction: 'INFLOW',
+        category: 'WALLET_FUNDING',
+        amount: Number(transaction.amount),
+        description: `Wallet deposit via Paystack — ref ${reference}`,
+        recordedById: userId,
+        sourceType: 'Transaction',
+        sourceId: transaction.id,
+      })
+      .catch((err) => this.logger.error(`Failed to record financial transaction for deposit ${reference}: ${err instanceof Error ? err.message : String(err)}`));
 
     // Invalidate balance + admin stats caches
     void Promise.all([
@@ -534,12 +566,12 @@ export class WalletService {
     // Ensure all transaction types are present in the response structure even if count is 0
     // This matches user expectation of consistent data shape
     const statsByType: Record<string, { totalAmount: number; count: number }> =
-      {
-        DEPOSIT: { totalAmount: 0, count: 0 },
-        DEBIT: { totalAmount: 0, count: 0 },
-        REFUND: { totalAmount: 0, count: 0 },
-        // Add other types if necessary, e.g., CREDIT
-      };
+    {
+      DEPOSIT: { totalAmount: 0, count: 0 },
+      DEBIT: { totalAmount: 0, count: 0 },
+      REFUND: { totalAmount: 0, count: 0 },
+      // Add other types if necessary, e.g., CREDIT
+    };
 
     transactionStats.forEach((s) => {
       statsByType[s.type] = {

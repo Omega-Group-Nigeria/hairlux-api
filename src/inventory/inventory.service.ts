@@ -5,14 +5,15 @@ import {
     LowStockAlertStage,
     Prisma,
     StockMovementType,
-    StockTransferStatus
+    StockTransferStatus,
+    StockType
 } from '@prisma/client';
 import { ApprovalService } from '../approval/approval.service';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
-import { BulkCreateInventoryItemDto } from './dto/bulk-create-inventory-item.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
+import { BulkCreateInventoryItemDto } from './dto/bulk-create-inventory-item.dto';
 import { QueryInventoryDto } from './dto/query-inventory.dto';
 import { ReceiveGoodsDto } from './dto/receive-goods.dto';
 import { RejectTransferDto } from './dto/reject-transfer.dto';
@@ -27,6 +28,8 @@ const STAGE_ORDER: LowStockAlertStage[] = [
     LowStockAlertStage.MANAGEMENT,
 ];
 
+type StockBuckets = { storeStock: number; salesStock: number; usageStock: number };
+
 @Injectable()
 export class InventoryService {
     private readonly logger = new Logger(InventoryService.name);
@@ -36,6 +39,39 @@ export class InventoryService {
         private mailService: MailService,
         private approvalService: ApprovalService,
     ) { }
+
+    // ── Stock-type helpers (Phase 2) ────────────────────────────────────
+    // Every read/write against a specific bucket goes through these two,
+    // rather than each call site re-deriving the field name -- one place
+    // to get the STORE/SALES/USAGE <-> column mapping right.
+
+    private stockField(stockType: StockType): 'storeStock' | 'salesStock' | 'usageStock' {
+        if (stockType === StockType.STORE) return 'storeStock';
+        if (stockType === StockType.SALES) return 'salesStock';
+        return 'usageStock';
+    }
+
+    private getStockValue(item: StockBuckets, stockType: StockType): number {
+        return item[this.stockField(stockType)];
+    }
+
+    private getTotalStock(item: StockBuckets): number {
+        return item.storeStock + item.salesStock + item.usageStock;
+    }
+
+    /**
+     * Returns a properly-shaped partial update object rather than a
+     * computed/dynamic property key -- Prisma's generated update-input
+     * types don't reliably accept `{ [field]: value }` without an unsafe
+     * cast, so this switches explicitly instead. `value` can be a plain
+     * number (adjustment's absolute set) or a Prisma increment/decrement
+     * operator object (transfer, deduct-for-sale).
+     */
+    private stockFieldUpdate(stockType: StockType, value: number | { increment: number } | { decrement: number }) {
+        if (stockType === StockType.STORE) return { storeStock: value };
+        if (stockType === StockType.SALES) return { salesStock: value };
+        return { usageStock: value };
+    }
 
     async createItem(dto: CreateInventoryItemDto, branchId: string) {
         const existing = await this.prisma.inventoryItem.findFirst({
@@ -56,7 +92,10 @@ export class InventoryService {
                 supplierId: dto.supplierId,
                 unit: dto.unit,
                 lowStockThreshold: dto.lowStockThreshold ?? 5,
-                currentQuantity: dto.initialQuantity ?? 0,
+                // New stock always starts unallocated in Store, per the
+                // spec's Stock Allocation section -- allocating into
+                // Sales/Usage is a separate, explicit step afterward.
+                storeStock: dto.initialQuantity ?? 0,
                 expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
                 price: dto.category === 'FOR_SALE' ? dto.price : (dto.price ?? undefined),
             },
@@ -72,6 +111,12 @@ export class InventoryService {
      * whole request — the admin gets back exactly what was created and
      * what was skipped, rather than having one pre-existing duplicate
      * block every other branch in the selection.
+     *
+     * Restored here after being silently dropped by an earlier full-file
+     * rewrite of this service that was working from a stale copy -- the
+     * only change from the original is storeStock in place of the
+     * now-removed currentQuantity field, matching Phase 2's Store/Sales/
+     * Usage split; the rest of the logic is untouched.
      */
     async createItemForBranches(dto: BulkCreateInventoryItemDto) {
         if (dto.category === 'FOR_SALE' && (dto.price === undefined || dto.price === null)) {
@@ -98,7 +143,7 @@ export class InventoryService {
                     supplierId: dto.supplierId,
                     unit: dto.unit,
                     lowStockThreshold: dto.lowStockThreshold ?? 5,
-                    currentQuantity: entry.initialQuantity ?? 0,
+                    storeStock: entry.initialQuantity ?? 0,
                     expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
                     price: dto.category === 'FOR_SALE' ? dto.price : (dto.price ?? undefined),
                 },
@@ -152,7 +197,7 @@ export class InventoryService {
         });
 
         const filtered = lowStockOnly
-            ? items.filter((i) => i.currentQuantity <= i.lowStockThreshold)
+            ? items.filter((i) => this.getTotalStock(i) <= i.lowStockThreshold)
             : items;
 
         const total = filtered.length;
@@ -222,12 +267,15 @@ export class InventoryService {
         const [updated] = await this.prisma.$transaction([
             this.prisma.inventoryItem.update({
                 where: { id: itemId },
-                data: { currentQuantity: { increment: dto.quantity } },
+                // Received goods always land in Store (unallocated) --
+                // matches createItem's same convention.
+                data: { storeStock: { increment: dto.quantity } },
             }),
             this.prisma.stockMovement.create({
                 data: {
                     itemId,
                     type: StockMovementType.RECEIVED,
+                    stockType: StockType.STORE,
                     quantityDelta: dto.quantity,
                     performedById: staffId,
                     reason: dto.note,
@@ -239,23 +287,24 @@ export class InventoryService {
     }
 
     /** The actual stock mutation — only ever called once an adjustment is approved (or by an elevated Admin submitting one, which auto-approves). */
-    private async applyAdjustment(itemId: string, quantityDelta: number, reason: string, staffId: string | undefined) {
+    private async applyAdjustment(itemId: string, stockType: StockType, quantityDelta: number, reason: string, staffId: string | undefined) {
         const item = await this.findOne(itemId);
-        const newQuantity = item.currentQuantity + quantityDelta;
+        const newQuantity = this.getStockValue(item, stockType) + quantityDelta;
 
         if (newQuantity < 0) {
-            throw new BadRequestException('Adjustment would result in negative stock — not permitted');
+            throw new BadRequestException(`Adjustment would result in negative ${stockType.toLowerCase()} stock — not permitted`);
         }
 
         const [updated] = await this.prisma.$transaction([
             this.prisma.inventoryItem.update({
                 where: { id: itemId },
-                data: { currentQuantity: newQuantity },
+                data: this.stockFieldUpdate(stockType, newQuantity),
             }),
             this.prisma.stockMovement.create({
                 data: {
                     itemId,
                     type: StockMovementType.ADJUSTMENT,
+                    stockType,
                     quantityDelta,
                     performedById: staffId,
                     reason,
@@ -288,6 +337,7 @@ export class InventoryService {
         const adjustmentRequest = await this.prisma.stockAdjustmentRequest.create({
             data: {
                 itemId,
+                stockType: dto.stockType,
                 quantityDelta: dto.quantityDelta,
                 reason: dto.reason,
                 requestedById: staffId,
@@ -313,7 +363,7 @@ export class InventoryService {
 
         // Re-validate at execution time, not just at request time — stock may
         // have moved since this was submitted (sale, another adjustment, etc.).
-        await this.applyAdjustment(request.itemId, request.quantityDelta, request.reason, actorId);
+        await this.applyAdjustment(request.itemId, request.stockType, request.quantityDelta, request.reason, actorId);
 
         return this.prisma.stockAdjustmentRequest.update({
             where: { id: requestId },
@@ -366,25 +416,31 @@ export class InventoryService {
      * Deduct stock for a completed sale. Called internally by the Sales module
      * once it exists — exposed here as a direct method, not necessarily its
      * own public endpoint, since a Sale/Booking should be the real trigger.
+     * stockType is a required, explicit parameter rather than a silent
+     * default -- forces every caller to actually decide which bucket a
+     * given deduction comes from (e.g. a retail sale vs. a service using
+     * up product) rather than risk a default being wrong for one of them.
      */
-    async deductForSale(itemId: string, quantity: number, referenceId?: string) {
+    async deductForSale(itemId: string, stockType: StockType, quantity: number, referenceId?: string) {
         const item = await this.findOne(itemId);
+        const available = this.getStockValue(item, stockType);
 
-        if (item.currentQuantity < quantity) {
+        if (available < quantity) {
             throw new BadRequestException(
-                `Insufficient stock for "${item.name}" — ${item.currentQuantity} available, ${quantity} requested`,
+                `Insufficient ${stockType.toLowerCase()} stock for "${item.name}" — ${available} available, ${quantity} requested`,
             );
         }
 
         const [updated] = await this.prisma.$transaction([
             this.prisma.inventoryItem.update({
                 where: { id: itemId },
-                data: { currentQuantity: { decrement: quantity } },
+                data: this.stockFieldUpdate(stockType, { decrement: quantity }),
             }),
             this.prisma.stockMovement.create({
                 data: {
                     itemId,
                     type: StockMovementType.SOLD,
+                    stockType,
                     quantityDelta: -quantity,
                     referenceId,
                     performedById: item.branchId, // TODO: replace with actual acting staff once Sales module supplies one
@@ -398,7 +454,7 @@ export class InventoryService {
 
     async checkAndTriggerLowStockAlert(itemId: string) {
         const item = await this.prisma.inventoryItem.findUnique({ where: { id: itemId } });
-        if (!item || item.currentQuantity > item.lowStockThreshold) return;
+        if (!item || this.getTotalStock(item) > item.lowStockThreshold) return;
 
         const openAlert = await this.prisma.lowStockAlert.findFirst({
             where: { itemId, resolvedAt: null },
@@ -409,7 +465,7 @@ export class InventoryService {
             data: { itemId },
         });
 
-        this.notifyStage(item.name, LowStockAlertStage.SUPERVISOR, item.currentQuantity, item.lowStockThreshold)
+        this.notifyStage(item.name, LowStockAlertStage.SUPERVISOR, this.getTotalStock(item), item.lowStockThreshold)
             .catch((err) => this.logger.error(`Low-stock notification failed: ${err instanceof Error ? err.message : String(err)}`));
 
         return alert;
@@ -476,7 +532,12 @@ export class InventoryService {
         const warningCutoff = new Date(now.getTime() + EXPIRY_WARNING_DAYS * 24 * 60 * 60 * 1000);
 
         const candidates = await this.prisma.inventoryItem.findMany({
-            where: { expiryDate: { not: null, lte: warningCutoff }, currentQuantity: { gt: 0 } },
+            where: {
+                expiryDate: { not: null, lte: warningCutoff },
+                // Prisma can't compare "sum of three columns > 0" directly --
+                // any bucket having stock is enough to warrant an expiry check.
+                OR: [{ storeStock: { gt: 0 } }, { salesStock: { gt: 0 } }, { usageStock: { gt: 0 } }],
+            },
         });
 
         let opened = 0;
@@ -526,7 +587,7 @@ export class InventoryService {
                 data: { currentStage: nextStage, escalatedAt: new Date() },
             });
 
-            this.notifyStage(alert.item.name, nextStage, alert.item.currentQuantity, alert.item.lowStockThreshold)
+            this.notifyStage(alert.item.name, nextStage, this.getTotalStock(alert.item), alert.item.lowStockThreshold)
                 .catch((err) => this.logger.error(`Escalation notification failed: ${err instanceof Error ? err.message : String(err)}`));
         }
 
@@ -568,9 +629,10 @@ export class InventoryService {
         if (fromItem.branchId === dto.toBranchId) {
             throw new BadRequestException('Source and destination branch cannot be the same');
         }
-        if (fromItem.currentQuantity < dto.quantity) {
+        const available = this.getStockValue(fromItem, dto.stockType);
+        if (available < dto.quantity) {
             throw new BadRequestException(
-                `Insufficient stock — ${fromItem.currentQuantity} available, ${dto.quantity} requested`,
+                `Insufficient ${dto.stockType.toLowerCase()} stock — ${available} available, ${dto.quantity} requested`,
             );
         }
 
@@ -584,6 +646,7 @@ export class InventoryService {
             data: {
                 fromItemId: dto.fromItemId,
                 toBranchId: dto.toBranchId,
+                stockType: dto.stockType,
                 quantity: dto.quantity,
                 requestedById,
                 approvalRequestId: approvalRequest.id,
@@ -607,8 +670,8 @@ export class InventoryService {
 
         // Re-validate stock at execution time, not just at request time — it may have changed.
         const currentFromItem = await this.prisma.inventoryItem.findUnique({ where: { id: transfer.fromItemId } });
-        if (!currentFromItem || currentFromItem.currentQuantity < transfer.quantity) {
-            throw new BadRequestException('Source item no longer has sufficient stock for this transfer');
+        if (!currentFromItem || this.getStockValue(currentFromItem, transfer.stockType) < transfer.quantity) {
+            throw new BadRequestException(`Source item no longer has sufficient ${transfer.stockType.toLowerCase()} stock for this transfer`);
         }
 
         let toItem = await this.prisma.inventoryItem.findFirst({
@@ -624,10 +687,13 @@ export class InventoryService {
         await this.prisma.$transaction(async (tx) => {
             await tx.inventoryItem.update({
                 where: { id: transfer.fromItemId },
-                data: { currentQuantity: { decrement: transfer.quantity } },
+                data: this.stockFieldUpdate(transfer.stockType, { decrement: transfer.quantity }),
             });
 
             if (!toItem) {
+                // storeStock/salesStock/usageStock all default to 0 via the
+                // schema -- no need to set them explicitly here, only the
+                // fields that actually differ from that default.
                 toItem = await tx.inventoryItem.create({
                     data: {
                         name: currentFromItem.name,
@@ -635,14 +701,16 @@ export class InventoryService {
                         branchId: transfer.toBranchId,
                         unit: currentFromItem.unit,
                         lowStockThreshold: currentFromItem.lowStockThreshold,
-                        currentQuantity: 0,
                     },
                 });
             }
 
+            // A transfer never changes bucket, only branch -- the
+            // destination receives stock into the SAME stock type it left
+            // the source in.
             await tx.inventoryItem.update({
                 where: { id: toItem.id },
-                data: { currentQuantity: { increment: transfer.quantity } },
+                data: this.stockFieldUpdate(transfer.stockType, { increment: transfer.quantity }),
             });
 
             await tx.stockMovement.createMany({
@@ -650,6 +718,7 @@ export class InventoryService {
                     {
                         itemId: transfer.fromItemId,
                         type: StockMovementType.TRANSFER_OUT,
+                        stockType: transfer.stockType,
                         quantityDelta: -transfer.quantity,
                         referenceId: transfer.id,
                         performedById: actorId,
@@ -657,6 +726,7 @@ export class InventoryService {
                     {
                         itemId: toItem.id,
                         type: StockMovementType.TRANSFER_IN,
+                        stockType: transfer.stockType,
                         quantityDelta: transfer.quantity,
                         referenceId: transfer.id,
                         performedById: actorId,
