@@ -405,6 +405,11 @@ enum AddressVerificationStatus {
   VERIFIED
   REJECTED
   FAILED       // e.g. QoreID couldn't complete the visit at all
+  // Dev Feedback Round 4, item #12: admin stopped tracking this request
+  // before it reached a real outcome. Purely internal bookkeeping -- does
+  // NOT actually stop QoreID's physical field visit if one was already
+  // in progress at the moment of cancellation.
+  CANCELLED
 }
 
 model StaffAddressVerification {
@@ -1160,6 +1165,7 @@ model CustomerLifecycleTransition {
   customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   user     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   sends    LifecycleCampaignSend[]
+  sequenceSends LifecycleCampaignSequenceSend[]
 
   @@index([customerId])
   @@index([userId])
@@ -1230,6 +1236,8 @@ model LifecycleCampaignTemplate {
   bodyTemplate   String               @map("body_template") // supports {{firstName}}, {{lastName}}, {{lastVisitDate}}
   delayDays      Int                  @default(0) @map("delay_days")
   cooldownDays   Int                  @default(30) @map("cooldown_days")
+  sendHour       Int?                 @map("send_hour") // 0-23, local server time
+  sendMinute     Int?                 @map("send_minute") // 0-59
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
@@ -1237,6 +1245,73 @@ model LifecycleCampaignTemplate {
   @@map("lifecycle_campaign_templates")
 
   sends LifecycleCampaignSend[]
+  targetingDiscountCodes DiscountCode[]
+}
+
+/**
+ * Dev Feedback Round 4, item #9: sequential, multi-step campaigns
+ * (e.g. Email -> SMS -> Push, each delayed relative to the PREVIOUS
+ * step actually sending, not relative to the lifecycle transition
+ * itself). Deliberately additive, not a replacement for
+ * LifecycleCampaignTemplate -- a lifecycle stage can have independent,
+ * parallel single-channel templates (existing system, untouched) AND/OR
+ * one sequence (this new system); both fire from the same
+ * CustomerLifecycleTransition trigger, tracked and cooled-down
+ * independently of each other.
+ */
+model LifecycleCampaignSequence {
+  id              String   @id @default(uuid())
+  targetLifecycle String   @map("target_lifecycle")
+  name            String   // admin-facing label, e.g. "At-Risk Re-engagement Sequence"
+  isEnabled       Boolean  @default(true) @map("is_enabled")
+  cooldownDays    Int      @default(30) @map("cooldown_days")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  steps LifecycleCampaignSequenceStep[]
+  sends LifecycleCampaignSequenceSend[]
+  targetingDiscountCodes DiscountCode[]
+
+  @@index([targetLifecycle, isEnabled])
+  @@map("lifecycle_campaign_sequences")
+}
+
+model LifecycleCampaignSequenceStep {
+  id       String               @id @default(uuid())
+  sequenceId String             @map("sequence_id")
+  stepOrder  Int                @map("step_order") // 1, 2, 3... execution order
+  channel    CommunicationChannel
+  subject    String?            // EMAIL only, same convention as LifecycleCampaignTemplate
+  bodyTemplate String           @map("body_template")
+  delayAfterPreviousMinutes Int @default(0) @map("delay_after_previous_minutes")
+  sendHour   Int?               @map("send_hour")
+  sendMinute Int?               @map("send_minute")
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  sequence LifecycleCampaignSequence       @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sends    LifecycleCampaignSequenceSend[]
+
+  @@unique([sequenceId, stepOrder])
+  @@map("lifecycle_campaign_sequence_steps")
+}
+
+/** Mirrors LifecycleCampaignSend's role exactly, one row per (transition, step) send attempt. */
+model LifecycleCampaignSequenceSend {
+  id           String    @id @default(uuid())
+  transitionId String    @map("transition_id")
+  sequenceId   String    @map("sequence_id")
+  stepId       String    @map("step_id")
+  status       String    // SENT | SKIPPED_NO_CONSENT | SKIPPED_NO_CONTACT | SKIPPED_COOLDOWN | SKIPPED_SEQUENCE_DISABLED | SKIPPED_PREVIOUS_STEP_NOT_SENT | FAILED
+  sentAt       DateTime? @map("sent_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  transition CustomerLifecycleTransition   @relation(fields: [transitionId], references: [id], onDelete: Cascade)
+  sequence   LifecycleCampaignSequence     @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  step       LifecycleCampaignSequenceStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@unique([transitionId, stepId])
+  @@index([stepId, status])
+  @@map("lifecycle_campaign_sequence_sends")
 }
 
 /**
@@ -1601,14 +1676,37 @@ model DiscountCode {
   expiresAt    DateTime?    @map("expires_at") // null = never expires
   maxUses      Int?         @map("max_uses") // null = unlimited
   usedCount    Int          @default(0) @map("used_count")
+
+  // Dev Feedback Round 4, item #10: targeting. Every dimension defaults to
+  // "no restriction" (empty array / null) -- an untouched coupon behaves
+  // exactly as before. Multiple set dimensions combine with AND, not OR
+  // (e.g. targetBranchIds + targetValueTiers both set means BOTH must
+  // match) -- the more filters an admin adds, the narrower the audience,
+  // matching how filters combine everywhere else in this codebase.
+  targetBranchIds       String[] @default([]) @map("target_branch_ids")
+  targetLifecycleStages String[] @default([]) @map("target_lifecycle_stages")
+  targetValueTiers      String[] @default([]) @map("target_value_tiers")
+  // Gates redemption to people who actually RECEIVED (a SENT status row
+  // exists) this specific template/sequence -- not just "currently
+  // matches its target lifecycle stage". SetNull on delete: a coupon
+  // whose gating template/sequence is later deleted reverts to
+  // ungated-by-campaign rather than blocking that deletion or being
+  // silently deleted itself.
+  targetCampaignTemplateId String? @map("target_campaign_template_id")
+  targetCampaignSequenceId String? @map("target_campaign_sequence_id")
+
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
   // Relations
   influencer Influencer?     @relation(fields: [influencerId], references: [id], onDelete: SetNull)
   usages     DiscountUsage[]
+  targetCampaignTemplate LifecycleCampaignTemplate? @relation(fields: [targetCampaignTemplateId], references: [id], onDelete: SetNull)
+  targetCampaignSequence LifecycleCampaignSequence? @relation(fields: [targetCampaignSequenceId], references: [id], onDelete: SetNull)
 
   @@index([influencerId])
+  @@index([targetCampaignTemplateId])
+  @@index([targetCampaignSequenceId])
   @@map("discount_codes")
 }
 
@@ -1965,6 +2063,14 @@ model Staff {
 
   location      StaffLocation            @relation(fields: [locationId], references: [id])
   managedBranch StaffLocation?           @relation("BranchManager")
+  // Dev Feedback Round 4, item #25: additive, not a replacement for
+  // managedBranch above -- that stays the single "manager of record" for
+  // org-chart/reporting purposes. This is a broader, permission-like
+  // grant of which branches' finance data a staff member can access,
+  // independent of it. A staff member's OWN primary branch (location
+  // above) is always accessible without needing a row here at all --
+  // this table only needs entries for the EXTRA branches beyond that.
+  additionalFinanceBranches StaffManagedFinanceBranch[]
   histories     StaffEmploymentHistory[]
   codeHistory   StaffCodeHistory[]
   user          User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -2038,6 +2144,8 @@ model Staff {
   wallet                  StaffWallet?
   payoutRequests          StaffPayoutRequest[]       @relation("StaffPayoutRequests")
   payoutRequestsProcessed StaffPayoutRequest[]       @relation("StaffPayoutProcessedBy")
+  payrollAuditActions     PayrollAuditLog[]          @relation("PayrollAuditActor")
+  payrollAuditSubjectOf   PayrollAuditLog[]          @relation("PayrollAuditSubject")
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -2271,6 +2379,35 @@ model PayrollAdjustment {
   @@map("payroll_adjustments")
 }
 
+// Dev Feedback Round 4, items #22-24: dedicated audit trail for every
+// sensitive payroll action -- deliberately a NEW model, not shoehorned
+// into RoleAuditLog (which is specifically scoped to role/permission
+// changes, by its own action enum) or any other existing log. Free-text
+// action/entityType rather than enums, matching PayrollAdjustment's own
+// "category" field reasoning -- the set of loggable payroll actions is
+// likely to grow, and a rigid enum would need a migration every time.
+model PayrollAuditLog {
+  id         String   @id @default(uuid())
+  action     String   // e.g. "PERIOD_CREATED", "PAYROLL_GENERATED", "SENT_FOR_CORRECTION", "PERIOD_APPROVED", "ADJUSTMENT_CREATED", "WITHDRAWAL_APPROVED", "WITHDRAWAL_REJECTED"
+  entityType String   @map("entity_type") // e.g. "PayrollPeriod", "PayrollAdjustment", "StaffPayoutRequest"
+  entityId   String   @map("entity_id")
+  staffId    String?  @map("staff_id") // the staff member this action concerns, when applicable (e.g. whose withdrawal, whose adjustment) -- null for period-level actions
+  actorId    String?  @map("actor_id") // nullable -- a system-initiated action (e.g. auto-generated) has no human actor
+  note       String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor Staff? @relation("PayrollAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  staff Staff? @relation("PayrollAuditSubject", fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([staffId])
+  @@index([createdAt])
+  @@map("payroll_audit_logs")
+}
+
 model StaffWallet {
   id        String   @id @default(uuid())
   staffId   String   @unique @map("staff_id")
@@ -2410,8 +2547,32 @@ model StaffLocation {
   financialTransactions FinancialTransaction[]
   purchaseRequests  PurchaseRequest[]
   purchases         Purchase[]
+  managedByAdditionalStaff StaffManagedFinanceBranch[]
 
   @@map("staff_locations")
+}
+
+/**
+ * Dev Feedback Round 4, item #25: grants a staff member finance-view
+ * access to a branch beyond their own primary one -- a real many-to-many,
+ * unlike StaffLocation.managerId (one designated manager per branch,
+ * kept unchanged for its own existing purpose). A staff member's own
+ * Staff.locationId is always implicitly accessible without needing a row
+ * here.
+ */
+model StaffManagedFinanceBranch {
+  id        String   @id @default(uuid())
+  staffId   String   @map("staff_id")
+  branchId  String   @map("branch_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  staff  Staff         @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  branch StaffLocation @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, branchId])
+  @@index([staffId])
+  @@index([branchId])
+  @@map("staff_managed_finance_branches")
 }
 
 // One row per thing awaiting approval, regardless of what kind of thing it is —

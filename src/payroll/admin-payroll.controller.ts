@@ -9,6 +9,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { StaffService } from '../staff/staff.service';
 import { CreatePayrollAdjustmentDto } from './dto/create-payroll-adjustment.dto';
+import { RequestCorrectionDto } from './dto/request-correction.dto';
+import { PayrollAuditService } from './payroll-audit.service';
 import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
 import { SetCompensationDto } from './dto/set-compensation.dto';
 import { PayrollAdjustmentService } from './payroll-adjustment.service';
@@ -32,6 +34,7 @@ export class AdminPayrollController {
         private readonly releaseService: PayrollReleaseService,
         private readonly payoutService: StaffPayoutService,
         private readonly staffService: StaffService,
+        private readonly payrollAuditService: PayrollAuditService,
     ) { }
 
     // -- Dashboard --------------------------------------------------------
@@ -158,6 +161,19 @@ export class AdminPayrollController {
         return { success: true, message: 'Payroll period approved successfully', data };
     }
 
+    @Patch('periods/:id/request-correction')
+    @Permission(PERMISSIONS.PAYROLL_CORRECT)
+    @ApiOperation({
+        summary: 'Send an already-generated payroll period back for correction',
+        description: 'Reopens an AWAITING_RELEASE period as DRAFT so it can be regenerated -- a deliberately higher-permission action than ordinary payroll management.',
+    })
+    @ApiParam({ name: 'id' })
+    async requestCorrection(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: RequestCorrectionDto) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.releaseService.requestCorrection(id, actor?.id, dto.note);
+        return { success: true, message: 'Payroll period sent back for correction', data };
+    }
+
     // -- Adjustments --------------------------------------------------------
 
     @Post('periods/:periodId/adjustments')
@@ -183,8 +199,9 @@ export class AdminPayrollController {
     @Permission(PERMISSIONS.PAYROLL_MANAGE)
     @ApiOperation({ summary: 'Remove an adjustment — only while its period is still in DRAFT' })
     @ApiParam({ name: 'id' })
-    async removeAdjustment(@Param('id', ParseUUIDPipe) id: string) {
-        const data = await this.adjustmentService.remove(id);
+    async removeAdjustment(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.adjustmentService.remove(id, actor?.id);
         return { success: true, message: 'Adjustment removed successfully', data };
     }
 
@@ -218,9 +235,43 @@ export class AdminPayrollController {
 
     @Get('withdrawals')
     @Permission(PERMISSIONS.PAYROLL_READ)
-    @ApiOperation({ summary: 'List all staff withdrawal requests, optionally filtered by status' })
-    async listWithdrawals(@Query('status') status?: string) {
-        const data = await this.payoutService.adminListWithdrawals(status);
+    @ApiOperation({ summary: 'List staff withdrawal requests, filterable by status, staff, branch, and date range' })
+    async listWithdrawals(
+        @Query('status') status?: string,
+        @Query('staffId') staffId?: string,
+        @Query('locationId') locationId?: string,
+        @Query('from') from?: string,
+        @Query('to') to?: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+    ) {
+        const data = await this.payoutService.adminListWithdrawals({
+            status, staffId, locationId, from, to,
+            page: page ? Number(page) : undefined,
+            limit: limit ? Number(limit) : undefined,
+        });
+        return { success: true, message: 'Retrieved successfully', data };
+    }
+
+    // -- Audit log ------------------------------------------------------------
+
+    @Get('audit-log')
+    @Permission(PERMISSIONS.PAYROLL_READ)
+    @ApiOperation({ summary: 'View the payroll audit trail, filterable by entity, staff, actor, and action' })
+    async getAuditLog(
+        @Query('entityType') entityType?: string,
+        @Query('entityId') entityId?: string,
+        @Query('staffId') staffId?: string,
+        @Query('actorId') actorId?: string,
+        @Query('action') action?: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+    ) {
+        const data = await this.payrollAuditService.findAll({
+            entityType, entityId, staffId, actorId, action,
+            page: page ? Number(page) : undefined,
+            limit: limit ? Number(limit) : undefined,
+        });
         return { success: true, message: 'Retrieved successfully', data };
     }
 }

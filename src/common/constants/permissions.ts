@@ -95,6 +95,12 @@ export const PERMISSIONS = {
   // ── Payroll (salary/financial data) ──────────────────────────────────────────
   PAYROLL_READ: 'payroll:read', // View payroll dashboard, periods, payslips, withdrawal history
   PAYROLL_MANAGE: 'payroll:manage', // Set compensation, run payroll, approve periods, toggle Payday, add adjustments, approve bank changes
+  // Dev Feedback Round 4, item #22: deliberately separate from
+  // PAYROLL_MANAGE -- sending an already-generated period back for
+  // correction is meant to be a higher, more restricted bar than
+  // ordinary payroll management ("Super Admin or any authorized
+  // access"), not something every payroll manager can do by default.
+  PAYROLL_CORRECT: 'payroll:correct', // Send an AWAITING_RELEASE payroll period back to DRAFT for correction before final approval
 
   // ── Branch Finance (daily summary & cash reconciliation) ─────────────────────
   BRANCH_FINANCE_READ: 'branch_finance:read', // View the daily financial summary for a branch (bookings, sales, inventory movement)
@@ -377,6 +383,10 @@ export const PERMISSION_GROUPS = [
       {
         key: PERMISSIONS.PAYROLL_MANAGE,
         label: 'Set staff compensation, run and approve payroll, toggle Payday, add bonuses/deductions, approve bank account changes',
+      },
+      {
+        key: PERMISSIONS.PAYROLL_CORRECT,
+        label: 'Send an already-generated payroll period back for correction before final approval',
       },
     ],
   },

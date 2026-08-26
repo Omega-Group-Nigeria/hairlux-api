@@ -192,6 +192,48 @@ export class StaffAddressVerificationService {
     }
 
     /**
+     * Dev Feedback Round 4, item #12. Admin-triggered, mirrors
+     * requestVerification's actor-resolution pattern. Only valid from
+     * REQUESTED or SUBMITTED -- an already-VERIFIED/REJECTED/FAILED
+     * record has already reached a real outcome, "cancel" doesn't apply
+     * to it (re-request instead, which already exists). Cancelling a
+     * SUBMITTED request is purely internal bookkeeping -- it does NOT
+     * reach out to QoreID or stop a physical field visit already in
+     * progress; see handleWebhook's guard against a late result
+     * silently reviving a cancelled record.
+     */
+    async cancelVerification(staffId: string, cancellingUserId?: string) {
+        const existing = await this.prisma.staffAddressVerification.findUnique({ where: { staffId } });
+        if (!existing) {
+            throw new NotFoundException('No address verification request found for this staff member.');
+        }
+        if (existing.status !== 'REQUESTED' && existing.status !== 'SUBMITTED') {
+            throw new BadRequestException(
+                `Cannot cancel -- current status is ${existing.status}, which is already a final outcome.`,
+            );
+        }
+
+        const updated = await this.prisma.staffAddressVerification.update({
+            where: { staffId },
+            data: { status: 'CANCELLED' },
+        });
+
+        // Same onboarding-item sync every other status change in this
+        // service performs -- a cancelled verification is no longer an
+        // active, in-progress checklist item.
+        const item = await this.prisma.staffOnboardingItem.findFirst({ where: { staffId, type: 'PHYSICAL_ADDRESS_VERIFICATION' } });
+        if (item) {
+            await this.prisma.staffOnboardingItem.update({
+                where: { id: item.id },
+                data: { isComplete: false, reviewStatus: 'NOT_STARTED', completedAt: null, completedBy: null },
+            });
+        }
+
+        this.logger.log(`Address verification for staff ${staffId} cancelled by user ${cancellingUserId ?? 'unknown'} (was ${existing.status}).`);
+        return updated;
+    }
+
+    /**
      * QoreID's webhook fires once the physical visit (24-48h later) is
      * fully resolved. Maps their status.state/status onto our own
      * AddressVerificationStatus deliberately conservatively: only an
@@ -222,6 +264,12 @@ export class StaffAddressVerificationService {
         const record = await this.prisma.staffAddressVerification.findUnique({ where: { qoreidVerificationId: verificationId } });
         if (!record) {
             this.logger.warn(`Address verification webhook for unknown verification id ${verificationId} -- ignoring.`);
+            return;
+        }
+        if (record.status === 'CANCELLED') {
+            // Admin explicitly stopped tracking this request -- a late
+            // result arriving afterward must not silently revive it.
+            this.logger.log(`Address verification webhook for ${verificationId} arrived after cancellation (staff ${record.staffId}) -- ignoring.`);
             return;
         }
 

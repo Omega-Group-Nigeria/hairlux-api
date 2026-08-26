@@ -3,11 +3,13 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { sanitizeAnnouncementHtml } from '../common/utils/announcement-sanitize.util';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../storage/s3.service';
+import { MailService } from '../mail/mail.service';
 import { AnnouncementTargetDto, CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { BulkCreateDirectivesDto, CreateDirectiveDto } from './dto/create-directive.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
@@ -25,9 +27,12 @@ export interface DirectiveFilters {
 
 @Injectable()
 export class StaffCommsService {
+  private readonly logger = new Logger(StaffCommsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3Service: S3Service,
+    private readonly mailService: MailService,
   ) { }
 
   private get announcementModel() {
@@ -61,7 +66,7 @@ export class StaffCommsService {
       }
     }
 
-    return this.announcementModel.create({
+    const created = await this.announcementModel.create({
       data: {
         title: dto.title,
         body: sanitizeAnnouncementHtml(dto.body),
@@ -72,6 +77,46 @@ export class StaffCommsService {
         createdById: createdById ?? null,
       },
     });
+
+    // Dev Feedback Round 4, item #17. Fired without awaiting -- creating
+    // the announcement should not sit blocked on however many email
+    // sends this fans out to (potentially every active staff member for
+    // an ALL-targeted one). sendGenericEmail already catches and logs
+    // its own errors rather than throwing, so a failed send here can
+    // never surface as a failure of announcement creation itself.
+    this.sendAnnouncementEmails(created).catch((err) => {
+      // Only the recipient-RESOLUTION step (the query itself) could
+      // throw here -- individual sendGenericEmail calls already can't.
+      this.logger.warn(`Failed to resolve/send announcement emails for ${created.id}: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
+    return created;
+  }
+
+  /**
+   * Resolves who an announcement's target actually points at and emails
+   * each of them the full, unmodified title/body -- no truncation or
+   * summarization, since "include full content" means exactly that.
+   * Excludes staff with no employment record (EXITED/ARCHIVED aren't
+   * filtered here deliberately -- an announcement to "everyone" should
+   * still reach someone on leave or suspended, just not someone with no
+   * email on file at all).
+   */
+  private async sendAnnouncementEmails(announcement: { id: string; title: string; body: string; target: string; targetLocationId: string | null; targetStaffId: string | null }) {
+    let recipients: { email: string | null }[] = [];
+
+    if (announcement.target === AnnouncementTargetDto.INDIVIDUAL && announcement.targetStaffId) {
+      recipients = await this.staffModel.findMany({ where: { id: announcement.targetStaffId }, select: { email: true } });
+    } else if (announcement.target === AnnouncementTargetDto.BRANCH && announcement.targetLocationId) {
+      recipients = await this.staffModel.findMany({ where: { locationId: announcement.targetLocationId }, select: { email: true } });
+    } else {
+      recipients = await this.staffModel.findMany({ select: { email: true } });
+    }
+
+    const emails = recipients.map((r) => r.email).filter((e): e is string => !!e);
+    for (const email of emails) {
+      await this.mailService.sendGenericEmail(email, announcement.title, announcement.body);
+    }
   }
 
   /**
@@ -206,7 +251,7 @@ export class StaffCommsService {
       if (!staff) {
         throw new NotFoundException('targetStaffId does not match an existing staff record');
       }
-      return this.directiveModel.create({
+      const created = await this.directiveModel.create({
         data: {
           title: dto.title,
           body: dto.body,
@@ -215,6 +260,11 @@ export class StaffCommsService {
           createdById: createdById ?? null,
         },
       });
+      // Dev Feedback Round 4, item #17 -- full title/body, not truncated.
+      if (staff.email) {
+        this.mailService.sendGenericEmail(staff.email, `New Task: ${dto.title}`, dto.body).catch(() => { });
+      }
+      return created;
     }
 
     const location = await this.prisma.staffLocation.findUnique({
@@ -226,7 +276,7 @@ export class StaffCommsService {
 
     const activeStaff = await this.staffModel.findMany({
       where: { locationId: dto.targetLocationId, employmentStatus: { in: ['ACTIVE', 'ON_LEAVE'] } },
-      select: { id: true },
+      select: { id: true, email: true },
     });
 
     if (activeStaff.length === 0) {
@@ -234,7 +284,7 @@ export class StaffCommsService {
     }
 
     const created = await Promise.all(
-      activeStaff.map((s: { id: string }) =>
+      activeStaff.map((s: { id: string; email: string | null }) =>
         this.directiveModel.create({
           data: {
             title: dto.title,
@@ -246,6 +296,12 @@ export class StaffCommsService {
         }),
       ),
     );
+
+    for (const s of activeStaff) {
+      if (s.email) {
+        this.mailService.sendGenericEmail(s.email, `New Task: ${dto.title}`, dto.body).catch(() => { });
+      }
+    }
 
     return { fannedOutTo: created.length, directives: created };
   }

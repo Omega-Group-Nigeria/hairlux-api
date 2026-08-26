@@ -9,6 +9,7 @@ import { PayrollEngineService } from './payroll-engine.service';
 import { PayrollAdjustmentService } from './payroll-adjustment.service';
 import { PayrollReleaseService } from './payroll-release.service';
 import { StaffPayoutService } from './staff-payout.service';
+import { PayrollAuditService } from './payroll-audit.service';
 
 @Module({
     imports: [StaffModule, PaymentModule],
@@ -20,7 +21,8 @@ import { StaffPayoutService } from './staff-payout.service';
         PayrollAdjustmentService,
         PayrollReleaseService,
         StaffPayoutService,
+        PayrollAuditService,
     ],
-    exports: [StaffPayoutService, PayrollReleaseService],
+    exports: [StaffPayoutService, PayrollReleaseService, PayrollAuditService],
 })
 export class PayrollModule { }

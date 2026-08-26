@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common'; 
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -62,16 +62,26 @@ export class AdminSalonBookingController {
 
     @Get('overview')
     @ApiOperation({
-        summary: 'Combined Salon Bookings overview — summary cards + a merged list',
-        description: 'Merges SalonBooking with the legacy Booking table\'s WALK_IN entries (still the live customer self-service path), filterable by date range, branch, and source.',
+        summary: 'Combined Salon Bookings overview — summary cards + a merged, paginated list',
+        description: 'Merges SalonBooking with the legacy Booking table\'s WALK_IN entries (still the live customer self-service path), filterable by date range, branch, source, search (name/phone), status, service, and staff. Payment filter deliberately not supported yet -- SalonBooking has no payment data stored today.',
     })
     async getOverview(
         @Query('dateFrom') dateFrom?: string,
         @Query('dateTo') dateTo?: string,
         @Query('branchId') branchId?: string,
         @Query('source') source?: 'salon_booking' | 'booking' | 'all',
+        @Query('search') search?: string,
+        @Query('status') status?: 'completed' | 'pending' | 'cancelled',
+        @Query('serviceId') serviceId?: string,
+        @Query('staffId') staffId?: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
     ) {
-        const data = await this.salonBookingService.getOverview({ dateFrom, dateTo, branchId, source });
+        const data = await this.salonBookingService.getOverview({
+            dateFrom, dateTo, branchId, source, search, status, serviceId, staffId,
+            page: page ? Number(page) : undefined,
+            limit: limit ? Number(limit) : undefined,
+        });
         return { success: true, message: 'Overview retrieved successfully', data };
     }
 
@@ -227,7 +237,7 @@ export class AdminSalonBookingController {
     @Patch(':id')
     @ApiOperation({
         summary: 'Edit a booking — Scheduled or In Progress only',
-        description: 'Full edit: services, staff, date/time, customer details, notes. Re-validates date/time changes against the same past-date and business-hours-closure rules as creating a new booking. For a Completed booking, use POST :id/add-service instead — existing service lines can never be altered here.',
+        description: 'Full edit: services, products, staff, date/time, customer details, notes. Products (inventoryItems) fully replace the existing product list when sent -- omit the field to leave products untouched, send an empty array to clear all products. Re-validates date/time changes against the same past-date and business-hours-closure rules as creating a new booking. For a Completed booking, use POST :id/add-service instead — existing service lines can never be altered here.',
     })
     @ApiParam({ name: 'id' })
     async editBooking(@Param('id', ParseUUIDPipe) id: string, @Body() dto: EditSalonBookingDto) {

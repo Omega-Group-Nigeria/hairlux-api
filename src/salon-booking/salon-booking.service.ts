@@ -458,18 +458,38 @@ export class SalonBookingService {
         return [...fromCustomers, ...fromUsers].slice(0, 15);
     }
 
-    async getOverview(filters: { dateFrom?: string; dateTo?: string; branchId?: string; source?: 'salon_booking' | 'booking' | 'all' }) {
+    async getOverview(filters: {
+        dateFrom?: string;
+        dateTo?: string;
+        branchId?: string;
+        source?: 'salon_booking' | 'booking' | 'all';
+        search?: string;
+        status?: 'completed' | 'pending' | 'cancelled';
+        serviceId?: string;
+        staffId?: string;
+        page?: number;
+        limit?: number;
+    }) {
         const dateFilter = (filters.dateFrom || filters.dateTo)
             ? { gte: filters.dateFrom ? new Date(filters.dateFrom) : undefined, lte: filters.dateTo ? new Date(filters.dateTo) : undefined }
             : undefined;
         const wantSalonBookings = !filters.source || filters.source === 'all' || filters.source === 'salon_booking';
         const wantLegacyBookings = !filters.source || filters.source === 'all' || filters.source === 'booking';
+        const searchTerm = filters.search?.trim();
 
         const salonBookings = wantSalonBookings
             ? await this.prisma.salonBooking.findMany({
                 where: {
                     ...(filters.branchId && { branchId: filters.branchId }),
                     ...(dateFilter && { bookingDate: dateFilter }),
+                    ...(filters.staffId && { assignedStaffId: filters.staffId }),
+                    ...(filters.serviceId && { services: { some: { serviceId: filters.serviceId } } }),
+                    ...(searchTerm && {
+                        OR: [
+                            { customerName: { contains: searchTerm, mode: 'insensitive' as const } },
+                            { customerPhone: { contains: searchTerm } },
+                        ],
+                    }),
                 },
                 include: {
                     branch: { select: { id: true, name: true } },
@@ -485,11 +505,12 @@ export class SalonBookingService {
                     bookingType: 'WALK_IN',
                     ...(filters.branchId && { branchId: filters.branchId }),
                     ...(dateFilter && { bookingDate: dateFilter }),
+                    ...(filters.staffId && { assignedInHouseStaffId: filters.staffId }),
                 },
                 include: {
                     branch: { select: { id: true, name: true } },
                     assignedInHouseStaff: { select: { id: true, name: true } },
-                    user: { select: { firstName: true, lastName: true } },
+                    user: { select: { firstName: true, lastName: true, phone: true } },
                 },
                 orderBy: { bookingDate: 'desc' },
             })
@@ -506,13 +527,14 @@ export class SalonBookingService {
             return 'pending';
         };
 
-        const rows = [
+        let rows = [
             ...salonBookings.map((b) => ({
                 id: b.id,
                 source: 'salon_booking' as const,
                 branchName: b.branch?.name ?? null,
                 staffName: b.assignedStaff?.name ?? null,
                 customerName: b.customerName,
+                customerPhone: b.customerPhone ?? null,
                 bookingDate: b.bookingDate,
                 totalAmount: Number(b.totalAmount),
                 status: b.status,
@@ -524,12 +546,32 @@ export class SalonBookingService {
                 branchName: b.branch?.name ?? null,
                 staffName: b.assignedInHouseStaff?.name ?? null,
                 customerName: b.guestName || (b.user ? `${b.user.firstName} ${b.user.lastName}`.trim() : null),
+                customerPhone: b.user?.phone ?? null,
                 bookingDate: b.bookingDate,
                 totalAmount: Number(b.totalAmount),
                 status: b.status,
                 bucket: normalizeLegacyStatus(b.status),
+                _rawServices: b.services as any,
             })),
         ].sort((a, z) => z.bookingDate.getTime() - a.bookingDate.getTime());
+
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            rows = rows.filter((r) => {
+                if (r.source === 'salon_booking') return true;
+                return (r.customerName ?? '').toLowerCase().includes(term) || (r.customerPhone ?? '').includes(searchTerm);
+            });
+        }
+        if (filters.serviceId) {
+            rows = rows.filter((r) => {
+                if (r.source === 'salon_booking') return true;
+                const services = Array.isArray((r as any)._rawServices) ? (r as any)._rawServices : [];
+                return services.some((s: any) => s?.serviceId === filters.serviceId);
+            });
+        }
+        if (filters.status) {
+            rows = rows.filter((r) => r.bucket === filters.status);
+        }
 
         const summary = {
             totalBookings: rows.length,
@@ -539,7 +581,12 @@ export class SalonBookingService {
             cancelled: rows.filter((r) => r.bucket === 'cancelled').length,
         };
 
-        return { summary, bookings: rows };
+        const page = filters.page ?? 1;
+        const limit = filters.limit ?? 20;
+        const total = rows.length;
+        const paginated = rows.slice((page - 1) * limit, (page - 1) * limit + limit).map(({ _rawServices, ...r }: any) => r);
+
+        return { summary, bookings: paginated, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
     }
 
     async deleteBooking(id: string) {
@@ -1157,6 +1204,29 @@ export class SalonBookingService {
             await this.prisma.$transaction([
                 this.prisma.salonBookingService.deleteMany({ where: { bookingId: id } }),
                 this.prisma.salonBookingService.createMany({ data: serviceLines }),
+            ]);
+        }
+
+        // Dev Feedback Round 4, item #3: same full-replace pattern as
+        // services above, but checked against undefined explicitly rather
+        // than truthiness -- a booking legitimately can have zero
+        // products, and "send an empty array to clear all products" needs
+        // to actually work, not be indistinguishable from "field omitted,
+        // leave untouched". resolveInventoryLines already validates every
+        // item belongs to this booking's branch and computes unit price,
+        // same helper create() and addInventoryItem() already use.
+        if (dto.inventoryItems !== undefined) {
+            const inventoryLines = dto.inventoryItems.length
+                ? await this.resolveInventoryLines(booking.branchId, dto.inventoryItems.map((l) => ({ itemId: l.itemId, quantity: l.quantity ?? 1 })))
+                : [];
+
+            await this.prisma.$transaction([
+                this.prisma.salonBookingInventoryItem.deleteMany({ where: { bookingId: id } }),
+                ...(inventoryLines.length
+                    ? [this.prisma.salonBookingInventoryItem.createMany({
+                        data: inventoryLines.map((line) => ({ bookingId: id, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice })),
+                    })]
+                    : []),
             ]);
         }
 

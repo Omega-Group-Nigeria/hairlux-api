@@ -65,10 +65,23 @@ const ONBOARDING_ITEM_TYPES = [
   'POLICY_ACKNOWLEDGMENT',
 ] as const;
 
+// Dev Feedback Round 4, item #12 fix: ONBOARDING_ITEM_TYPES above is
+// deliberately the SEEDING set only (the six items created automatically
+// for every new hire) -- PHYSICAL_ADDRESS_VERIFICATION is intentionally
+// excluded from it, since that item is selective and admin-triggered
+// per staff member, never auto-seeded. But a row's `type` column can
+// still genuinely hold PHYSICAL_ADDRESS_VERIFICATION once one has been
+// requested, so the general "what can a fetched row's type be" type
+// needs to be wider than the seeding array -- narrowing it to
+// ONBOARDING_ITEM_TYPES alone was a latent bug (types that don't
+// actually overlap with what the column allows), just never
+// surfaced until code compared a fetched row's type against that literal.
+type OnboardingItemTypeValue = (typeof ONBOARDING_ITEM_TYPES)[number] | 'PHYSICAL_ADDRESS_VERIFICATION';
+
 type OnboardingItemRecord = {
   id: string;
   staffId: string;
-  type: (typeof ONBOARDING_ITEM_TYPES)[number];
+  type: OnboardingItemTypeValue;
   isComplete: boolean;
   reviewStatus: 'NOT_STARTED' | 'SUBMITTED' | 'COMPLETE';
   submittedAt: Date | null;
@@ -297,8 +310,8 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  
-   async invalidateCache(staffId?: string) {
+
+  async invalidateCache(staffId?: string) {
     await Promise.all([
       this.redis.delByPattern('staff:list:*'),
       this.redis.delByPattern('staff:birthdays:*'),
@@ -1500,9 +1513,18 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Lists the onboarding checklist for a staff member, plus a computed
-   * `onboardingComplete` flag (true only when every item is complete) --
-   * this is the "flag outstanding items clearly" requirement, surfaced to
-   * both the admin dashboard and the staff member's own dashboard.
+   * `onboardingComplete` flag (true only when every genuinely-active item
+   * is complete) -- this is the "flag outstanding items clearly"
+   * requirement, surfaced to both the admin dashboard and the staff
+   * member's own dashboard.
+   *
+   * A CANCELLED PHYSICAL_ADDRESS_VERIFICATION is excluded from the
+   * every() check -- its onboarding item row still exists with
+   * isComplete: false (correctly, it isn't complete), but the admin
+   * withdrew the request, so it's no longer something the staff member
+   * owes any action on. Without this exclusion, onboardingComplete would
+   * be permanently stuck false for that staff member, which matters well
+   * beyond just this list -- Payroll access gates on this same flag.
    */
   async getOnboardingItems(staffId: string) {
     const staff = await this.staffModel.findFirst({ where: { id: staffId } });
@@ -1515,10 +1537,54 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       orderBy: { type: 'asc' } as QueryArgs,
     });
 
+    const hasAddressVerificationItem = items.some((i) => i.type === 'PHYSICAL_ADDRESS_VERIFICATION');
+    let addressVerificationCancelled = false;
+    if (hasAddressVerificationItem) {
+      const av = await this.prisma.staffAddressVerification.findUnique({ where: { staffId }, select: { status: true } });
+      addressVerificationCancelled = av?.status === 'CANCELLED';
+    }
+
     return {
       items,
-      onboardingComplete: items.length > 0 && items.every((i) => i.isComplete),
+      onboardingComplete: items.length > 0 && items.every((i) =>
+        i.isComplete || (i.type === 'PHYSICAL_ADDRESS_VERIFICATION' && addressVerificationCancelled)
+      ),
     };
+  }
+
+  /**
+   * Dev Feedback Round 4, item #25: which EXTRA branches (beyond their
+   * own primary Staff.locationId, always implicitly accessible) this
+   * staff member can view/reconcile Branch Finance data for.
+   */
+  async getFinanceBranches(staffId: string) {
+    const rows = await this.prisma.staffManagedFinanceBranch.findMany({
+      where: { staffId },
+      include: { branch: { select: { id: true, name: true } } },
+    });
+    return rows.map((r: { branch: { id: string; name: string } }) => r.branch);
+  }
+
+  /** Full replace, matching the same pattern already used for approval chains -- send the complete set of additional branches, not an incremental add/remove. */
+  async setFinanceBranches(staffId: string, branchIds: string[]) {
+    const staff = await this.staffModel.findFirst({ where: { id: staffId } });
+    if (!staff) throw new NotFoundException('Staff record not found');
+
+    if (branchIds.length) {
+      const found = await this.prisma.staffLocation.findMany({ where: { id: { in: branchIds } }, select: { id: true } });
+      if (found.length !== new Set(branchIds).size) {
+        throw new BadRequestException('One or more branchIds do not match an existing branch');
+      }
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.staffManagedFinanceBranch.deleteMany({ where: { staffId } }),
+      ...(branchIds.length
+        ? [this.prisma.staffManagedFinanceBranch.createMany({ data: branchIds.map((branchId) => ({ staffId, branchId })) })]
+        : []),
+    ]);
+
+    return this.getFinanceBranches(staffId);
   }
 
   /**

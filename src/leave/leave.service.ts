@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import {
     LeaveRequestType,
     LeaveRequestStatus,
@@ -20,7 +21,10 @@ const LEAVE_DAY_TYPES: LeaveRequestType[] = [
 
 @Injectable()
 export class LeaveService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private mailService: MailService,
+    ) { }
 
     async submit(staffId: string, dto: CreateLeaveRequestDto) {
         const staff = await this.prisma.staff.findUnique({ where: { id: staffId } });
@@ -78,13 +82,19 @@ export class LeaveService {
     }
 
     async findAllAdmin(query: QueryLeaveRequestDto) {
-        const { status, type, staffId, page = 1, limit = 20 } = query;
+        const { status, type, staffId, locationId, from, to, page = 1, limit = 20 } = query;
         const skip = (page - 1) * limit;
 
         const where: Prisma.LeaveRequestWhereInput = {
             ...(status && { status }),
             ...(type && { type }),
             ...(staffId && { staffId }),
+            ...(locationId && { staff: { locationId } }),
+            // Overlap check: this leave's own range intersects [from, to] --
+            // NOT filtering by when the request was submitted. Standard
+            // range-overlap: leave.startDate <= to AND leave.endDate >= from.
+            ...(from && { endDate: { gte: new Date(from) } }),
+            ...(to && { startDate: { lte: new Date(to) } }),
         };
 
         const [data, total] = await Promise.all([
@@ -120,23 +130,69 @@ export class LeaveService {
             await this.createAttendanceRecordsForLeave(request);
         }
 
+        // Dev Feedback Round 4, item #17. Non-blocking -- sendGenericEmail
+        // already catches and logs its own errors, never throws.
+        if (request.staff?.email) {
+            this.mailService.sendGenericEmail(
+                request.staff.email,
+                'Your Leave Request Has Been Approved',
+                this.renderLeaveDecisionEmail(request, 'APPROVED'),
+            ).catch(() => { });
+        }
+
         return updated;
     }
 
     async reject(requestId: string, dto: RejectLeaveRequestDto) {
-        const request = await this.prisma.leaveRequest.findUnique({ where: { id: requestId } });
+        const request = await this.prisma.leaveRequest.findUnique({
+            where: { id: requestId },
+            include: { staff: true },
+        });
         if (!request) throw new NotFoundException('Leave request not found');
         if (request.status !== LeaveRequestStatus.PENDING) {
             throw new BadRequestException(`Cannot reject — request is already ${request.status}`);
         }
 
-        return this.prisma.leaveRequest.update({
+        const updated = await this.prisma.leaveRequest.update({
             where: { id: requestId },
             data: {
                 status: LeaveRequestStatus.REJECTED,
                 rejectionReason: dto.reason,
             },
         });
+
+        if (request.staff?.email) {
+            this.mailService.sendGenericEmail(
+                request.staff.email,
+                'Your Leave Request Was Not Approved',
+                this.renderLeaveDecisionEmail(request, 'REJECTED', dto.reason),
+            ).catch(() => { });
+        }
+
+        return updated;
+    }
+
+    /** Full content, not a vague "your request was updated" -- the type, the date range, the outcome, and (for a rejection) the reason. */
+    private renderLeaveDecisionEmail(
+        request: { type: LeaveRequestType; startDate: Date; endDate: Date; reason: string },
+        outcome: 'APPROVED' | 'REJECTED',
+        rejectionReason?: string,
+    ): string {
+        const typeLabel = request.type.replace(/_/g, ' ');
+        const dateRange = request.startDate.getTime() === request.endDate.getTime()
+            ? request.startDate.toDateString()
+            : `${request.startDate.toDateString()} to ${request.endDate.toDateString()}`;
+        const outcomeLine = outcome === 'APPROVED'
+            ? '<p style="color:#2f9e44;font-weight:600">This request has been approved.</p>'
+            : `<p style="color:#e03131;font-weight:600">This request was not approved.</p><p><strong>Reason:</strong> ${rejectionReason ?? ''}</p>`;
+
+        return `
+            <h2>Leave Request Update</h2>
+            <p><strong>Type:</strong> ${typeLabel}</p>
+            <p><strong>Dates:</strong> ${dateRange}</p>
+            <p><strong>Your original reason:</strong> ${request.reason}</p>
+            ${outcomeLine}
+        `;
     }
 
     private async createAttendanceRecordsForLeave(request: {

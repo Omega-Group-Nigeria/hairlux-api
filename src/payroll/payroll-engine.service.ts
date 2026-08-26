@@ -3,10 +3,14 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
 import { calculateMonthlyPaye } from './utils/paye-calculator';
+import { PayrollAuditService } from './payroll-audit.service';
 
 @Injectable()
 export class PayrollEngineService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly payrollAuditService: PayrollAuditService,
+    ) { }
 
     async createPeriod(dto: CreatePayrollPeriodDto, actorStaffId: string | undefined) {
         const periodStart = new Date(dto.periodStart);
@@ -15,9 +19,39 @@ export class PayrollEngineService {
             throw new BadRequestException('periodEnd must be after periodStart');
         }
 
-        return this.prisma.payrollPeriod.create({
+        // Dev Feedback Round 4, item #18-19: without this, two periods
+        // with overlapping (or identical) date ranges would each
+        // independently sum the SAME underlying attendance records' late
+        // penalties/absence fees -- a genuine double-deduction across two
+        // separate payslips for the same staff member, for the same
+        // underlying lateness/absence event. Standard range-overlap
+        // check: two ranges overlap unless one ends strictly before the
+        // other begins.
+        const overlapping = await this.prisma.payrollPeriod.findFirst({
+            where: {
+                periodStart: { lte: periodEnd },
+                periodEnd: { gte: periodStart },
+            },
+        });
+        if (overlapping) {
+            throw new BadRequestException(
+                `This date range overlaps an existing payroll period ("${overlapping.label}", ${overlapping.periodStart.toDateString()} \u2013 ${overlapping.periodEnd.toDateString()}) -- attendance deductions would be double-counted across both.`,
+            );
+        }
+
+        const created = await this.prisma.payrollPeriod.create({
             data: { label: dto.label, periodStart, periodEnd },
         });
+
+        await this.payrollAuditService.log({
+            action: 'PERIOD_CREATED',
+            entityType: 'PayrollPeriod',
+            entityId: created.id,
+            actorId: actorStaffId,
+            after: { label: created.label, periodStart: created.periodStart, periodEnd: created.periodEnd },
+        });
+
+        return created;
     }
 
     async listPeriods() {
@@ -73,7 +107,7 @@ export class PayrollEngineService {
         const border = rgb(0.85, 0.85, 0.85);
         const text = rgb(0.1, 0.1, 0.1);
 
-       
+
         const money = (n: unknown) => 'NGN ' + Number(n).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const fmtDate = (d: Date) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
@@ -406,9 +440,21 @@ export class PayrollEngineService {
             ]);
         }
 
-        return this.prisma.payrollPeriod.update({
+        const updatedPeriod = await this.prisma.payrollPeriod.update({
             where: { id: periodId },
             data: { status: 'AWAITING_RELEASE', generatedAt: new Date(), generatedById: actorStaffId },
         });
+
+        await this.payrollAuditService.log({
+            action: 'PAYROLL_GENERATED',
+            entityType: 'PayrollPeriod',
+            entityId: periodId,
+            actorId: actorStaffId,
+            note: `${createdPayslips.length} payslip(s) generated`,
+            before: { status: period.status },
+            after: { status: updatedPeriod.status },
+        });
+
+        return updatedPeriod;
     }
 }

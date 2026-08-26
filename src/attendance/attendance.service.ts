@@ -319,12 +319,13 @@ export class AttendanceService {
     }
 
     async findAllAdmin(query: QueryAttendanceDto) {
-        const { staffId, locationId, date, from, to, page = 1, limit = 20 } = query;
+        const { staffId, locationId, date, status, from, to, page = 1, limit = 20 } = query;
         const skip = (page - 1) * limit;
 
         const where: Prisma.AttendanceRecordWhereInput = {
             ...(staffId && { staffId }),
             ...(locationId && { locationId }),
+            ...(status && { status }),
             ...(date
                 ? { date: new Date(date) }
                 : (from || to) && {

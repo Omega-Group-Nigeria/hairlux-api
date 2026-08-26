@@ -495,4 +495,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   get lmsCourseRole() {
     return this.client.lmsCourseRole;
   }
+
+  get lifecycleCampaignSequence() {
+    return this.client.lifecycleCampaignSequence;
+  }
+
+  get lifecycleCampaignSequenceStep() {
+    return this.client.lifecycleCampaignSequenceStep;
+  }
+
+  get lifecycleCampaignSequenceSend() {
+    return this.client.lifecycleCampaignSequenceSend;
+  }
+
+  get payrollAuditLog() {
+    return this.client.payrollAuditLog;
+  }
+
+  get staffManagedFinanceBranch() {
+    return this.client.staffManagedFinanceBranch;
+  }
 }
