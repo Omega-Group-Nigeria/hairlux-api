@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { BookingController } from './booking.controller';
 import { AdminBookingController } from './admin-booking.controller';
+import { AdminCancellationPolicyController } from './admin-cancellation-policy.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PaymentModule } from '../payment/payment.module';
 import { MailModule } from '../mail/mail.module';
@@ -19,6 +20,7 @@ import { HomeServiceLifecycleModule } from '../beautician/home-service-booking/h
 import { TrackingModule } from '../beautician/tracking/tracking.module';
 import { MatchingModule } from '../beautician/matching/matching.module';
 import { BookingMatchingService } from './services/booking-matching.service';
+import { BookingCancellationPolicyService } from './services/booking-cancellation-policy.service';
 import { CommsModule } from '../comms/comms.module';
 import { BookingNotificationsModule } from '../notifications/booking/booking-notifications.module';
 
@@ -37,7 +39,7 @@ import { BookingNotificationsModule } from '../notifications/booking/booking-not
     CommsModule,
     BookingNotificationsModule,
   ],
-  controllers: [BookingController, AdminBookingController],
+  controllers: [BookingController, AdminBookingController, AdminCancellationPolicyController],
   providers: [
     BookingService,
     ReservationService,
@@ -47,6 +49,7 @@ import { BookingNotificationsModule } from '../notifications/booking/booking-not
     BookingPaymentService,
     BookingLinePricingService,
     BookingMatchingService,
+    BookingCancellationPolicyService,
   ],
   exports: [BookingService],
 })

@@ -6,11 +6,9 @@ import {
 } from '@nestjs/common';
 import {
   BookingCommsCloseReason,
+  Booking,
   BookingStatus,
-  BookingType,
   PaymentMethod,
-  TransactionStatus,
-  TransactionType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
@@ -19,13 +17,16 @@ import { RescheduleBookingDto } from '../dto/reschedule-booking.dto';
 import {
   bookingUserReadInclude,
   formatBookingResponse,
+  normalizeBookingServices,
 } from '../utils/booking.utils';
+import { bookingNeedsBeauticianAssignment } from '../../beautician/matching/utils/booking-assignment.utils';
 import { NoShowPenaltyService } from '../../beautician/services/no-show-penalty.service';
 import { MatchingOrchestratorService } from '../../beautician/matching/services/matching-orchestrator.service';
 import { CommsSessionService } from '../../comms/services/comms-session.service';
 import { CommsPresenterService } from '../../comms/services/comms-presenter.service';
 import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
 import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
+import { BookingCancellationPolicyService } from './booking-cancellation-policy.service';
 
 @Injectable()
 export class BookingCoreService {
@@ -38,7 +39,28 @@ export class BookingCoreService {
     private readonly commsPresenter: CommsPresenterService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly bookingPushNotifier: BookingPushNotifier,
+    private readonly cancellationPolicyService: BookingCancellationPolicyService,
   ) {}
+
+  async getCancellationPolicy() {
+    return this.cancellationPolicyService.getCustomerPolicies();
+  }
+
+  async getCancellationEligibility(id: string, userId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.userId !== userId) {
+      throw new ForbiddenException('You do not have access to this booking');
+    }
+
+    return this.cancellationPolicyService.getCustomerEligibility(booking);
+  }
 
   async findUserBookings(userId: string, queryDto: QueryBookingsDto) {
     const { status, startDate, endDate } = queryDto;
@@ -71,7 +93,21 @@ export class BookingCoreService {
       },
     });
 
-    return bookings.map((booking) => formatBookingResponse(booking));
+    return Promise.all(
+      bookings.map((booking) =>
+        this.withCustomerCancellationEligibility(booking),
+      ),
+    );
+  }
+
+  private async withCustomerCancellationEligibility(booking: Booking) {
+    const cancellationEligibility =
+      await this.cancellationPolicyService.getCustomerEligibility(booking);
+
+    return {
+      ...formatBookingResponse(booking),
+      cancellationEligibility,
+    };
   }
 
   async findOne(id: string, userId: string) {
@@ -101,7 +137,7 @@ export class BookingCoreService {
     }
 
     return {
-      ...formatBookingResponse(booking),
+      ...(await this.withCustomerCancellationEligibility(booking)),
       comms: this.commsPresenter.embedForBooking(booking),
     };
   }
@@ -146,17 +182,17 @@ export class BookingCoreService {
       include: bookingUserReadInclude,
     });
 
-    // If the booking is still awaiting dispatch and matching hasn't started,
-    // re-schedule its first dispatch for the new service time.
-    if (
-      booking.status === BookingStatus.PENDING_ASSIGNMENT &&
-      booking.bookingType === BookingType.HOME_SERVICE &&
-      !booking.matchingStartedAt
-    ) {
-      await this.matchingOrchestrator.rescheduleDispatchForBooking(
-        id,
-        newBookingDate,
-      );
+    // Re-schedule dispatch for home-service bookings still awaiting assignment.
+    if (booking.status === BookingStatus.PENDING_ASSIGNMENT) {
+      const serviceRecords = normalizeBookingServices(booking.services);
+      if (
+        bookingNeedsBeauticianAssignment(booking.bookingType, serviceRecords)
+      ) {
+        await this.matchingOrchestrator.rescheduleDispatchForBooking(
+          id,
+          newBookingDate,
+        );
+      }
     }
 
     return formatBookingResponse(updatedBooking);
@@ -195,6 +231,18 @@ export class BookingCoreService {
       throw new BadRequestException('Booking is already cancelled');
     }
 
+    const evaluation = await this.cancellationPolicyService.evaluateCancellation({
+      booking,
+      actor: 'customer',
+      reason,
+    });
+
+    if (!evaluation.allowed) {
+      throw new ForbiddenException(
+        evaluation.denialReason ?? 'Cancellation is not allowed for this booking',
+      );
+    }
+
     const result = await this.prisma.$transaction(async (tx) => {
       const updatedBooking = await tx.booking.update({
         where: { id },
@@ -205,47 +253,23 @@ export class BookingCoreService {
         include: bookingUserReadInclude,
       });
 
-      if (
-        booking.paymentMethod === PaymentMethod.WALLET ||
-        booking.paymentMethod === PaymentMethod.MONNIFY
-      ) {
-        const wallet = await tx.wallet.findUnique({
-          where: { userId: booking.userId },
-        });
-
-        if (wallet) {
-          const refundAmount = Number(booking.totalAmount);
-
-          await tx.wallet.update({
-            where: { userId: booking.userId },
-            data: {
-              balance: {
-                increment: refundAmount,
-              },
-            },
-          });
-
-          await tx.transaction.create({
-            data: {
-              walletId: wallet.id,
-              amount: refundAmount,
-              type: TransactionType.CREDIT,
-              paymentMethod: 'WALLET',
-              description: 'Refund for cancelled booking',
-              reference: `REFUND-${booking.id}`,
-              status: TransactionStatus.COMPLETED,
-            },
-          });
-        }
-      }
+      await this.cancellationPolicyService.processRefund(
+        tx,
+        booking,
+        evaluation,
+      );
 
       return updatedBooking;
     });
 
+    const shouldInvalidateWallet =
+      evaluation.refundAmount > 0 &&
+      (booking.paymentMethod === PaymentMethod.WALLET ||
+        booking.paymentMethod === PaymentMethod.MONNIFY);
+
     void Promise.all([
       this.redis.delByPattern('analytics:*'),
-      ...(booking.paymentMethod === PaymentMethod.WALLET ||
-      booking.paymentMethod === PaymentMethod.MONNIFY
+      ...(shouldInvalidateWallet
         ? [this.redis.del(`wallet:balance:${userId}`)]
         : []),
       this.noShowPenaltyService.recordIfApplicable(id),
@@ -270,6 +294,15 @@ export class BookingCoreService {
       assignedBeauticianUserId: booking.assignedBeauticianUserId,
     });
 
-    return formatBookingResponse(result);
+    return {
+      ...formatBookingResponse(result),
+      cancellation: {
+        scenario: evaluation.scenario,
+        refundPercent: evaluation.refundPercent,
+        forfeiturePercent: evaluation.forfeiturePercent,
+        refundAmount: evaluation.refundAmount,
+        forfeitureAmount: evaluation.forfeitureAmount,
+      },
+    };
   }
 }

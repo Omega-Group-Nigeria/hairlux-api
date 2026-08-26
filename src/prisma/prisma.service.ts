@@ -89,6 +89,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.businessSettings;
   }
 
+  get bookingCancellationPolicyRule() {
+    return this.client.bookingCancellationPolicyRule;
+  }
+
   get businessHours() {
     return this.client.businessHours;
   }

@@ -1,4 +1,4 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BookingStatus } from '@prisma/client';
 
@@ -19,4 +19,13 @@ export class UpdateBookingStatusDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Mark cancellation as a no-show (admin only). Applies no-show refund/forfeiture policy.',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isNoShow?: boolean;
 }

@@ -32,6 +32,7 @@ import { BeauticianCommissionRateService } from '../../payout/services/beauticia
 import { CommsRealtimeService } from '../../../comms/services/comms-realtime.service';
 import { DispatchStateService } from '../../matching/services/dispatch-state.service';
 import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
+import { OfferLifecycleService } from '../../matching/services/offer-lifecycle.service';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
 import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
 import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
@@ -168,7 +169,10 @@ describe('JobAcceptService', () => {
                 offer.id !== notId &&
                 offer.expiresAt > new Date(),
             )
-            .map((offer) => ({ beauticianUserId: offer.beauticianUserId }));
+            .map((offer) => ({
+              id: offer.id,
+              beauticianUserId: offer.beauticianUserId,
+            }));
         },
       ),
       update: jest.fn(
@@ -327,6 +331,10 @@ describe('JobAcceptService', () => {
           useValue: { remove: jest.fn() },
         },
         {
+          provide: OfferLifecycleService,
+          useValue: { releaseOfferLosers: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
           provide: CommsSessionService,
           useValue: {
             openForBookingSafely: jest.fn().mockResolvedValue(undefined),
@@ -362,5 +370,18 @@ describe('JobAcceptService', () => {
     expect(bookingStatus).toBe(BookingStatus.ASSIGNED);
     expect(offers.get(winnerId)?.status).toBe(JobOfferStatus.ACCEPTED);
     expect(offers.get(loserId)?.status).toBe(JobOfferStatus.EXPIRED);
+  });
+
+  it('releases concurrent offer losers after accept', async () => {
+    const offerLifecycle = (
+      service as unknown as { offerLifecycle: { releaseOfferLosers: jest.Mock } }
+    ).offerLifecycle;
+
+    await service.accept(bookingId, winnerId);
+
+    expect(offerLifecycle.releaseOfferLosers).toHaveBeenCalledWith(
+      [{ offerId: offerLoserId, beauticianUserId: loserId }],
+      bookingId,
+    );
   });
 });

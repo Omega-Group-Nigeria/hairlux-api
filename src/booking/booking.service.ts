@@ -76,6 +76,14 @@ export class BookingService {
     );
   }
 
+  async getCancellationPolicy() {
+    return this.bookingCoreService.getCancellationPolicy();
+  }
+
+  async getCancellationEligibility(id: string, userId: string) {
+    return this.bookingCoreService.getCancellationEligibility(id, userId);
+  }
+
   async findUserBookings(userId: string, queryDto: QueryBookingsDto) {
     return this.bookingCoreService.findUserBookings(userId, queryDto);
   }
@@ -113,8 +121,12 @@ export class BookingService {
     return this.bookingAnalyticsService.createAdminBooking(createDto);
   }
 
-  async updateStatusAdmin(id: string, status: BookingStatus) {
-    return this.bookingAnalyticsService.updateStatusAdmin(id, status);
+  async updateStatusAdmin(
+    id: string,
+    status: BookingStatus,
+    options?: { reason?: string; isNoShow?: boolean },
+  ) {
+    return this.bookingAnalyticsService.updateStatusAdmin(id, status, options);
   }
 
   async getCalendar(calendarDto: GetCalendarDto) {

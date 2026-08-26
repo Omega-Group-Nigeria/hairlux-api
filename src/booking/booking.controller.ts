@@ -115,6 +115,27 @@ export class BookingController {
     };
   }
 
+  @Get('cancellation-policy')
+  @Public()
+  @ApiOperation({
+    summary: 'Get booking cancellation policy',
+    description:
+      'Returns the active customer-facing cancellation rules for walk-in/branch and home/mobile service bookings. ' +
+      'Use this to display policy copy and interpret cancellationEligibility on bookings.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Cancellation policy retrieved successfully',
+  })
+  async getCancellationPolicy() {
+    const data = await this.bookingService.getCancellationPolicy();
+    return {
+      success: true,
+      message: 'Cancellation policy retrieved successfully',
+      data,
+    };
+  }
+
   @Post()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
@@ -574,6 +595,29 @@ export class BookingController {
     return {
       success: true,
       message: data.message,
+      data,
+    };
+  }
+
+  @Get(':id/cancellation-eligibility')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Get cancellation eligibility for a booking',
+    description:
+      'Evaluates the admin-configured cancellation policy for this booking and returns whether the customer can cancel, expected refund, and deadline.',
+  })
+  @ApiParam({ name: 'id', description: 'Booking ID' })
+  @ApiResponse({ status: 200, description: 'Eligibility retrieved successfully' })
+  @ApiResponse({ status: 404, description: 'Booking not found' })
+  async getCancellationEligibility(
+    @Param('id') id: string,
+    @GetUser('id') userId: string,
+  ) {
+    const data = await this.bookingService.getCancellationEligibility(id, userId);
+    return {
+      success: true,
+      message: 'Cancellation eligibility retrieved successfully',
       data,
     };
   }

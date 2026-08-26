@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,8 +10,6 @@ import {
   BookingType,
   DispatchStatus,
   PaymentMethod,
-  TransactionStatus,
-  TransactionType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
@@ -38,6 +37,9 @@ import { CommsAdminService } from '../../comms/services/comms-admin.service';
 import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
 import { ReservationService } from './reservation.service';
 import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
+import { BookingCancellationPolicyService } from './booking-cancellation-policy.service';
+import { HomeServiceBookingService } from '../../beautician/home-service-booking/home-service-booking.service';
+import { bookingNeedsBeauticianAssignment } from '../../beautician/matching/utils/booking-assignment.utils';
 
 @Injectable()
 export class BookingAnalyticsService {
@@ -52,6 +54,8 @@ export class BookingAnalyticsService {
     private readonly commsAdminService: CommsAdminService,
     private readonly commsRealtime: CommsRealtimeService,
     private readonly bookingPushNotifier: BookingPushNotifier,
+    private readonly cancellationPolicyService: BookingCancellationPolicyService,
+    private readonly homeServiceBookingService: HomeServiceBookingService,
   ) {}
 
   private isUniqueConstraintError(err: unknown, field: string): boolean {
@@ -261,9 +265,15 @@ export class BookingAnalyticsService {
       }
     }
 
-    const status = paymentMethod
-      ? BookingStatus.CONFIRMED
-      : BookingStatus.PENDING;
+    const needsAssignment = bookingNeedsBeauticianAssignment(
+      bookingType,
+      serviceRecords,
+    );
+    const status = needsAssignment
+      ? BookingStatus.PENDING_ASSIGNMENT
+      : paymentMethod
+        ? BookingStatus.CONFIRMED
+        : BookingStatus.PENDING;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let booking: any;
     try {
@@ -323,6 +333,10 @@ export class BookingAnalyticsService {
       throw err;
     }
 
+    if (booking.status === BookingStatus.PENDING_ASSIGNMENT) {
+      void this.homeServiceBookingService.triggerMatching(booking.id);
+    }
+
     return {
       ...formatBookingResponse(booking),
       services: serviceRecords,
@@ -330,7 +344,11 @@ export class BookingAnalyticsService {
     };
   }
 
-  async updateStatusAdmin(id: string, status: BookingStatus) {
+  async updateStatusAdmin(
+    id: string,
+    status: BookingStatus,
+    options?: { reason?: string; isNoShow?: boolean },
+  ) {
     const booking = await this.prisma.booking.findUnique({
       where: { id },
       include: {
@@ -350,56 +368,61 @@ export class BookingAnalyticsService {
       throw new BadRequestException('Cannot modify a cancelled booking');
     }
 
+    let evaluation:
+      | Awaited<
+          ReturnType<BookingCancellationPolicyService['evaluateCancellation']>
+        >
+      | null = null;
+
+    if (status === BookingStatus.CANCELLED) {
+      evaluation = await this.cancellationPolicyService.evaluateCancellation({
+        booking,
+        actor: 'admin',
+        reason: options?.reason,
+        isNoShow: options?.isNoShow,
+      });
+
+      if (!evaluation.allowed) {
+        throw new ForbiddenException(
+          evaluation.denialReason ??
+            'Admin cancellation is not allowed for this booking',
+        );
+      }
+    }
+
     const result = await this.prisma.$transaction(async (prisma) => {
       const updatedBooking = await prisma.booking.update({
         where: { id },
-        data: { status },
+        data: {
+          status,
+          ...(status === BookingStatus.CANCELLED
+            ? { cancelReason: options?.reason }
+            : {}),
+        },
         include: bookingAdminReadInclude,
       });
 
-      if (
-        status === BookingStatus.CANCELLED &&
-        (booking.status === BookingStatus.CONFIRMED ||
-          booking.status === BookingStatus.PENDING) &&
-        (booking.paymentMethod === PaymentMethod.WALLET ||
-          booking.paymentMethod === PaymentMethod.MONNIFY)
-      ) {
-        const wallet = await prisma.wallet.findUnique({
-          where: { userId: booking.userId },
-        });
-
-        if (wallet) {
-          await prisma.wallet.update({
-            where: { userId: booking.userId },
-            data: {
-              balance: {
-                increment: booking.totalAmount,
-              },
-            },
-          });
-
-          await prisma.transaction.create({
-            data: {
-              walletId: wallet.id,
-              type: TransactionType.CREDIT,
-              paymentMethod: 'WALLET',
-              amount: booking.totalAmount,
-              description: `Refund for cancelled booking #${booking.id}`,
-              reference: `REFUND-${booking.id}`,
-              status: TransactionStatus.COMPLETED,
-            },
-          });
-        }
+      if (status === BookingStatus.CANCELLED && evaluation) {
+        await this.cancellationPolicyService.processRefund(
+          prisma,
+          booking,
+          evaluation,
+        );
       }
 
       return updatedBooking;
     });
 
+    const shouldInvalidateWallet =
+      status === BookingStatus.CANCELLED &&
+      evaluation != null &&
+      evaluation.refundAmount > 0 &&
+      (booking.paymentMethod === PaymentMethod.WALLET ||
+        booking.paymentMethod === PaymentMethod.MONNIFY);
+
     void Promise.all([
       this.redis.delByPattern('analytics:*'),
-      ...(status === BookingStatus.CANCELLED &&
-      (booking.paymentMethod === PaymentMethod.WALLET ||
-        booking.paymentMethod === PaymentMethod.MONNIFY)
+      ...(shouldInvalidateWallet
         ? [this.redis.del(`wallet:balance:${booking.userId}`)]
         : []),
       ...(status === BookingStatus.CANCELLED
@@ -435,7 +458,22 @@ export class BookingAnalyticsService {
       });
     }
 
-    return formatBookingResponse(result);
+    const response = formatBookingResponse(result);
+
+    if (status === BookingStatus.CANCELLED && evaluation) {
+      return {
+        ...response,
+        cancellation: {
+          scenario: evaluation.scenario,
+          refundPercent: evaluation.refundPercent,
+          forfeiturePercent: evaluation.forfeiturePercent,
+          refundAmount: evaluation.refundAmount,
+          forfeitureAmount: evaluation.forfeitureAmount,
+        },
+      };
+    }
+
+    return response;
   }
 
   async getCalendar(calendarDto: GetCalendarDto) {

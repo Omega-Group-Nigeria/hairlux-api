@@ -201,6 +201,21 @@ enum BookingType {
   MIXED
 }
 
+enum BookingCancellationPolicyCategory {
+  WALK_IN_BRANCH
+  HOME_SERVICE
+}
+
+enum CancellationPolicyScenario {
+  WITHIN_CANCELLATION_WINDOW
+  OUTSIDE_CANCELLATION_WINDOW
+  GRACE_PERIOD
+  AFTER_GRACE_PERIOD
+  DISPATCHED
+  NO_SHOW
+  ADMIN_CANCELLATION
+}
+
 enum JobType {
   FULL_TIME
   PART_TIME
@@ -996,6 +1011,23 @@ model BusinessSettings {
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("business_settings")
+}
+
+model BookingCancellationPolicyRule {
+  id                  String                          @id @default(uuid())
+  category            BookingCancellationPolicyCategory
+  scenario            CancellationPolicyScenario
+  /// Minutes before service (walk-in) or after booking creation (home grace period).
+  windowMinutes       Int?                            @map("window_minutes")
+  refundPercent       Int                             @default(0) @map("refund_percent")
+  forfeiturePercent   Int                             @default(0) @map("forfeiture_percent")
+  customerCanCancel   Boolean                         @default(false) @map("customer_can_cancel")
+  adminCanCancel      Boolean                         @default(true) @map("admin_can_cancel")
+  createdAt           DateTime                        @default(now()) @map("created_at")
+  updatedAt           DateTime                        @updatedAt @map("updated_at")
+
+  @@unique([category, scenario])
+  @@map("booking_cancellation_policy_rules")
 }
 
 model BusinessHours {

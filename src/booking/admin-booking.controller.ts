@@ -642,7 +642,10 @@ export class AdminBookingController {
     @Param('id') id: string,
     @Body() updateDto: UpdateBookingStatusDto,
   ) {
-    return this.bookingService.updateStatusAdmin(id, updateDto.status);
+    return this.bookingService.updateStatusAdmin(id, updateDto.status, {
+      reason: updateDto.reason,
+      isNoShow: updateDto.isNoShow,
+    });
   }
 
   // ─── Business Hours ──────────────────────────────────────────────────────────

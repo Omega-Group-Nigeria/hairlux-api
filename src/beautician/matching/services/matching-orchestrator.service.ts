@@ -145,7 +145,20 @@ export class MatchingOrchestratorService {
     bookingId: string,
     bookingDate: Date,
   ): Promise<void> {
-    await this.matchingQueue.cancelBookingJobs(bookingId);
+    await this.offerLifecycle.clearActiveOffersAndJobs(bookingId);
+
+    await this.prisma.booking.updateMany({
+      where: {
+        id: bookingId,
+        status: BookingStatus.PENDING_ASSIGNMENT,
+      },
+      data: {
+        matchingExhaustedAt: null,
+        matchingExhaustedReason: null,
+        dispatchStatus: DispatchStatus.PENDING_MATCH,
+      },
+    });
+
     await this.scheduleInitialDispatch(bookingId, bookingDate);
   }
 
@@ -397,23 +410,31 @@ export class MatchingOrchestratorService {
       },
     });
 
-    if (
-      !booking ||
-      booking.status !== BookingStatus.PENDING_ASSIGNMENT ||
-      (booking.dispatchStatus !== DispatchStatus.PENDING_MATCH &&
-        booking.dispatchStatus !== DispatchStatus.OFFERING)
-    ) {
+    if (!booking) {
       return;
     }
 
-    await this.offerLifecycle.clearActiveOffersAndJobs(bookingId);
+    const hadActiveDispatch =
+      booking.dispatchStatus === DispatchStatus.PENDING_MATCH ||
+      booking.dispatchStatus === DispatchStatus.OFFERING;
 
-    await this.dispatchState.transition(bookingId, {
-      from: booking.dispatchStatus ?? undefined,
-      to: DispatchStatus.CANCELLED,
-      eventType: DISPATCH_EVENT_TYPES.DISPATCH_CANCELLED,
-      idempotencyKey: `dispatch-cancelled:${bookingId}`,
-    });
+    if (hadActiveDispatch) {
+      await this.offerLifecycle.clearActiveOffersAndJobs(bookingId);
+
+      if (booking.status === BookingStatus.PENDING_ASSIGNMENT) {
+        await this.dispatchState.transition(bookingId, {
+          from: booking.dispatchStatus ?? undefined,
+          to: DispatchStatus.CANCELLED,
+          eventType: DISPATCH_EVENT_TYPES.DISPATCH_CANCELLED,
+          idempotencyKey: `dispatch-cancelled:${bookingId}`,
+        });
+      }
+
+      return;
+    }
+
+    // Scheduled dispatch not started yet — still clear queued matching jobs.
+    await this.matchingQueue.cancelBookingJobs(bookingId);
   }
 
   // ─── private matching pass ─────────────────────────────────────────────────

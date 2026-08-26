@@ -24,6 +24,7 @@ import { CommsRealtimeService } from '../../../comms/services/comms-realtime.ser
 import { DispatchStateService } from '../../matching/services/dispatch-state.service';
 import { DISPATCH_EVENT_TYPES } from '../../matching/constants/dispatch-event.constants';
 import { BeauticianLocationIndexService } from '../../matching/services/beautician-location-index.service';
+import { OfferLifecycleService } from '../../matching/services/offer-lifecycle.service';
 import { CommsSessionService } from '../../../comms/services/comms-session.service';
 import { BookingPushNotifier } from '../../../notifications/booking/booking-push.notifier';
 import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
@@ -41,6 +42,7 @@ export class JobAcceptService {
     private readonly commsRealtime: CommsRealtimeService,
     private readonly dispatchState: DispatchStateService,
     private readonly locationIndex: BeauticianLocationIndexService,
+    private readonly offerLifecycle: OfferLifecycleService,
     private readonly commsSessionService: CommsSessionService,
     private readonly bookingPushNotifier: BookingPushNotifier,
     private readonly jobPushNotifier: JobPushNotifier,
@@ -113,7 +115,7 @@ export class JobAcceptService {
           status: JobOfferStatus.OFFERED,
           expiresAt: { gt: now },
         },
-        select: { beauticianUserId: true },
+        select: { id: true, beauticianUserId: true },
       });
 
       const updatedBooking = await this.prisma.$transaction(async (tx) => {
@@ -168,6 +170,16 @@ export class JobAcceptService {
       const expiryJob = await this.matchingQueue.getJob(`expire-offer:${offer.id}`);
       if (expiryJob) {
         await expiryJob.remove();
+      }
+
+      if (concurrentLosers.length) {
+        await this.offerLifecycle.releaseOfferLosers(
+          concurrentLosers.map((loser) => ({
+            offerId: loser.id,
+            beauticianUserId: loser.beauticianUserId,
+          })),
+          bookingId,
+        );
       }
 
       await this.dispatchState.recordEvent(

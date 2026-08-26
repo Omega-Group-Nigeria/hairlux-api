@@ -226,4 +226,19 @@ export class OfferLifecycleService {
     await this.offerManager.releaseBeauticianToOnline(beauticianUserId);
     this.realtimePublisher.emitOfferExpired(beauticianUserId, bookingId);
   }
+
+  /**
+   * When one beautician accepts, release other concurrent offer holders:
+   * restore availability, cancel expiry jobs, and notify via WebSocket.
+   */
+  async releaseOfferLosers(
+    losers: Array<{ offerId: string; beauticianUserId: string }>,
+    bookingId: string,
+  ): Promise<void> {
+    for (const loser of losers) {
+      await this.offerManager.releaseBeauticianToOnline(loser.beauticianUserId);
+      await this.matchingQueue.removeExpireOfferJob(loser.offerId);
+      this.realtimePublisher.emitOfferExpired(loser.beauticianUserId, bookingId);
+    }
+  }
 }
