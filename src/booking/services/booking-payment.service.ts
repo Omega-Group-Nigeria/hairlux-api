@@ -16,6 +16,7 @@ import {
   TransactionType,
 } from '@prisma/client';
 import { createHash } from 'crypto';
+import { bookingDateTimeFromParts } from '../utils/booking-datetime.utils';
 import { DiscountService } from '../../discount/discount.service';
 import { MailService } from '../../mail/mail.service';
 import { MonnifyService } from '../../payment/monnify.service';
@@ -438,7 +439,7 @@ export class BookingPaymentService {
       select: { email: true, firstName: true, lastName: true },
     });
 
-    const bookingDate = new Date(`${date}T${time}`);
+    const bookingDate = bookingDateTimeFromParts(date, time);
 
     const serviceRecords =
       await this.bookingLinePricingService.buildServiceRecords({
@@ -991,7 +992,7 @@ export class BookingPaymentService {
       throw new NotFoundException('User not found');
     }
 
-    const bookingDate = new Date(`${date}T${time}`);
+    const bookingDate = bookingDateTimeFromParts(date, time);
 
     const serviceRecords =
       await this.bookingLinePricingService.buildServiceRecords({

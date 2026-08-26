@@ -1,12 +1,19 @@
 import { Booking } from '@prisma/client';
 import { BOOKING_TIMEZONE } from '../constants/cancellation-policy.constants';
+import { bookingDateTimeFromParts } from './booking-datetime.utils';
 
-export function getMinutesUntilService(booking: Booking, now = new Date()): number {
+export function getMinutesUntilService(
+  booking: Booking,
+  now = new Date(),
+): number {
   const serviceAt = getServiceDateTime(booking);
   return Math.floor((serviceAt.getTime() - now.getTime()) / 60_000);
 }
 
-export function getMinutesSinceBooking(booking: Booking, now = new Date()): number {
+export function getMinutesSinceBooking(
+  booking: Booking,
+  now = new Date(),
+): number {
   return Math.floor((now.getTime() - booking.createdAt.getTime()) / 60_000);
 }
 
@@ -15,10 +22,13 @@ export function getServiceDateTime(booking: Booking): Date {
     booking.bookingDate,
     BOOKING_TIMEZONE,
   );
-  return new Date(`${datePart}T${booking.bookingTime}:00`);
+  return bookingDateTimeFromParts(datePart, booking.bookingTime);
 }
 
-export function formatCalendarDateInTimezone(date: Date, timeZone: string): string {
+export function formatCalendarDateInTimezone(
+  date: Date,
+  timeZone: string,
+): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',

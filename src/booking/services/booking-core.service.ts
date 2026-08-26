@@ -14,6 +14,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { QueryBookingsDto } from '../dto/query-bookings.dto';
 import { RescheduleBookingDto } from '../dto/reschedule-booking.dto';
+import { bookingDateTimeFromParts } from '../utils/booking-datetime.utils';
 import {
   bookingUserReadInclude,
   formatBookingResponse,
@@ -172,7 +173,7 @@ export class BookingCoreService {
       );
     }
 
-    const newBookingDate = new Date(`${date}T${time}`);
+    const newBookingDate = bookingDateTimeFromParts(date, time);
 
     const updatedBooking = await this.prisma.booking.update({
       where: { id },
@@ -233,15 +234,17 @@ export class BookingCoreService {
       throw new BadRequestException('Booking is already cancelled');
     }
 
-    const evaluation = await this.cancellationPolicyService.evaluateCancellation({
-      booking,
-      actor: 'customer',
-      reason,
-    });
+    const evaluation =
+      await this.cancellationPolicyService.evaluateCancellation({
+        booking,
+        actor: 'customer',
+        reason,
+      });
 
     if (!evaluation.allowed) {
       throw new ForbiddenException(
-        evaluation.denialReason ?? 'Cancellation is not allowed for this booking',
+        evaluation.denialReason ??
+          'Cancellation is not allowed for this booking',
       );
     }
 
