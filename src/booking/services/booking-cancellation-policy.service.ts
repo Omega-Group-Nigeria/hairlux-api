@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import {
   Booking,
@@ -247,8 +248,9 @@ export class BookingCancellationPolicyService {
       now,
     });
 
-    const customerCancelDeadlineAt =
-      await this.resolveCustomerCancelDeadline(booking, now);
+    const customerCancelDeadlineAt = evaluation.allowed
+      ? await this.resolveCustomerCancelDeadline(booking, now)
+      : null;
 
     return {
       canCancel: evaluation.allowed,
@@ -293,7 +295,8 @@ export class BookingCancellationPolicyService {
     const category = this.resolvePolicyCategory(booking);
     const rules = await this.getRulesForCategory(category);
     const totalAmount = Number(booking.totalAmount);
-    const noShow = isNoShow ?? isNoShowReason(reason);
+    const noShow =
+      actor === 'admin' && (isNoShow === true || isNoShowReason(reason));
 
     if (noShow) {
       return this.buildEvaluation(
@@ -303,19 +306,6 @@ export class BookingCancellationPolicyService {
         actor,
         'No-show cancellation',
       );
-    }
-
-    if (this.isDispatched(booking)) {
-      const dispatchedRule = rules.get(CancellationPolicyScenario.DISPATCHED);
-      if (dispatchedRule) {
-        return this.buildEvaluation(
-          category,
-          dispatchedRule,
-          totalAmount,
-          actor,
-          'Beautician has been dispatched',
-        );
-      }
     }
 
     if (category === BookingCancellationPolicyCategory.WALK_IN_BRANCH) {
@@ -355,7 +345,9 @@ export class BookingCancellationPolicyService {
     });
 
     if (!wallet) {
-      return;
+      throw new InternalServerErrorException(
+        'Unable to process refund: customer wallet not found',
+      );
     }
 
     await tx.wallet.update({
@@ -452,16 +444,32 @@ export class BookingCancellationPolicyService {
     }
 
     if (actor === 'customer') {
+      const afterGraceRule = rules.get(
+        CancellationPolicyScenario.AFTER_GRACE_PERIOD,
+      );
       return {
         allowed: false,
         scenario: CancellationPolicyScenario.AFTER_GRACE_PERIOD,
         category,
-        refundPercent: 0,
-        forfeiturePercent: 100,
+        refundPercent: afterGraceRule?.refundPercent ?? 0,
+        forfeiturePercent: afterGraceRule?.forfeiturePercent ?? 100,
         refundAmount: 0,
         forfeitureAmount: totalAmount,
         denialReason: `Customer cancellation is only allowed within ${graceMinutes} minutes of booking`,
       };
+    }
+
+    if (this.isDispatched(booking)) {
+      const dispatchedRule = rules.get(CancellationPolicyScenario.DISPATCHED);
+      if (dispatchedRule) {
+        return this.buildEvaluation(
+          category,
+          dispatchedRule,
+          totalAmount,
+          actor,
+          'Beautician has been dispatched',
+        );
+      }
     }
 
     return this.buildEvaluation(

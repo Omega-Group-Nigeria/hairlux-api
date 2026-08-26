@@ -41,6 +41,8 @@ import { PermissionGuard } from '../auth/guards/permission.guard';
 import { DispatchTraceService } from '../beautician/matching/services/dispatch-trace.service';
 import { ForceAssignBookingDto } from '../beautician/matching/dto/force-assign-booking.dto';
 import { GetUser } from '../auth/decorators/get-user.decorator';
+import { BookingCancellationPolicyService } from './services/booking-cancellation-policy.service';
+import { UpdateCancellationPolicyDto } from './dto/update-cancellation-policy.dto';
 
 @ApiTags('Admin - Bookings')
 @ApiBearerAuth('JWT-auth')
@@ -52,6 +54,7 @@ export class AdminBookingController {
     private readonly bookingService: BookingService,
     private readonly activeHomeServiceBookings: ActiveHomeServiceBookingsService,
     private readonly dispatchTraceService: DispatchTraceService,
+    private readonly cancellationPolicyService: BookingCancellationPolicyService,
   ) {}
 
   @Get('home-services/active')
@@ -391,6 +394,40 @@ export class AdminBookingController {
   async useReservation(@Param('code') code: string) {
     const data = await this.bookingService.useReservation(code);
     return { success: true, message: 'Reservation marked as used', data };
+  }
+
+  @Get('cancellation-policy')
+  @Permission(PERMISSIONS.SETTINGS_READ)
+  @ApiOperation({
+    summary: 'Get booking cancellation policy rules',
+    description:
+      'Returns admin-configurable cancellation rules for walk-in/branch and home/mobile service bookings.',
+  })
+  @ApiResponse({ status: 200, description: 'Policy rules retrieved successfully' })
+  async getCancellationPolicy() {
+    const data = await this.cancellationPolicyService.getPolicies();
+    return {
+      success: true,
+      message: 'Cancellation policy retrieved successfully',
+      data,
+    };
+  }
+
+  @Put('cancellation-policy')
+  @Permission(PERMISSIONS.SETTINGS_MANAGE)
+  @ApiOperation({
+    summary: 'Update booking cancellation policy rules',
+    description:
+      'Partial update per category. Refund and forfeiture percentages must sum to 100 for each rule.',
+  })
+  @ApiResponse({ status: 200, description: 'Policy rules updated successfully' })
+  async updateCancellationPolicy(@Body() dto: UpdateCancellationPolicyDto) {
+    const data = await this.cancellationPolicyService.updatePolicies(dto);
+    return {
+      success: true,
+      message: 'Cancellation policy updated successfully',
+      data,
+    };
   }
 
   @Get(':id/dispatch-trace')

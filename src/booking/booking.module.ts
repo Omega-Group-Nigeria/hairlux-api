@@ -2,7 +2,6 @@ import { Module, forwardRef } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { BookingController } from './booking.controller';
 import { AdminBookingController } from './admin-booking.controller';
-import { AdminCancellationPolicyController } from './admin-cancellation-policy.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PaymentModule } from '../payment/payment.module';
 import { MailModule } from '../mail/mail.module';
@@ -39,7 +38,7 @@ import { BookingNotificationsModule } from '../notifications/booking/booking-not
     CommsModule,
     BookingNotificationsModule,
   ],
-  controllers: [BookingController, AdminBookingController, AdminCancellationPolicyController],
+  controllers: [BookingController, AdminBookingController],
   providers: [
     BookingService,
     ReservationService,

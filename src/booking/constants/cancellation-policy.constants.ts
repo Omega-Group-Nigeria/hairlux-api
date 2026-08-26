@@ -1,5 +1,7 @@
 import { BookingStatus } from '@prisma/client';
 
+export const BOOKING_TIMEZONE = 'Africa/Lagos';
+
 /** Statuses where a beautician has been dispatched for home service. */
 export const DISPATCHED_BOOKING_STATUSES = new Set<BookingStatus>([
   BookingStatus.ASSIGNED,

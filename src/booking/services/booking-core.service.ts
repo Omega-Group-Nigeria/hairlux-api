@@ -27,6 +27,7 @@ import { CommsPresenterService } from '../../comms/services/comms-presenter.serv
 import { CommsRealtimeService } from '../../comms/services/comms-realtime.service';
 import { BookingPushNotifier } from '../../notifications/booking/booking-push.notifier';
 import { BookingCancellationPolicyService } from './booking-cancellation-policy.service';
+import { BookingParticipantService } from '../../beautician/home-service-booking/services/booking-participant.service';
 
 @Injectable()
 export class BookingCoreService {
@@ -40,6 +41,7 @@ export class BookingCoreService {
     private readonly commsRealtime: CommsRealtimeService,
     private readonly bookingPushNotifier: BookingPushNotifier,
     private readonly cancellationPolicyService: BookingCancellationPolicyService,
+    private readonly bookingParticipantService: BookingParticipantService,
   ) {}
 
   async getCancellationPolicy() {
@@ -273,8 +275,13 @@ export class BookingCoreService {
         ? [this.redis.del(`wallet:balance:${userId}`)]
         : []),
       this.noShowPenaltyService.recordIfApplicable(id),
-      ...(booking.status === BookingStatus.PENDING_ASSIGNMENT
-        ? [this.matchingOrchestrator.cancelDispatchForBooking(id)]
+      this.matchingOrchestrator.cancelDispatchForBooking(id),
+      ...(booking.assignedBeauticianUserId
+        ? [
+            this.bookingParticipantService.releaseBeauticianIfIdle(
+              booking.assignedBeauticianUserId,
+            ),
+          ]
         : []),
     ]);
 

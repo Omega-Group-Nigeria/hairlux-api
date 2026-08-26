@@ -40,6 +40,7 @@ import { BookingPushNotifier } from '../../notifications/booking/booking-push.no
 import { BookingCancellationPolicyService } from './booking-cancellation-policy.service';
 import { HomeServiceBookingService } from '../../beautician/home-service-booking/home-service-booking.service';
 import { bookingNeedsBeauticianAssignment } from '../../beautician/matching/utils/booking-assignment.utils';
+import { BookingParticipantService } from '../../beautician/home-service-booking/services/booking-participant.service';
 
 @Injectable()
 export class BookingAnalyticsService {
@@ -56,6 +57,7 @@ export class BookingAnalyticsService {
     private readonly bookingPushNotifier: BookingPushNotifier,
     private readonly cancellationPolicyService: BookingCancellationPolicyService,
     private readonly homeServiceBookingService: HomeServiceBookingService,
+    private readonly bookingParticipantService: BookingParticipantService,
   ) {}
 
   private isUniqueConstraintError(err: unknown, field: string): boolean {
@@ -428,9 +430,17 @@ export class BookingAnalyticsService {
       ...(status === BookingStatus.CANCELLED
         ? [this.noShowPenaltyService.recordIfApplicable(id)]
         : []),
-      ...(status === BookingStatus.CANCELLED &&
-      booking.status === BookingStatus.PENDING_ASSIGNMENT
-        ? [this.matchingOrchestrator.cancelDispatchForBooking(id)]
+      ...(status === BookingStatus.CANCELLED
+        ? [
+            this.matchingOrchestrator.cancelDispatchForBooking(id),
+            ...(booking.assignedBeauticianUserId
+              ? [
+                  this.bookingParticipantService.releaseBeauticianIfIdle(
+                    booking.assignedBeauticianUserId,
+                  ),
+                ]
+              : []),
+          ]
         : []),
     ]);
 

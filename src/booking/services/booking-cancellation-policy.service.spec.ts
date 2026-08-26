@@ -303,4 +303,78 @@ describe('BookingCancellationPolicyService', () => {
       new Date(createdAt.getTime() + 5 * 60_000).toISOString(),
     );
   });
+
+  it('allows customer grace cancellation even when beautician is dispatched', async () => {
+    const booking = makeBooking({
+      createdAt: new Date('2026-08-26T10:00:00.000Z'),
+      status: BookingStatus.EN_ROUTE,
+      assignedBeauticianUserId: 'beautician-1',
+    });
+
+    const result = await service.evaluateCancellation({
+      booking,
+      actor: 'customer',
+      now: new Date('2026-08-26T10:03:00.000Z'),
+    });
+
+    expect(result.allowed).toBe(true);
+    expect(result.scenario).toBe(CancellationPolicyScenario.GRACE_PERIOD);
+    expect(result.refundAmount).toBe(10000);
+  });
+
+  it('does not treat customer cancel reason text as no-show', async () => {
+    const booking = makeBooking({
+      bookingType: BookingType.WALK_IN,
+      bookingDate: new Date('2026-09-01T10:00:00.000Z'),
+      bookingTime: '10:00',
+    });
+
+    const result = await service.evaluateCancellation({
+      booking,
+      actor: 'customer',
+      reason: 'Previous no-show experience',
+      now: new Date('2026-09-01T07:00:00.000Z'),
+    });
+
+    expect(result.scenario).toBe(
+      CancellationPolicyScenario.WITHIN_CANCELLATION_WINDOW,
+    );
+    expect(result.refundAmount).toBe(10000);
+  });
+
+  it('omits cancel deadline when customer cannot cancel', async () => {
+    const booking = makeBooking({
+      createdAt: new Date('2026-08-26T09:00:00.000Z'),
+      status: BookingStatus.EN_ROUTE,
+      assignedBeauticianUserId: 'beautician-1',
+    });
+
+    const eligibility = await service.getCustomerEligibility(
+      booking,
+      new Date('2026-08-26T10:10:00.000Z'),
+    );
+
+    expect(eligibility.canCancel).toBe(false);
+    expect(eligibility.customerCancelDeadlineAt).toBeNull();
+  });
+
+  it('throws when refund cannot be credited to a wallet', async () => {
+    prisma.wallet.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.processRefund(
+        prisma as any,
+        makeBooking({ paymentMethod: 'WALLET' }),
+        {
+          allowed: true,
+          scenario: CancellationPolicyScenario.GRACE_PERIOD,
+          category: BookingCancellationPolicyCategory.HOME_SERVICE,
+          refundPercent: 100,
+          forfeiturePercent: 0,
+          refundAmount: 10000,
+          forfeitureAmount: 0,
+        },
+      ),
+    ).rejects.toThrow('customer wallet not found');
+  });
 });
