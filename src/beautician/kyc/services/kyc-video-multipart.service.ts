@@ -48,6 +48,7 @@ export class KycVideoMultipartService {
   ): Promise<{
     fileKey: string;
     uploadId: string;
+    contentType: KycVideoContentType;
     partSize: number;
     partCount: number;
     partUrls: Array<{ partNumber: number; uploadUrl: string; expiresAt: string }>;
@@ -86,6 +87,7 @@ export class KycVideoMultipartService {
     return {
       fileKey,
       uploadId: r2UploadId,
+      contentType,
       partSize: KYC_VIDEO_PART_SIZE_BYTES,
       partCount,
       partUrls: partUrls.map((p) => ({ partNumber: p.partNumber, uploadUrl: p.uploadUrl, expiresAt: p.expiresAt })),
@@ -100,6 +102,7 @@ export class KycVideoMultipartService {
   ): Promise<{
     fileKey: string;
     uploadId: string;
+    contentType: KycVideoContentType;
     partUrls: Array<{ partNumber: number; uploadUrl: string; expiresAt: string }>;
     expiresAt: string;
     expiresIn: number;
@@ -118,6 +121,7 @@ export class KycVideoMultipartService {
     return {
       fileKey: session.fileKey,
       uploadId,
+      contentType: session.contentType,
       partUrls: partUrls.map((p) => ({ partNumber: p.partNumber, uploadUrl: p.uploadUrl, expiresAt: p.expiresAt })),
       expiresAt,
       expiresIn: KYC_VIDEO_MULTIPART_TTL_SECONDS,
