@@ -64,24 +64,15 @@ describe('PushMessageFactory', () => {
     ).toBe('Your booking HLX-9 has been cancelled.');
   });
 
-  it('resolves job offer and completed with optional rating', () => {
+  it('resolves job offer and completed', () => {
     const offer = factory.resolve(PUSH_EVENTS.JOB_OFFER, {
       estEarnings: factory.formatAmount(15000),
     });
     expect(offer.type).toBe('job.offer');
     expect(offer.body).toContain('15,000');
 
-    const withRating = factory.resolve(PUSH_EVENTS.JOB_COMPLETED, {
-      ratingSuffix: ' Customer rating: 5/5.',
-    });
-    expect(withRating.body).toBe(
-      'Booking completed. Customer rating: 5/5.',
-    );
-
-    const noRating = factory.resolve(PUSH_EVENTS.JOB_COMPLETED, {
-      ratingSuffix: '',
-    });
-    expect(noRating.body).toBe('Booking completed.');
+    const completed = factory.resolve(PUSH_EVENTS.JOB_COMPLETED);
+    expect(completed.body).toBe('Booking has been successfully completed.');
 
     expect(
       factory.resolve(PUSH_EVENTS.JOB_COMPLETION_REQUESTED).title,

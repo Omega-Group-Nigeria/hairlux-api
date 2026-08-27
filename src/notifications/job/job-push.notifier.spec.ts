@@ -62,7 +62,6 @@ describe('JobPushNotifier', () => {
     notifier.notifyCompleted({
       beauticianUserId: 'be1',
       bookingId: 'b1',
-      rating: 5,
     });
     notifier.notifyCompleted({
       beauticianUserId: 'be1',
@@ -85,13 +84,13 @@ describe('JobPushNotifier', () => {
     expect(dispatch.sendEvent).toHaveBeenCalledWith(
       'be1',
       PUSH_EVENTS.JOB_COMPLETED,
-      { ratingSuffix: ' Customer rating: 5/5.' },
-      { bookingId: 'b1', rating: '5' },
+      {},
+      { bookingId: 'b1' },
     );
     expect(dispatch.sendEvent).toHaveBeenCalledWith(
       'be1',
       PUSH_EVENTS.JOB_COMPLETED,
-      { ratingSuffix: '' },
+      {},
       { bookingId: 'b2' },
     );
   });

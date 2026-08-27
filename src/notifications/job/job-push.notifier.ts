@@ -94,22 +94,13 @@ export class JobPushNotifier {
   notifyCompleted(input: {
     beauticianUserId: string;
     bookingId: string;
-    rating?: number | null;
   }): void {
-    const ratingSuffix =
-      input.rating != null && Number.isFinite(input.rating)
-        ? ` Customer rating: ${input.rating}/5.`
-        : '';
-
     void this.dispatch
       .sendEvent(
         input.beauticianUserId,
         PUSH_EVENTS.JOB_COMPLETED,
-        { ratingSuffix },
-        {
-          bookingId: input.bookingId,
-          ...(input.rating != null ? { rating: String(input.rating) } : {}),
-        },
+        {},
+        { bookingId: input.bookingId },
       )
       .catch((err) => this.logErr('completed', err));
   }

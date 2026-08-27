@@ -117,7 +117,6 @@ export class CustomerCompletionService {
       this.jobPushNotifier.notifyCompleted({
         beauticianUserId: booking.assignedBeauticianUserId,
         bookingId,
-        rating: input.rating,
       });
     }
 

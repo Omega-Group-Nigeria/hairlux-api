@@ -23,7 +23,21 @@ export class BookingParticipantService {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
       include: {
-        address: true,
+        address: {
+          select: {
+            id: true,
+            fullAddress: true,
+            latitude: true,
+            longitude: true,
+            city: true,
+            state: true,
+            placeId: true,
+            streetAddress: true,
+            country: true,
+            addressComponents: true,
+            isDefault: true,
+          },
+        },
         user: {
           select: {
             id: true,

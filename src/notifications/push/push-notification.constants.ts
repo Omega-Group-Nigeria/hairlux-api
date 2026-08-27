@@ -67,7 +67,7 @@ export const PUSH_COPY: Record<
   },
   [PUSH_EVENTS.JOB_COMPLETED]: {
     title: 'Job completed',
-    body: 'Booking completed.{{ratingSuffix}}',
+    body: 'Booking has been successfully completed.',
   },
 
   // ── Shop — §3.4 ──────────────────────────────────────────────────────────
