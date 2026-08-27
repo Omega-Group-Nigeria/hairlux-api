@@ -1,9 +1,12 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common'; 
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { Permission } from '../auth/decorators/permission.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { StaffService } from '../staff/staff.service';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
@@ -19,7 +22,7 @@ import type { CustomerLifecycle, CustomerValue } from '../common/utils/customer-
 @ApiTags('Admin - Salon Bookings')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/salon-bookings')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminSalonBookingController {
     constructor(
@@ -29,6 +32,7 @@ export class AdminSalonBookingController {
 
     @Post()
     @ApiOperation({ summary: 'Create a walk-in / in-salon booking' })
+    @Permission(PERMISSIONS.BOOKINGS_CREATE)
     async create(@Req() req: any, @Body() dto: CreateSalonBookingDto) {
         const staff = await this.staffService.findByUserIdOrNull(req.user.id);
         const data = await this.salonBookingService.create(dto, staff?.id);
@@ -36,6 +40,7 @@ export class AdminSalonBookingController {
     }
     @Get()
     @ApiOperation({ summary: 'List bookings, filterable by branch/staff/status/date' })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async findAll(@Query() query: QuerySalonBookingsDto) {
         const data = await this.salonBookingService.findAll(query);
         return { success: true, message: 'Bookings retrieved successfully', data };
@@ -44,6 +49,7 @@ export class AdminSalonBookingController {
     @Get('verify/:code')
     @ApiOperation({ summary: 'Look up a reservation by code — any branch. Checks both SalonBooking and the legacy marketplace Booking table (still the live path for customer self-service bookings).' })
     @ApiParam({ name: 'code' })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async findByReservationCode(@Param('code') code: string) {
         const data = await this.salonBookingService.findReservationAnywhere(code);
         return { success: true, message: 'Reservation found', data };
@@ -55,6 +61,7 @@ export class AdminSalonBookingController {
         description: 'Works for a reservation found in either table. For SalonBooking, pass assignedStaffId. For a legacy Booking-table WALK_IN reservation, no staff assignment is needed.',
     })
     @ApiParam({ name: 'code' })
+    @Permission(PERMISSIONS.BOOKINGS_VERIFY_RESERVATION)
     async confirmVerificationByCode(@Param('code') code: string, @Body() dto: ConfirmReservationDto) {
         const data = await this.salonBookingService.verifyReservationAnywhere(code, dto.assignedStaffId);
         return { success: true, message: 'Reservation verified successfully', data };
@@ -62,21 +69,33 @@ export class AdminSalonBookingController {
 
     @Get('overview')
     @ApiOperation({
-        summary: 'Combined Salon Bookings overview — summary cards + a merged list',
-        description: 'Merges SalonBooking with the legacy Booking table\'s WALK_IN entries (still the live customer self-service path), filterable by date range, branch, and source.',
+        summary: 'Combined Salon Bookings overview — summary cards + a merged, paginated list',
+        description: 'Merges SalonBooking with the legacy Booking table\'s WALK_IN entries (still the live customer self-service path), filterable by date range, branch, source, search (name/phone), status, service, and staff. Payment filter deliberately not supported yet -- SalonBooking has no payment data stored today.',
     })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async getOverview(
         @Query('dateFrom') dateFrom?: string,
         @Query('dateTo') dateTo?: string,
         @Query('branchId') branchId?: string,
         @Query('source') source?: 'salon_booking' | 'booking' | 'all',
+        @Query('search') search?: string,
+        @Query('status') status?: 'completed' | 'pending' | 'cancelled',
+        @Query('serviceId') serviceId?: string,
+        @Query('staffId') staffId?: string,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
     ) {
-        const data = await this.salonBookingService.getOverview({ dateFrom, dateTo, branchId, source });
+        const data = await this.salonBookingService.getOverview({
+            dateFrom, dateTo, branchId, source, search, status, serviceId, staffId,
+            page: page ? Number(page) : undefined,
+            limit: limit ? Number(limit) : undefined,
+        });
         return { success: true, message: 'Overview retrieved successfully', data };
     }
 
     @Get('customers')
     @ApiOperation({ summary: 'Full paginated Customer Contacts list (Contacts module) — searchable and filterable by branch, activity, spending, service, and lifecycle status' })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async findAllCustomers(
         @Query('q') q?: string,
         @Query('branchIds') branchIds?: string,
@@ -129,6 +148,7 @@ export class AdminSalonBookingController {
 
     @Get('customers/performance')
     @ApiOperation({ summary: 'Performance cards for the Customer Contacts page — computed over the same filters as the customer list, so cards and table always agree' })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async getCustomerContactsPerformance(
         @Query('q') q?: string,
         @Query('branchIds') branchIds?: string,
@@ -177,6 +197,7 @@ export class AdminSalonBookingController {
 
     @Get('customers/:id/profile')
     @ApiOperation({ summary: "A single customer's full profile and booking history (Customer Contacts drill-down)" })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async getCustomerProfile(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.salonBookingService.getCustomerProfile(id);
         return { success: true, message: 'Customer profile retrieved successfully', data };
@@ -187,6 +208,7 @@ export class AdminSalonBookingController {
         summary: 'Get the Customer Contacts / Users lifecycle and value classification thresholds',
         description: 'Both dimensions (Lifecycle: New/Active/At Risk/Dormant/Inactive/Never Visited, and Value: Standard/Premium/VIP) live on one admin-configurable settings row.',
     })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async getCustomerClassificationSettings() {
         const data = await this.salonBookingService.getCustomerClassificationSettings();
         return { success: true, message: 'Classification settings retrieved successfully', data };
@@ -194,6 +216,7 @@ export class AdminSalonBookingController {
 
     @Patch('customers/classification-settings')
     @ApiOperation({ summary: 'Update the Customer Contacts / Users lifecycle and value classification thresholds' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE)
     async updateCustomerClassificationSettings(@Body() dto: UpdateCustomerClassificationSettingsDto, @Req() req: any) {
         const data = await this.salonBookingService.updateCustomerClassificationSettings(dto, req.user?.id);
         return { success: true, message: 'Classification settings updated successfully', data };
@@ -201,6 +224,7 @@ export class AdminSalonBookingController {
 
     @Get('customers/search')
     @ApiOperation({ summary: 'Look up existing customers by name or phone, for prefilling a new booking' })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async searchCustomers(@Query('q') q?: string) {
         const data = await this.salonBookingService.searchCustomers(q ?? '');
         return { success: true, message: 'Customers retrieved successfully', data };
@@ -211,6 +235,7 @@ export class AdminSalonBookingController {
         summary: 'Check whether a phone matches a verified account, before creating a booking',
         description: 'Call as staff enters/confirms the customer phone field. hasMatch:true means show an "Is this <accountName>? Link this visit to their account?" prompt.',
     })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async checkPhoneMatch(@Query('phone') phone: string) {
         const data = await this.salonBookingService.checkPhoneMatch(phone);
         return { success: true, message: 'Checked successfully', data };
@@ -219,6 +244,7 @@ export class AdminSalonBookingController {
     @Get(':id')
     @ApiOperation({ summary: 'Get a single booking' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_READ)
     async findOne(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.salonBookingService.findOne(id);
         return { success: true, message: 'Booking retrieved successfully', data };
@@ -227,9 +253,10 @@ export class AdminSalonBookingController {
     @Patch(':id')
     @ApiOperation({
         summary: 'Edit a booking — Scheduled or In Progress only',
-        description: 'Full edit: services, staff, date/time, customer details, notes. Re-validates date/time changes against the same past-date and business-hours-closure rules as creating a new booking. For a Completed booking, use POST :id/add-service instead — existing service lines can never be altered here.',
+        description: 'Full edit: services, products, staff, date/time, customer details, notes. Products (inventoryItems) fully replace the existing product list when sent -- omit the field to leave products untouched, send an empty array to clear all products. Re-validates date/time changes against the same past-date and business-hours-closure rules as creating a new booking. For a Completed booking, use POST :id/add-service instead — existing service lines can never be altered here.',
     })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE)
     async editBooking(@Param('id', ParseUUIDPipe) id: string, @Body() dto: EditSalonBookingDto) {
         const data = await this.salonBookingService.editBooking(id, dto);
         return { success: true, message: 'Booking updated successfully', data };
@@ -241,6 +268,7 @@ export class AdminSalonBookingController {
         description: 'The only way a Completed booking can change — adds one new service line. Existing service lines on the booking are never altered or removed by this or any other endpoint.',
     })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE)
     async addServiceToCompletedBooking(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddServiceToCompletedBookingDto) {
         const data = await this.salonBookingService.addServiceToCompletedBooking(id, dto);
         return { success: true, message: 'Service added successfully', data };
@@ -250,6 +278,7 @@ export class AdminSalonBookingController {
     @Roles(UserRole.SUPER_ADMIN)
     @ApiOperation({ summary: 'Permanently delete a Salon Booking — Super Admin only. Cascades to its service lines, inventory lines, and commission record.' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_DELETE)
     async deleteBooking(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.salonBookingService.deleteBooking(id);
         return { success: true, message: 'Booking deleted successfully', data };
@@ -258,6 +287,7 @@ export class AdminSalonBookingController {
     @Post(':id/inventory-items')
     @ApiOperation({ summary: 'Add a product/inventory item to a booking before completion' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE)
     async addInventoryItem(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddSalonBookingInventoryItemDto) {
         const data = await this.salonBookingService.addInventoryItem(id, dto);
         return { success: true, message: 'Item added to booking successfully', data };
@@ -266,6 +296,7 @@ export class AdminSalonBookingController {
     @Patch(':id/verify')
     @ApiOperation({ summary: 'Verify a reservation — assign a Stylist and mark it redeemed' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_VERIFY_RESERVATION)
     async verifyReservation(@Param('id', ParseUUIDPipe) id: string, @Body() dto: VerifyReservationDto) {
         const data = await this.salonBookingService.verifyReservation(id, dto);
         return { success: true, message: 'Reservation verified successfully', data };
@@ -274,6 +305,7 @@ export class AdminSalonBookingController {
     @Patch(':id/start')
     @ApiOperation({ summary: 'Mark service as started' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE_STATUS)
     async start(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.salonBookingService.start(id);
         return { success: true, message: 'Booking marked in progress', data };
@@ -285,6 +317,7 @@ export class AdminSalonBookingController {
         description: 'Deducts inventory used and calculates the assigned Stylist\'s commission — the single trigger point for both.',
     })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE_STATUS)
     async complete(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
         const staff = await this.staffService.findByUserIdOrNull(req.user.id);
         const data = await this.salonBookingService.complete(id, staff?.id);
@@ -294,6 +327,7 @@ export class AdminSalonBookingController {
     @Patch(':id/cancel')
     @ApiOperation({ summary: 'Cancel a booking' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE_STATUS)
     async cancel(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CancelSalonBookingDto) {
         const data = await this.salonBookingService.cancel(id, dto);
         return { success: true, message: 'Booking cancelled successfully', data };
@@ -302,6 +336,7 @@ export class AdminSalonBookingController {
     @Patch(':id/no-show')
     @ApiOperation({ summary: 'Mark a booking as a no-show' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.BOOKINGS_UPDATE_STATUS)
     async noShow(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CancelSalonBookingDto) {
         const data = await this.salonBookingService.markNoShow(id, dto);
         return { success: true, message: 'Booking marked as no-show', data };

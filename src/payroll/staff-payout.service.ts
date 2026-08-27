@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from '../payment/paystack.service';
+import { PayrollAuditService } from './payroll-audit.service';
 
 @Injectable()
 export class StaffPayoutService {
@@ -10,6 +11,7 @@ export class StaffPayoutService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly paystackService: PaystackService,
+        private readonly payrollAuditService: PayrollAuditService,
     ) { }
 
     /**
@@ -93,9 +95,18 @@ export class StaffPayoutService {
         });
 
         if (this.paystackService.isTransferFailureStatus(transfer.status)) {
-            await this.prisma.staffPayoutRequest.update({
+            const updated = await this.prisma.staffPayoutRequest.update({
                 where: { id: payoutRequestId },
                 data: { status: 'FAILED', rejectionReason: `Paystack transfer ${transfer.status}` },
+            });
+            // System-driven outcome, no human actor -- actorId deliberately omitted.
+            await this.payrollAuditService.log({
+                action: 'WITHDRAWAL_FAILED',
+                entityType: 'StaffPayoutRequest',
+                entityId: payoutRequestId,
+                staffId: updated.staffId,
+                note: `Paystack transfer ${transfer.status}`,
+                after: { status: 'FAILED', amount: updated.amount },
             });
             throw new BadRequestException('Paystack rejected the withdrawal transfer. Please try again later.');
         }
@@ -113,9 +124,9 @@ export class StaffPayoutService {
      * re-checking balance sufficiency at the moment of completion.
      */
     private async completeTransfer(payoutRequestId: string, reference: string) {
-        return this.prisma.$transaction(async (tx) => {
+        const result = await this.prisma.$transaction(async (tx) => {
             const request = await tx.staffPayoutRequest.findUnique({ where: { id: payoutRequestId } });
-            if (!request || request.status === 'COMPLETED') return request;
+            if (!request || request.status === 'COMPLETED') return { updated: request, alreadyCompleted: true };
 
             const wallet = await tx.staffWallet.findUnique({ where: { staffId: request.staffId } });
             if (!wallet) throw new BadRequestException('Wallet not found at withdrawal completion');
@@ -136,11 +147,28 @@ export class StaffPayoutService {
                 },
             });
 
-            return tx.staffPayoutRequest.update({
+            const updated = await tx.staffPayoutRequest.update({
                 where: { id: request.id },
                 data: { status: 'COMPLETED', processedAt: new Date(), transactionId: transaction.id },
             });
+            return { updated, alreadyCompleted: false };
         });
+
+        // Logged after commit, and only for a genuine first-time
+        // completion -- not the idempotent short-circuit above, which
+        // would otherwise duplicate the log entry for the same event.
+        if (!result.alreadyCompleted && result.updated) {
+            await this.payrollAuditService.log({
+                action: 'WITHDRAWAL_COMPLETED',
+                entityType: 'StaffPayoutRequest',
+                entityId: payoutRequestId,
+                staffId: result.updated.staffId,
+                note: `Paystack transfer ${reference}`,
+                after: { status: 'COMPLETED', amount: result.updated.amount },
+            });
+        }
+
+        return result.updated;
     }
 
     async listMyWithdrawals(staffId: string) {
@@ -173,12 +201,42 @@ export class StaffPayoutService {
 
     // -- Admin views --------------------------------------------------------
 
-    async adminListWithdrawals(status?: string) {
-        return this.prisma.staffPayoutRequest.findMany({
-            where: status ? { status: status as any } : undefined,
-            include: { staff: { select: { id: true, name: true, staffCode: true } } },
-            orderBy: { createdAt: 'desc' },
-        });
+    /**
+     * Dev Feedback Round 4, items #22-24: "fully filterable" -- status
+     * alone previously. Adds staffId, branch (via the staff relation,
+     * same pattern as leave.service.ts's own locationId filter),
+     * createdAt date range (not processedAt -- a still-pending request
+     * has no processedAt yet, and would silently drop out of any
+     * processedAt-based range filter), and real pagination, since this
+     * had none at all before.
+     */
+    async adminListWithdrawals(filters: { status?: string; staffId?: string; locationId?: string; from?: string; to?: string; page?: number; limit?: number }) {
+        const page = filters.page ?? 1;
+        const limit = filters.limit ?? 50;
+        const where: any = {
+            ...(filters.status && { status: filters.status }),
+            ...(filters.staffId && { staffId: filters.staffId }),
+            ...(filters.locationId && { staff: { locationId: filters.locationId } }),
+            ...((filters.from || filters.to) && {
+                createdAt: {
+                    ...(filters.from && { gte: new Date(filters.from) }),
+                    ...(filters.to && { lte: new Date(filters.to) }),
+                },
+            }),
+        };
+
+        const [data, total] = await Promise.all([
+            this.prisma.staffPayoutRequest.findMany({
+                where,
+                include: { staff: { select: { id: true, name: true, staffCode: true, location: { select: { id: true, name: true } } } } },
+                orderBy: { createdAt: 'desc' },
+                skip: (page - 1) * limit,
+                take: limit,
+            }),
+            this.prisma.staffPayoutRequest.count({ where }),
+        ]);
+
+        return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
     }
 
     async adminDashboardStats() {

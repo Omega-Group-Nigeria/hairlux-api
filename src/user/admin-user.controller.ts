@@ -26,7 +26,10 @@ import { UserService } from './user.service';
 import type { CustomerLifecycle, CustomerValue } from '../common/utils/customer-status.util';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Permission } from '../auth/decorators/permission.decorator';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { UserRole } from '@prisma/client';
 import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
 import { UpdateUserStatusDto } from './dto/update-user-status.dto';
@@ -39,13 +42,13 @@ import { PromoteInfluencerDto } from '../influencer/dto/promote-influencer.dto';
 @ApiTags('Admin - Users')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/users')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminUserController {
   constructor(
     private readonly userService: UserService,
     private readonly influencerService: InfluencerService,
-  ) {}
+  ) { }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -212,12 +215,14 @@ export class AdminUserController {
     status: 403,
     description: 'Forbidden - Admin access required',
   })
+  @Permission(PERMISSIONS.USERS_READ)
   async getAllUsers(@Query() queryDto: AdminQueryUsersDto) {
     return this.userService.findAllUsers(queryDto);
   }
 
   @Get('customers')
   @ApiOperation({ summary: 'The Users page (Website/App customers) — full list, searchable and filterable by signup source, activity, spending, service, branch, and lifecycle/value' })
+  @Permission(PERMISSIONS.USERS_READ)
   async findAllCustomerUsers(
     @Query('q') q?: string,
     @Query('branchIds') branchIds?: string,
@@ -268,6 +273,7 @@ export class AdminUserController {
 
   @Get('customers/performance')
   @ApiOperation({ summary: 'Performance cards for the Users page — computed over the same filters as the customer list, so cards and table always agree' })
+  @Permission(PERMISSIONS.USERS_READ)
   async getCustomerUsersPerformance(
     @Query('q') q?: string,
     @Query('branchIds') branchIds?: string,
@@ -314,6 +320,7 @@ export class AdminUserController {
 
   @Get('customers/:id/profile')
   @ApiOperation({ summary: "A single customer's full profile and booking history (Users page drill-down)" })
+  @Permission(PERMISSIONS.USERS_READ)
   async getCustomerUserProfile(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.userService.getCustomerUserProfile(id);
     return { success: true, message: 'Customer profile retrieved successfully', data };
@@ -348,6 +355,7 @@ export class AdminUserController {
       },
     },
   })
+  @Permission(PERMISSIONS.USERS_READ)
   async searchUsers(@Query('email') email: string) {
     const data = await this.userService.searchByEmail(email ?? '');
     return { success: true, message: 'Users found', data };
@@ -447,6 +455,7 @@ export class AdminUserController {
     status: 403,
     description: 'Forbidden - Admin access required',
   })
+  @Permission(PERMISSIONS.USERS_READ)
   async getUserDetails(@Param('id') id: string) {
     return this.userService.findUserDetailsAdmin(id);
   }
@@ -480,6 +489,7 @@ export class AdminUserController {
     },
   })
   @ApiResponse({ status: 404, description: 'User or wallet not found' })
+  @Permission(PERMISSIONS.USERS_VIEW_WALLET)
   async getUserTransactions(
     @Param('id') id: string,
     @Query() query: GetTransactionsDto,
@@ -525,6 +535,7 @@ export class AdminUserController {
     status: 403,
     description: 'Forbidden - Admin access required',
   })
+  @Permission(PERMISSIONS.USERS_SUSPEND)
   async updateUserStatus(
     @Param('id') id: string,
     @Body() updateStatusDto: UpdateUserStatusDto,
@@ -570,6 +581,7 @@ export class AdminUserController {
     status: 409,
     description: 'User is already an active influencer',
   })
+  @Permission(PERMISSIONS.INFLUENCERS_CREATE)
   async makeInfluencer(
     @Param('userId', ParseUUIDPipe) userId: string,
     @Body() dto: PromoteInfluencerDto,
@@ -592,6 +604,7 @@ export class AdminUserController {
   @ApiParam({ name: 'userId', description: 'User ID (UUID)' })
   @ApiResponse({ status: 200, description: 'Influencer demoted successfully' })
   @ApiResponse({ status: 404, description: 'User is not an influencer' })
+  @Permission(PERMISSIONS.INFLUENCERS_DELETE)
   async removeInfluencer(@Param('userId', ParseUUIDPipe) userId: string) {
     await this.influencerService.demoteUser(userId);
     return { success: true, message: 'Influencer demoted successfully' };

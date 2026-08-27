@@ -28,6 +28,25 @@ type PendingTransition = {
 
 const BATCH_SIZE = 200;
 
+// Dev Feedback Round 4, item #8: job now polls every 15 minutes instead of
+// once daily, so a template/step's optional send-time window can actually
+// be honored without waiting up to 24h for the next run.
+const POLLING_INTERVAL_MINUTES = 15;
+
+/**
+ * "At or after" semantics, not a narrow window -- once the configured
+ * time-of-day has passed for today, stays eligible for the rest of the
+ * day. Deliberately robust to a missed run (brief downtime, etc.): a
+ * narrow window would silently push a missed send to tomorrow, which is
+ * worse than sending a few minutes late on the next poll.
+ */
+function isPastSendTimeToday(sendHour: number | null, sendMinute: number | null, now: Date): boolean {
+    if (sendHour === null || sendHour === undefined) return true; // no window configured -- unchanged, original behavior
+    const configuredMinutesSinceMidnight = sendHour * 60 + (sendMinute ?? 0);
+    const nowMinutesSinceMidnight = now.getHours() * 60 + now.getMinutes();
+    return nowMinutesSinceMidnight >= configuredMinutesSinceMidnight;
+}
+
 @Injectable()
 export class LifecycleCampaignSendService {
     private readonly logger = new Logger(LifecycleCampaignSendService.name);
@@ -42,18 +61,22 @@ export class LifecycleCampaignSendService {
     ) { }
 
     /**
-     * Runs daily. Detection-only vs. send are deliberately two separate
-     * crons (CustomerLifecycleService vs. this one) so a slow/failing send
-     * run can never block tomorrow's detection from running on schedule.
+     * Detection-only vs. send are deliberately two separate crons
+     * (CustomerLifecycleService vs. this one) so a slow/failing send run
+     * can never block tomorrow's detection from running on schedule.
      * A transition here is left UNPROCESSED (processedAt stays null) as
-     * long as at least one matching, enabled template is still inside its
-     * own delayDays window -- it gets picked up again on a future run
-     * once that window passes, without re-attempting whatever already has
-     * a LifecycleCampaignSend row (that unique constraint is the guard
-     * against ever double-sending the same template for the same
-     * transition).
+     * long as at least one matching, enabled template OR sequence step is
+     * still waiting on its own delay/send-time window -- it gets picked
+     * up again on a future run once that window passes, without
+     * re-attempting whatever already has a send row (the unique
+     * constraints on LifecycleCampaignSend/LifecycleCampaignSequenceSend
+     * are the guard against ever double-sending).
+     *
+     * Dev Feedback Round 4, item #8: now runs every 15 minutes instead of
+     * once daily, so per-template/per-step send-time windows can actually
+     * be honored without a up-to-24h delay.
      */
-    @Cron('0 2 * * *', { timeZone: 'Africa/Lagos' })
+    @Cron(`*/${POLLING_INTERVAL_MINUTES} * * * *`, { timeZone: 'Africa/Lagos' })
     async processPendingTransitions() {
         const startedAt = Date.now();
         let cursor: string | undefined;
@@ -93,12 +116,16 @@ export class LifecycleCampaignSendService {
         const templates = await this.prisma.lifecycleCampaignTemplate.findMany({
             where: { targetLifecycle: transition.toLifecycle, isEnabled: true },
         });
+        const sequence = await this.prisma.lifecycleCampaignSequence.findFirst({
+            where: { targetLifecycle: transition.toLifecycle, isEnabled: true },
+            include: { steps: { orderBy: { stepOrder: 'asc' } } },
+        });
 
-        if (!templates.length) {
-            // No template configured for this lifecycle at all -- a terminal
+        if (!templates.length && !sequence) {
+            // Nothing configured for this lifecycle at all -- a terminal
             // state, not a "waiting" one. Never re-evaluated again unless an
-            // admin later adds a matching template, which a fresh transition
-            // would then pick up going forward.
+            // admin later adds a matching template/sequence, which a fresh
+            // transition would then pick up going forward.
             await this.prisma.customerLifecycleTransition.update({
                 where: { id: transition.id },
                 data: { processedAt: new Date() },
@@ -109,6 +136,7 @@ export class LifecycleCampaignSendService {
         const subject = await this.resolveSubject(transition);
         let attempts = 0;
         let anyStillWaiting = false;
+        const now = new Date();
 
         for (const template of templates) {
             const existing = await this.prisma.lifecycleCampaignSend.findUnique({
@@ -116,14 +144,21 @@ export class LifecycleCampaignSendService {
             });
             if (existing) continue; // already handled -- never re-attempt
 
-            const daysSinceDetected = (Date.now() - transition.detectedAt.getTime()) / 86400000;
-            if (daysSinceDetected < template.delayDays) {
+            const daysSinceDetected = (now.getTime() - transition.detectedAt.getTime()) / 86400000;
+            if (daysSinceDetected < template.delayDays || !isPastSendTimeToday(template.sendHour, template.sendMinute, now)) {
                 anyStillWaiting = true;
                 continue; // not yet time -- leave unhandled, re-check on a future run
             }
 
             attempts += 1;
             await this.attemptSend(transition, template, subject);
+        }
+
+        if (sequence) {
+            const stepAttempted = await this.handleSequence(transition, sequence, subject, now);
+            if (stepAttempted === 'attempted') attempts += 1;
+            if (stepAttempted === 'waiting') anyStillWaiting = true;
+            // 'complete' and 'skipped-cooldown-or-consent-terminal' contribute nothing further to wait on.
         }
 
         if (!anyStillWaiting) {
@@ -134,6 +169,130 @@ export class LifecycleCampaignSendService {
         }
 
         return attempts;
+    }
+
+    /**
+     * Dev Feedback Round 4, item #9: advances one sequence by at most one
+     * step per run. The next step's delay is measured from when the
+     * PREVIOUS step was PROCESSED (createdAt on its send row -- always
+     * set, sent or not), never from sentAt (null on a skip) -- otherwise a
+     * consent-skipped or failed step would permanently stall every step
+     * after it. Cooldown is sequence-level (re-running the whole sequence
+     * too soon for the same person), checked once, up front, against the
+     * most recent SENT step of this sequence for this subject -- not
+     * per-step.
+     */
+    private async handleSequence(
+        transition: PendingTransition,
+        sequence: { id: string; cooldownDays: number; steps: { id: string; stepOrder: number; channel: CommunicationChannel; subject: string | null; bodyTemplate: string; delayAfterPreviousMinutes: number; sendHour: number | null; sendMinute: number | null }[] },
+        subject: ResolvedSubject,
+        now: Date,
+    ): Promise<'attempted' | 'waiting' | 'complete' | 'terminal'> {
+        if (!sequence.steps.length) return 'complete';
+
+        const sends = await this.prisma.lifecycleCampaignSequenceSend.findMany({
+            where: { transitionId: transition.id, sequenceId: sequence.id },
+            orderBy: { createdAt: 'asc' },
+        });
+        const lastProcessed = sends[sends.length - 1];
+
+        const nextStep = sequence.steps.find((s) => !sends.some((send: { stepId: string }) => send.stepId === s.id));
+        if (!nextStep) return 'complete'; // every step already has a send row, whatever the outcome
+
+        const recordSkip = (status: string) =>
+            this.prisma.lifecycleCampaignSequenceSend.create({
+                data: { transitionId: transition.id, sequenceId: sequence.id, stepId: nextStep.id, status },
+            });
+
+        // Cooldown check only applies before STEP 1 -- once a sequence has
+        // begun for this transition, it always runs to completion; cooldown
+        // governs whether a NEW run of the sequence starts, not whether an
+        // in-progress one continues.
+        if (nextStep.stepOrder === 1) {
+            const commSubject = this.toCommunicationSubject(subject);
+            const lastSentAnywhere = await this.prisma.lifecycleCampaignSequenceSend.findFirst({
+                where: {
+                    sequenceId: sequence.id,
+                    status: 'SENT',
+                    transition: subject.type === 'customer' ? { customerId: subject.id } : { userId: subject.id },
+                },
+                orderBy: { sentAt: 'desc' },
+            });
+            if (lastSentAnywhere?.sentAt) {
+                const daysSinceLastSequenceSend = (now.getTime() - lastSentAnywhere.sentAt.getTime()) / 86400000;
+                if (daysSinceLastSequenceSend < sequence.cooldownDays) {
+                    await recordSkip('SKIPPED_COOLDOWN');
+                    return 'terminal';
+                }
+            }
+        }
+
+        // Delay basis: step 1 counts from the lifecycle transition itself
+        // (matching template semantics); step 2+ counts from when the
+        // PREVIOUS step was processed, not the original transition -- this
+        // is what makes it genuinely sequential rather than three parallel
+        // delays off the same trigger.
+        const delayBasisTime = nextStep.stepOrder === 1 ? transition.detectedAt : (lastProcessed?.createdAt ?? transition.detectedAt);
+        const minutesSinceBasis = (now.getTime() - delayBasisTime.getTime()) / 60000;
+        if (minutesSinceBasis < nextStep.delayAfterPreviousMinutes || !isPastSendTimeToday(nextStep.sendHour, nextStep.sendMinute, now)) {
+            return 'waiting';
+        }
+
+        await this.attemptSequenceStep(transition, sequence.id, nextStep, subject);
+        return 'attempted';
+    }
+
+    private async attemptSequenceStep(
+        transition: PendingTransition,
+        sequenceId: string,
+        step: { id: string; channel: CommunicationChannel; subject: string | null; bodyTemplate: string },
+        subject: ResolvedSubject,
+    ) {
+        const commSubject = this.toCommunicationSubject(subject);
+        const recordSkip = (status: string) =>
+            this.prisma.lifecycleCampaignSequenceSend.create({
+                data: { transitionId: transition.id, sequenceId, stepId: step.id, status },
+            });
+
+        if (step.channel === CommunicationChannel.PUSH && subject.type === 'customer') {
+            await recordSkip('SKIPPED_NO_CONTACT');
+            return;
+        }
+
+        const canSend = await this.communicationProfileService.canSend(commSubject, step.channel);
+        if (!canSend) {
+            await recordSkip('SKIPPED_NO_CONSENT');
+            return;
+        }
+
+        const stats = subject.type === 'customer'
+            ? (await getCustomerVisitStats(this.prisma, [subject.id])).get(subject.id)
+            : (await getUserVisitStats(this.prisma, [subject.id])).get(subject.id);
+        const rendered = this.renderTemplate(step.bodyTemplate, subject, stats?.lastVisitDate ?? null);
+        const messageWithFooter = this.appendUnsubscribeFooter(rendered, commSubject, step.channel);
+
+        try {
+            if (step.channel === CommunicationChannel.EMAIL) {
+                if (!subject.email) { await recordSkip('SKIPPED_NO_CONTACT'); return; }
+                await this.mailService.sendGenericEmail(subject.email, step.subject || 'Hairlux Salon & Spa', messageWithFooter);
+            } else if (step.channel === CommunicationChannel.SMS) {
+                if (!subject.phone) { await recordSkip('SKIPPED_NO_CONTACT'); return; }
+                const sent = await this.smsService.sendSms(subject.phone, messageWithFooter);
+                if (!sent) { await recordSkip('FAILED'); return; }
+            } else if (step.channel === CommunicationChannel.PUSH) {
+                await this.pushService.sendToUser(subject.id, { title: step.subject || 'Hairlux Salon & Spa', body: rendered });
+            }
+
+            await this.prisma.lifecycleCampaignSequenceSend.create({
+                data: { transitionId: transition.id, sequenceId, stepId: step.id, status: 'SENT', sentAt: new Date() },
+            });
+            await this.communicationProfileService.recordDeliveryStatus(commSubject, step.channel, 'SENT');
+        } catch (err) {
+            this.logger.error(
+                `Lifecycle campaign sequence send failed (transition ${transition.id}, step ${step.id}): ${err instanceof Error ? err.message : String(err)}`,
+            );
+            await recordSkip('FAILED');
+        }
     }
 
     private async resolveSubject(transition: PendingTransition): Promise<ResolvedSubject> {

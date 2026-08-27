@@ -46,38 +46,58 @@ export class BranchFinanceService {
      * For the summary/read path: admin gets `null` (no branch filter — every
      * branch, matching how Booking Overview's own "all branches" mode omits
      * the filter entirely rather than looping branches) when they haven't
-     * picked one. Everyone else is always locked to their own branch — "all
-     * branches" is never available to them, per spec.
+     * picked one. Everyone else gets the SET of branches they can access --
+     * always including their own primary branch, plus (Dev Feedback Round
+     * 4, item #25) any additional branches explicitly granted via
+     * StaffManagedFinanceBranch. A single-branch user is just the
+     * degenerate case of a set of one, so every downstream query filters
+     * on "branchId IN (...)" uniformly rather than needing two code paths.
      */
-    private async resolveBranchFilter(userId: string, isAdmin: boolean, requestedBranchId: string | undefined): Promise<string | null> {
+    private async resolveBranchFilter(userId: string, isAdmin: boolean, requestedBranchId: string | undefined): Promise<string[] | null> {
         if (isAdmin) {
             if (!requestedBranchId) return null;
             const branch = await this.prisma.staffLocation.findUnique({ where: { id: requestedBranchId } });
             if (!branch) throw new NotFoundException('Branch not found');
-            return requestedBranchId;
+            return [requestedBranchId];
         }
 
-        const staff = await this.prisma.staff.findUnique({ where: { userId }, select: { locationId: true } });
+        const staff = await this.prisma.staff.findUnique({
+            where: { userId },
+            select: { id: true, locationId: true, additionalFinanceBranches: { select: { branchId: true } } },
+        });
         if (!staff?.locationId) {
             throw new ForbiddenException('Your staff record has no assigned branch');
         }
-        if (requestedBranchId && requestedBranchId !== staff.locationId) {
-            throw new ForbiddenException('You can only view or submit for your own branch');
+        const accessible = [staff.locationId, ...staff.additionalFinanceBranches.map((b: { branchId: string }) => b.branchId)];
+
+        if (requestedBranchId) {
+            if (!accessible.includes(requestedBranchId)) {
+                throw new ForbiddenException('You do not have access to this branch');
+            }
+            return [requestedBranchId];
         }
-        return staff.locationId;
+        return accessible;
     }
 
-    /** For the reconciliation-submit path: a cash count is inherently per-branch, so "all branches" is never valid here. */
+    /**
+     * For the reconciliation-submit path: a cash count is inherently
+     * per-branch, so "all branches"/a multi-branch set is never valid
+     * here -- a multi-branch manager MUST explicitly say which branch
+     * they're submitting for.
+     */
     private async resolveBranchIdRequired(userId: string, isAdmin: boolean, requestedBranchId: string | undefined): Promise<string> {
         const resolved = await this.resolveBranchFilter(userId, isAdmin, requestedBranchId);
-        if (!resolved) {
+        if (!resolved || resolved.length === 0) {
             throw new BadRequestException('branchId is required to submit a cash count');
         }
-        return resolved;
+        if (resolved.length > 1) {
+            throw new BadRequestException('You manage more than one branch — specify which branch this submission is for');
+        }
+        return resolved[0];
     }
 
     async getDailySummary(userId: string, isAdmin: boolean, requestedBranchId: string | undefined, dateFromStr: string | undefined, dateToStr: string | undefined) {
-        const branchId = await this.resolveBranchFilter(userId, isAdmin, requestedBranchId);
+        const branchIds = await this.resolveBranchFilter(userId, isAdmin, requestedBranchId);
 
         // No date filter given at all -> all time, matching Booking Overview's
         // own default when no date filter is applied. Gap-filling every empty
@@ -109,7 +129,7 @@ export class BranchFinanceService {
             this.prisma.salonBooking.findMany({
                 where: {
                     status: 'COMPLETED',
-                    ...(branchId && { branchId }),
+                    ...(branchIds && { branchId: { in: branchIds } }),
                     completedAt: { not: null, ...(dateRangeFilter ?? {}) },
                 },
                 select: { totalAmount: true, completedAt: true },
@@ -123,7 +143,7 @@ export class BranchFinanceService {
             this.prisma.booking.findMany({
                 where: {
                     status: 'COMPLETED',
-                    ...(branchId && { branchId }),
+                    ...(branchIds && { branchId: { in: branchIds } }),
                     // serviceCompletedAt is only reliably populated going forward (a
                     // prior bug meant WALK_IN completions never set it -- now fixed
                     // at the source, but existing historical rows are still null).
@@ -141,7 +161,7 @@ export class BranchFinanceService {
             }),
             this.prisma.productSale.findMany({
                 where: {
-                    ...(branchId && { branchId }),
+                    ...(branchIds && { branchId: { in: branchIds } }),
                     ...(dateRangeFilter && { createdAt: dateRangeFilter }),
                 },
                 select: { totalAmount: true, createdAt: true },
@@ -149,21 +169,21 @@ export class BranchFinanceService {
             this.prisma.stockMovement.findMany({
                 where: {
                     type: { in: ['RECEIVED', 'TRANSFER_IN', 'TRANSFER_OUT'] },
-                    ...(branchId && { item: { branchId } }),
+                    ...(branchIds && { item: { branchId: { in: branchIds } } }),
                     ...(dateRangeFilter && { createdAt: dateRangeFilter }),
                 },
                 select: { type: true, quantityDelta: true, createdAt: true },
             }),
             this.prisma.dailyCashReconciliation.findMany({
                 where: {
-                    ...(branchId && { branchId }),
+                    ...(branchIds && { branchId: { in: branchIds } }),
                     ...(dateOnlyRangeFilter && { date: dateOnlyRangeFilter }),
                 },
             }),
         ]);
 
         this.logger.log(
-            `getDailySummary: branchId=${branchId ?? '(all branches)'} dateFrom=${dateFrom ?? '(none)'} dateTo=${dateTo ?? '(none)'} -> ` +
+            `getDailySummary: branchIds=${branchIds ? branchIds.join(',') : '(all branches)'} dateFrom=${dateFrom ?? '(none)'} dateTo=${dateTo ?? '(none)'} -> ` +
             `salonBookings=${salonBookings.length} selfServiceBookings=${selfServiceBookings.length} productSales=${productSales.length} stockMovements=${stockMovements.length}`,
         );
 
@@ -179,14 +199,14 @@ export class BranchFinanceService {
         // raw data — the fastest way to tell "there's genuinely no completed
         // activity for this branch yet" apart from "the branchId being
         // filtered on doesn't match what's actually stored on these records".
-        if (branchId && salonBookings.length === 0 && selfServiceBookings.length === 0 && productSales.length === 0) {
+        if (branchIds && salonBookings.length === 0 && selfServiceBookings.length === 0 && productSales.length === 0) {
             const [sampleSalonBranches, sampleBookingBranches, sampleSaleBranches] = await Promise.all([
                 this.prisma.salonBooking.findMany({ where: { status: 'COMPLETED' }, select: { branchId: true }, distinct: ['branchId'], take: 10 }),
                 this.prisma.booking.findMany({ where: { status: 'COMPLETED' }, select: { branchId: true }, distinct: ['branchId'], take: 10 }),
                 this.prisma.productSale.findMany({ select: { branchId: true }, distinct: ['branchId'], take: 10 }),
             ]);
             this.logger.warn(
-                `getDailySummary: branch ${branchId} returned zero results across all sources. Distinct branchIds actually present -> ` +
+                `getDailySummary: branchIds ${branchIds.join(',')} returned zero results across all sources. Distinct branchIds actually present -> ` +
                 `salonBooking=[${sampleSalonBranches.map((b) => b.branchId).join(', ')}] ` +
                 `booking=[${sampleBookingBranches.map((b) => b.branchId ?? 'null').join(', ')}] ` +
                 `productSale=[${sampleSaleBranches.map((b) => b.branchId).join(', ')}]`,
@@ -287,11 +307,38 @@ export class BranchFinanceService {
             { salonBookingRevenue: 0, selfServiceBookingRevenue: 0, selfServiceWalletRevenue: 0, productSaleRevenue: 0, totalRevenue: 0, expectedCash: 0, stockReceived: 0, stockTransferredIn: 0, stockTransferredOut: 0 },
         );
 
-        return { branchId, allBranches: branchId === null, dateFrom: dateFrom ?? null, dateTo: dateTo ?? null, totals, days };
+        return { branchIds, allBranches: branchIds === null, dateFrom: dateFrom ?? null, dateTo: dateTo ?? null, totals, days };
+    }
+
+    /**
+     * Dev Feedback Round 4, items #25-29: "the user can only access last
+     * day" + "daily submission deadline (12pm lock)". The only valid
+     * date is WAT-yesterday (the most recently fully-completed day --
+     * today's revenue isn't final until closing, so same-day
+     * reconciliation wouldn't make sense), and that window itself closes
+     * at noon WAT today. Applied uniformly to admin too -- the spec
+     * doesn't carve out an exception, and introducing an unstated one
+     * would be a surprising, undocumented gap in the rule.
+     */
+    private assertWithinSubmissionWindow(dateStr: string, now: Date) {
+        const todayWat = toWatDateStr(now);
+        const yesterdayWat = toWatDateStr(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+
+        if (dateStr !== yesterdayWat) {
+            throw new BadRequestException(
+                `You can only submit for ${yesterdayWat} (yesterday) -- ${dateStr === todayWat ? "today's revenue isn't final yet" : 'this date is outside the submission window'}.`,
+            );
+        }
+
+        const noonToday = watDateAtTime(todayWat, '12:00');
+        if (now.getTime() >= noonToday.getTime()) {
+            throw new BadRequestException(`The submission window for ${yesterdayWat} closed at 12:00pm today.`);
+        }
     }
 
     async submitReconciliation(userId: string, isAdmin: boolean, dto: SubmitReconciliationDto) {
         const branchId = await this.resolveBranchIdRequired(userId, isAdmin, dto.branchId);
+        this.assertWithinSubmissionWindow(dto.date, new Date());
 
         // Snapshot the expected figures for this single date right now, rather
         // than relying on the caller to have fetched them separately — avoids a
@@ -302,6 +349,16 @@ export class BranchFinanceService {
         const staff = await this.prisma.staff.findUnique({ where: { userId }, select: { id: true } });
 
         const variance = dto.cashCounted - day.expectedCash;
+
+        // Auto-detected above; a non-zero variance must never be
+        // submitted silently -- notes here is the ONLY place this can be
+        // enforced, since expectedCash (and therefore variance) is
+        // computed server-side and isn't part of the request body at all.
+        if (variance !== 0 && !dto.notes?.trim()) {
+            throw new BadRequestException(
+                `There is a variance of ${variance > 0 ? '+' : ''}${variance.toFixed(2)} between cash counted and expected cash -- a reason is required before this can be submitted.`,
+            );
+        }
 
         const record = await this.prisma.dailyCashReconciliation.upsert({
             where: { branchId_date: { branchId, date: new Date(dto.date) } },

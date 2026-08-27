@@ -15,6 +15,24 @@ class EditBookingServiceLineDto {
 }
 
 /**
+ * Dev Feedback Round 4, item #3: products stay a flat, booking-level list
+ * -- deliberately not attached to a specific service line, per the
+ * confirmed decision to keep the current architecture rather than add a
+ * new relation.
+ */
+class EditBookingInventoryLineDto {
+    @ApiPropertyOptional()
+    @IsUUID()
+    itemId: string;
+
+    @ApiPropertyOptional({ default: 1 })
+    @IsOptional()
+    @IsInt()
+    @Min(1)
+    quantity?: number;
+}
+
+/**
  * Full edit — Scheduled/In Progress bookings only. Every field optional
  * (only what's actually being changed needs to be sent); re-validated
  * against the same rules create() enforces (past-date check, business-hours
@@ -54,6 +72,16 @@ export class EditSalonBookingDto {
     @ValidateNested({ each: true })
     @Type(() => EditBookingServiceLineDto)
     services?: EditBookingServiceLineDto[];
+
+    @ApiPropertyOptional({
+        type: [EditBookingInventoryLineDto],
+        description: 'Replaces the booking\'s full product list -- send every product that should remain, not just what changed. Omit entirely to leave products untouched; send an empty array to clear all products.',
+    })
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => EditBookingInventoryLineDto)
+    inventoryItems?: EditBookingInventoryLineDto[];
 
     @ApiPropertyOptional()
     @IsOptional()

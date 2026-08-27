@@ -5,6 +5,7 @@ import { LeaveService } from 'src/leave/leave.service';
 import { haversineDistanceMeters } from '../common/utils/geo.util';
 import { watDateAtTime, watTodayDateStr } from '../common/utils/wat-time.util';
 import { PrismaService } from '../prisma/prisma.service';
+import { SystemAuditService } from '../common/services/system-audit.service';
 import { ClockInDto } from './dto/clock-in.dto';
 import { ClockOutDto } from './dto/clock-out.dto';
 import { CorrectAttendanceDto } from './dto/correct-attendance.dto';
@@ -25,6 +26,7 @@ export class AttendanceService {
     constructor(private prisma: PrismaService,
         private leaveService: LeaveService,
         private workCalendarService: StaffWorkCalendarService,
+        private systemAuditService: SystemAuditService,
     ) { }
     /**
      * Branch-specific exception wins over a company-wide one for the same
@@ -319,12 +321,13 @@ export class AttendanceService {
     }
 
     async findAllAdmin(query: QueryAttendanceDto) {
-        const { staffId, locationId, date, from, to, page = 1, limit = 20 } = query;
+        const { staffId, locationId, date, status, from, to, page = 1, limit = 20 } = query;
         const skip = (page - 1) * limit;
 
         const where: Prisma.AttendanceRecordWhereInput = {
             ...(staffId && { staffId }),
             ...(locationId && { locationId }),
+            ...(status && { status }),
             ...(date
                 ? { date: new Date(date) }
                 : (from || to) && {
@@ -369,7 +372,7 @@ export class AttendanceService {
             ? await this.calculateAbsentFee(record.staffId, dateStr)
             : null;
 
-        return this.prisma.attendanceRecord.update({
+        const updated = await this.prisma.attendanceRecord.update({
             where: { id: recordId },
             data: {
                 ...(dto.checkInAt !== undefined && { checkInAt: new Date(dto.checkInAt) }),
@@ -382,6 +385,22 @@ export class AttendanceService {
                 adjustedById,
             },
         });
+
+        // Dev Feedback Round 4, item #47: an admin directly overriding a
+        // staff member's attendance status/fee is exactly the kind of
+        // sensitive, financially-consequential action this log exists for.
+        await this.systemAuditService.log({
+            action: 'ATTENDANCE_CORRECTED',
+            entityType: 'AttendanceRecord',
+            entityId: recordId,
+            staffId: record.staffId,
+            actorId: adjustedById,
+            note: dto.reason,
+            before: { status: record.status, absentFeeAmount: record.absentFeeAmount, checkInAt: record.checkInAt, checkOutAt: record.checkOutAt },
+            after: { status: updated.status, absentFeeAmount: updated.absentFeeAmount, checkInAt: updated.checkInAt, checkOutAt: updated.checkOutAt },
+        });
+
+        return updated;
     }
 
     // Handles the edge case from clockIn: staff whose battery died, or who forgot
@@ -466,6 +485,16 @@ export class AttendanceService {
                         data: { status: AttendanceStatus.ABSENT, absentFeeAmount },
                     });
                     markedNoCheckout += 1;
+                    // Dev Feedback Round 4, item #47: system-initiated, no
+                    // human actor -- actorId deliberately omitted.
+                    await this.systemAuditService.log({
+                        action: 'ABSENT_FEE_APPLIED',
+                        entityType: 'AttendanceRecord',
+                        entityId: existing.id,
+                        staffId: staff.id,
+                        note: `Auto-marked absent for ${yesterday} -- checked in but never checked out`,
+                        after: { status: AttendanceStatus.ABSENT, absentFeeAmount },
+                    });
                 }
                 continue; // already accounted for, one way or another
             }
@@ -488,7 +517,7 @@ export class AttendanceService {
             if (onApprovedLeave) continue;
 
             const absentFeeAmount = await this.calculateAbsentFee(staff.id, yesterday);
-            await this.prisma.attendanceRecord.create({
+            const created = await this.prisma.attendanceRecord.create({
                 data: {
                     staffId: staff.id,
                     locationId: staff.locationId,
@@ -499,6 +528,14 @@ export class AttendanceService {
                 },
             });
             marked += 1;
+            await this.systemAuditService.log({
+                action: 'ABSENT_FEE_APPLIED',
+                entityType: 'AttendanceRecord',
+                entityId: created.id,
+                staffId: staff.id,
+                note: `Auto-marked absent for ${yesterday} -- no-show`,
+                after: { status: AttendanceStatus.ABSENT, absentFeeAmount },
+            });
         }
 
         if (marked > 0 || markedNoCheckout > 0) {

@@ -16,6 +16,8 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { SystemAuditService } from '../common/services/system-audit.service';
+import { classifyCustomerLifecycle, classifyCustomerValue, getUserVisitStats, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
 import { CreateDiscountDto } from './dto/create-discount.dto';
 import { UpdateDiscountDto } from './dto/update-discount.dto';
 import { QueryDiscountsDto } from './dto/query-discounts.dto';
@@ -30,11 +32,12 @@ export class DiscountService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
-  ) {}
+    private systemAuditService: SystemAuditService,
+  ) { }
 
   // ─── Admin ───────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateDiscountDto) {
+  async create(dto: CreateDiscountDto, actorId?: string) {
     const existing = await this.prisma.discountCode.findUnique({
       where: { code: dto.code },
     });
@@ -51,12 +54,24 @@ export class DiscountService {
         startsAt: dto.startsAt ? new Date(dto.startsAt) : null,
         expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
         maxUses: dto.maxUses ?? null,
+        targetBranchIds: dto.targetBranchIds ?? [],
+        targetLifecycleStages: dto.targetLifecycleStages ?? [],
+        targetValueTiers: dto.targetValueTiers ?? [],
+        targetCampaignTemplateId: dto.targetCampaignTemplateId,
+        targetCampaignSequenceId: dto.targetCampaignSequenceId,
       },
     });
 
     this.logger.log(
       `Discount code created: ${discount.code} (${discount.percentage}%)`,
     );
+    await this.systemAuditService.log({
+      action: 'DISCOUNT_CREATED',
+      entityType: 'DiscountCode',
+      entityId: discount.id,
+      actorId,
+      after: { code: discount.code, percentage: discount.percentage, isActive: discount.isActive },
+    });
     return discount;
   }
 
@@ -96,8 +111,8 @@ export class DiscountService {
     return discount;
   }
 
-  async update(id: string, dto: UpdateDiscountDto) {
-    await this.findOne(id); // ensures it exists
+  async update(id: string, dto: UpdateDiscountDto, actorId?: string) {
+    const before = await this.findOne(id); // ensures it exists
 
     // Uniqueness check if code is being changed
     if (dto.code !== undefined) {
@@ -125,22 +140,50 @@ export class DiscountService {
           expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
         }),
         ...(dto.maxUses !== undefined && { maxUses: dto.maxUses }),
+        ...(dto.targetBranchIds !== undefined && { targetBranchIds: dto.targetBranchIds }),
+        ...(dto.targetLifecycleStages !== undefined && { targetLifecycleStages: dto.targetLifecycleStages }),
+        ...(dto.targetValueTiers !== undefined && { targetValueTiers: dto.targetValueTiers }),
+        ...(dto.targetCampaignTemplateId !== undefined && { targetCampaignTemplateId: dto.targetCampaignTemplateId }),
+        ...(dto.targetCampaignSequenceId !== undefined && { targetCampaignSequenceId: dto.targetCampaignSequenceId }),
       },
     });
 
     this.logger.log(`Discount code updated: ${discount.code}`);
+    await this.systemAuditService.log({
+      action: 'DISCOUNT_UPDATED',
+      entityType: 'DiscountCode',
+      entityId: id,
+      actorId,
+      before: { code: before.code, percentage: before.percentage, isActive: before.isActive },
+      after: { code: discount.code, percentage: discount.percentage, isActive: discount.isActive },
+    });
     return discount;
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: string, actorId?: string) {
+    const discount = await this.findOne(id);
     await this.prisma.discountCode.delete({ where: { id } });
     this.logger.log(`Discount code deleted: ${id}`);
+    await this.systemAuditService.log({
+      action: 'DISCOUNT_DELETED',
+      entityType: 'DiscountCode',
+      entityId: id,
+      actorId,
+      before: { code: discount.code, percentage: discount.percentage },
+    });
   }
 
   // ─── Public (authenticated) ───────────────────────────────────────────────────
 
-  async validate(code: string, userId?: string) {
+  /**
+   * Dev Feedback Round 4, item #10: extended with branchId (needed for
+   * branch targeting) and full targeting enforcement. Every targeting
+   * dimension is skipped entirely when unset on the coupon (empty array
+   * / null), so an untouched coupon still costs nothing extra to
+   * validate -- the classification queries only run once ANY dimension
+   * that needs them is actually set.
+   */
+  async validate(code: string, userId?: string, branchId?: string) {
     const discount = await this.prisma.discountCode.findUnique({
       where: { code: code.trim().toUpperCase() },
       include: {
@@ -179,6 +222,92 @@ export class DiscountService {
       throw new BadRequestException(
         'This discount code has reached its usage limit',
       );
+    }
+
+    // Branch targeting
+    if (discount.targetBranchIds.length) {
+      if (!branchId || !discount.targetBranchIds.includes(branchId)) {
+        throw new BadRequestException('This discount code is not valid for this branch');
+      }
+    }
+
+    // Lifecycle stage / value tier / campaign-recipient targeting -- all
+    // need to know who's redeeming, so require userId once ANY of these
+    // dimensions is actually set on the coupon.
+    const needsSubjectCheck =
+      discount.targetLifecycleStages.length > 0 ||
+      discount.targetValueTiers.length > 0 ||
+      !!discount.targetCampaignTemplateId ||
+      !!discount.targetCampaignSequenceId;
+
+    if (needsSubjectCheck) {
+      if (!userId) {
+        throw new BadRequestException('This discount code requires an account to check eligibility');
+      }
+
+      if (discount.targetLifecycleStages.length || discount.targetValueTiers.length) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { createdAt: true } });
+        if (!user) throw new NotFoundException('Account not found');
+
+        const visitStats = (await getUserVisitStats(this.prisma, [userId])).get(userId);
+        const thresholds = await getCustomerClassificationThresholds(this.prisma);
+
+        if (discount.targetLifecycleStages.length) {
+          const stage = classifyCustomerLifecycle({
+            lastVisitDate: visitStats?.lastVisitDate ?? null,
+            completedVisitCount: visitStats?.visitCount ?? 0,
+            accountCreatedAt: user.createdAt,
+            thresholds: thresholds.lifecycle,
+          });
+          if (!discount.targetLifecycleStages.includes(stage)) {
+            throw new BadRequestException('This discount code is not available for your account');
+          }
+        }
+
+        if (discount.targetValueTiers.length) {
+          // No existing utility computes marketplace-Booking spend for a
+          // User (classifyCustomerValue elsewhere in this codebase is
+          // computed from the separate walk-in Customer/SalonBooking
+          // path) -- summed directly here, only when this dimension is
+          // actually set on the coupon.
+          const spendAgg = await this.prisma.booking.aggregate({
+            where: { userId, status: 'COMPLETED' },
+            _sum: { totalAmount: true },
+          });
+          const tier = classifyCustomerValue(Number(spendAgg._sum.totalAmount ?? 0), thresholds.value);
+          if (!discount.targetValueTiers.includes(tier)) {
+            throw new BadRequestException('This discount code is not available for your account');
+          }
+        }
+      }
+
+      // Campaign-recipient gating: must have an actual SENT record for the
+      // targeted template/sequence -- currently matching its target
+      // lifecycle stage is not enough, this checks they were genuinely sent it.
+      if (discount.targetCampaignTemplateId) {
+        const sent = await this.prisma.lifecycleCampaignSend.findFirst({
+          where: {
+            templateId: discount.targetCampaignTemplateId,
+            status: 'SENT',
+            transition: { userId },
+          },
+        });
+        if (!sent) {
+          throw new BadRequestException('This discount code is not available for your account');
+        }
+      }
+      if (discount.targetCampaignSequenceId) {
+        const sent = await this.prisma.lifecycleCampaignSequenceSend.findFirst({
+          where: {
+            sequenceId: discount.targetCampaignSequenceId,
+            status: 'SENT',
+            transition: { userId },
+          },
+        });
+        if (!sent) {
+          throw new BadRequestException('This discount code is not available for your account');
+        }
+      }
     }
 
     return {
@@ -358,10 +487,10 @@ export class DiscountService {
           ...c,
           influencer: c.influencer
             ? {
-                ...c.influencer,
-                name: influencerName,
-                email: c.influencer.user.email,
-              }
+              ...c.influencer,
+              name: influencerName,
+              email: c.influencer.user.email,
+            }
             : null,
           stats: {
             totalUsages: c._count.usages,
@@ -492,26 +621,26 @@ export class DiscountService {
 
     const settings = existing
       ? await this.prisma.influencerRewardSettings.update({
-          where: { id: existing.id },
-          data: {
-            ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-            ...(dto.rewardType !== undefined && { rewardType: dto.rewardType }),
-            ...(dto.rewardValue !== undefined && {
-              rewardValue: dto.rewardValue,
-            }),
-            ...(dto.minPurchaseAmount !== undefined && {
-              minPurchaseAmount: dto.minPurchaseAmount,
-            }),
-          },
-        })
+        where: { id: existing.id },
+        data: {
+          ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+          ...(dto.rewardType !== undefined && { rewardType: dto.rewardType }),
+          ...(dto.rewardValue !== undefined && {
+            rewardValue: dto.rewardValue,
+          }),
+          ...(dto.minPurchaseAmount !== undefined && {
+            minPurchaseAmount: dto.minPurchaseAmount,
+          }),
+        },
+      })
       : await this.prisma.influencerRewardSettings.create({
-          data: {
-            isActive: dto.isActive ?? false,
-            rewardType: dto.rewardType ?? ReferralRewardType.FIXED,
-            rewardValue: dto.rewardValue ?? 0,
-            minPurchaseAmount: dto.minPurchaseAmount ?? 0,
-          },
-        });
+        data: {
+          isActive: dto.isActive ?? false,
+          rewardType: dto.rewardType ?? ReferralRewardType.FIXED,
+          rewardValue: dto.rewardValue ?? 0,
+          minPurchaseAmount: dto.minPurchaseAmount ?? 0,
+        },
+      });
 
     await this.redis.del('influencer:reward-settings');
     this.logger.log('Influencer reward settings updated');

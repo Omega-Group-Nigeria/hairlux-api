@@ -1,9 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PayrollAuditService } from './payroll-audit.service';
 
 @Injectable()
 export class PayrollReleaseService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly payrollAuditService: PayrollAuditService,
+    ) { }
 
     async getSettings() {
         const existing = await this.prisma.payrollSettings.findFirst();
@@ -52,9 +56,57 @@ export class PayrollReleaseService {
             throw new BadRequestException('Only a period awaiting approval can be approved');
         }
 
-        return this.prisma.payrollPeriod.update({
+        const updated = await this.prisma.payrollPeriod.update({
             where: { id: periodId },
             data: { status: 'RELEASED', approvedAt: new Date(), approvedById, releasedAt: new Date(), releasedById: approvedById },
         });
+
+        await this.payrollAuditService.log({
+            action: 'PERIOD_APPROVED',
+            entityType: 'PayrollPeriod',
+            entityId: periodId,
+            actorId: approvedById,
+            before: { status: period.status },
+            after: { status: updated.status },
+        });
+
+        return updated;
+    }
+
+    /**
+     * Dev Feedback Round 4, item #22. Sends an AWAITING_RELEASE period
+     * back to DRAFT so it can be reviewed and corrected -- reuses the
+     * existing DRAFT status rather than introducing a new one, since
+     * PayrollEngineService.generatePayroll() already only runs against
+     * DRAFT periods and already upserts payslips (never duplicates them
+     * on a second run), so "back to Draft" already has everything needed
+     * to support a genuine correction workflow without any further
+     * state-machine changes. Gated by the PAYROLL_CORRECT permission at
+     * the controller layer -- deliberately a higher bar than ordinary
+     * PAYROLL_MANAGE access.
+     */
+    async requestCorrection(periodId: string, actorId: string | undefined, note: string | undefined) {
+        const period = await this.prisma.payrollPeriod.findUnique({ where: { id: periodId } });
+        if (!period) throw new NotFoundException('Payroll period not found');
+        if (period.status !== 'AWAITING_RELEASE') {
+            throw new BadRequestException('Only a period awaiting approval can be sent back for correction');
+        }
+
+        const updated = await this.prisma.payrollPeriod.update({
+            where: { id: periodId },
+            data: { status: 'DRAFT', generatedAt: null, generatedById: null },
+        });
+
+        await this.payrollAuditService.log({
+            action: 'SENT_FOR_CORRECTION',
+            entityType: 'PayrollPeriod',
+            entityId: periodId,
+            actorId,
+            note,
+            before: { status: period.status },
+            after: { status: updated.status },
+        });
+
+        return updated;
     }
 }
