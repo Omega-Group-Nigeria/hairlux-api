@@ -2146,6 +2146,8 @@ model Staff {
   payoutRequestsProcessed StaffPayoutRequest[]       @relation("StaffPayoutProcessedBy")
   payrollAuditActions     PayrollAuditLog[]          @relation("PayrollAuditActor")
   payrollAuditSubjectOf   PayrollAuditLog[]          @relation("PayrollAuditSubject")
+  systemAuditActions      SystemAuditLog[]           @relation("SystemAuditActor")
+  systemAuditSubjectOf    SystemAuditLog[]           @relation("SystemAuditSubject")
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -2406,6 +2408,38 @@ model PayrollAuditLog {
   @@index([staffId])
   @@index([createdAt])
   @@map("payroll_audit_logs")
+}
+
+// Dev Feedback Round 4, item #47: generic, system-wide audit trail for
+// sensitive actions OUTSIDE payroll (which has its own PayrollAuditLog
+// above) and roles/permissions (which already has RoleAuditLog) --
+// fines, campaign create/edit/delete, discount/coupon changes,
+// deletions across other modules, and any other sensitive action that
+// doesn't already have a dedicated log. Same shape as PayrollAuditLog,
+// deliberately kept separate from it rather than merged: payroll's
+// volume and query patterns (filtering by period, by staff) are
+// different enough from this catch-all's that a shared table would
+// need extra columns just to distinguish them.
+model SystemAuditLog {
+  id         String   @id @default(uuid())
+  action     String   // e.g. "LATE_PENALTY_APPLIED", "DISCOUNT_DELETED", "CAMPAIGN_TEMPLATE_CREATED"
+  entityType String   @map("entity_type") // e.g. "AttendanceRecord", "DiscountCode", "LifecycleCampaignTemplate"
+  entityId   String   @map("entity_id")
+  staffId    String?  @map("staff_id") // the staff member this action concerns, when applicable -- null for actions with no specific subject
+  actorId    String?  @map("actor_id") // nullable -- a system-initiated action (e.g. auto-applied late penalty) has no human actor
+  note       String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor Staff? @relation("SystemAuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  staff Staff? @relation("SystemAuditSubject", fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([staffId])
+  @@index([createdAt])
+  @@map("system_audit_logs")
 }
 
 model StaffWallet {

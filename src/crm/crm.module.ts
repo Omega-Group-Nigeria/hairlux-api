@@ -4,6 +4,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { MailModule } from '../mail/mail.module';
 import { SmsModule } from '../sms/sms.module';
 import { FcmModule } from '../beautician/fcm/fcm.module';
+import { StaffModule } from '../staff/staff.module';
 import { CustomerLifecycleService } from './customer-lifecycle.service';
 import { CommunicationProfileService } from './communication-profile.service';
 import { LifecycleCampaignTemplateService } from './lifecycle-campaign-template.service';
@@ -13,7 +14,7 @@ import { AdminLifecycleCampaignController } from './admin-lifecycle-campaign.con
 import { UnsubscribeController } from './unsubscribe.controller';
 
 @Module({
-    imports: [PrismaModule, MailModule, SmsModule, FcmModule, JwtModule.register({})],
+    imports: [PrismaModule, MailModule, SmsModule, FcmModule, JwtModule.register({}), StaffModule],
     controllers: [AdminLifecycleCampaignController, UnsubscribeController],
     providers: [CustomerLifecycleService, CommunicationProfileService, LifecycleCampaignTemplateService, LifecycleCampaignSequenceService, LifecycleCampaignSendService],
     exports: [CustomerLifecycleService, CommunicationProfileService, LifecycleCampaignTemplateService, LifecycleCampaignSequenceService, LifecycleCampaignSendService],

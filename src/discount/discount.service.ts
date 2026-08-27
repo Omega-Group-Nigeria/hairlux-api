@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { SystemAuditService } from '../common/services/system-audit.service';
 import { classifyCustomerLifecycle, classifyCustomerValue, getUserVisitStats, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
 import { CreateDiscountDto } from './dto/create-discount.dto';
 import { UpdateDiscountDto } from './dto/update-discount.dto';
@@ -31,11 +32,12 @@ export class DiscountService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
+    private systemAuditService: SystemAuditService,
   ) { }
 
   // ─── Admin ───────────────────────────────────────────────────────────────────
 
-  async create(dto: CreateDiscountDto) {
+  async create(dto: CreateDiscountDto, actorId?: string) {
     const existing = await this.prisma.discountCode.findUnique({
       where: { code: dto.code },
     });
@@ -63,6 +65,13 @@ export class DiscountService {
     this.logger.log(
       `Discount code created: ${discount.code} (${discount.percentage}%)`,
     );
+    await this.systemAuditService.log({
+      action: 'DISCOUNT_CREATED',
+      entityType: 'DiscountCode',
+      entityId: discount.id,
+      actorId,
+      after: { code: discount.code, percentage: discount.percentage, isActive: discount.isActive },
+    });
     return discount;
   }
 
@@ -102,8 +111,8 @@ export class DiscountService {
     return discount;
   }
 
-  async update(id: string, dto: UpdateDiscountDto) {
-    await this.findOne(id); // ensures it exists
+  async update(id: string, dto: UpdateDiscountDto, actorId?: string) {
+    const before = await this.findOne(id); // ensures it exists
 
     // Uniqueness check if code is being changed
     if (dto.code !== undefined) {
@@ -140,13 +149,28 @@ export class DiscountService {
     });
 
     this.logger.log(`Discount code updated: ${discount.code}`);
+    await this.systemAuditService.log({
+      action: 'DISCOUNT_UPDATED',
+      entityType: 'DiscountCode',
+      entityId: id,
+      actorId,
+      before: { code: before.code, percentage: before.percentage, isActive: before.isActive },
+      after: { code: discount.code, percentage: discount.percentage, isActive: discount.isActive },
+    });
     return discount;
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: string, actorId?: string) {
+    const discount = await this.findOne(id);
     await this.prisma.discountCode.delete({ where: { id } });
     this.logger.log(`Discount code deleted: ${id}`);
+    await this.systemAuditService.log({
+      action: 'DISCOUNT_DELETED',
+      entityType: 'DiscountCode',
+      entityId: id,
+      actorId,
+      before: { code: discount.code, percentage: discount.percentage },
+    });
   }
 
   // ─── Public (authenticated) ───────────────────────────────────────────────────

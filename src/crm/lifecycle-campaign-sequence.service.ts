@@ -1,10 +1,14 @@
 import { NotFoundException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SystemAuditService } from '../common/services/system-audit.service';
 import { UpsertLifecycleCampaignSequenceDto } from './dto/upsert-lifecycle-campaign-sequence.dto';
 
 @Injectable()
 export class LifecycleCampaignSequenceService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly systemAuditService: SystemAuditService,
+    ) { }
 
     async findAll() {
         return this.prisma.lifecycleCampaignSequence.findMany({
@@ -22,8 +26,8 @@ export class LifecycleCampaignSequenceService {
         return sequence;
     }
 
-    async create(dto: UpsertLifecycleCampaignSequenceDto) {
-        return this.prisma.lifecycleCampaignSequence.create({
+    async create(dto: UpsertLifecycleCampaignSequenceDto, actorId?: string) {
+        const created = await this.prisma.lifecycleCampaignSequence.create({
             data: {
                 targetLifecycle: dto.targetLifecycle,
                 name: dto.name,
@@ -43,6 +47,16 @@ export class LifecycleCampaignSequenceService {
             },
             include: { steps: { orderBy: { stepOrder: 'asc' } } },
         });
+
+        await this.systemAuditService.log({
+            action: 'CAMPAIGN_SEQUENCE_CREATED',
+            entityType: 'LifecycleCampaignSequence',
+            entityId: created.id,
+            actorId,
+            after: { targetLifecycle: created.targetLifecycle, name: created.name, isEnabled: created.isEnabled, stepCount: created.steps.length },
+        });
+
+        return created;
     }
 
     /**
@@ -58,8 +72,8 @@ export class LifecycleCampaignSequenceService {
      * considered and rejected -- there's no reliable way to say which new
      * step an old send row "corresponds to" once steps have changed.
      */
-    async update(id: string, dto: Partial<UpsertLifecycleCampaignSequenceDto>) {
-        await this.findOne(id);
+    async update(id: string, dto: Partial<UpsertLifecycleCampaignSequenceDto>, actorId?: string) {
+        const before = await this.findOne(id);
 
         await this.prisma.$transaction(async (tx) => {
             await tx.lifecycleCampaignSequence.update({
@@ -89,11 +103,30 @@ export class LifecycleCampaignSequenceService {
             }
         });
 
-        return this.findOne(id);
+        const updated = await this.findOne(id);
+
+        await this.systemAuditService.log({
+            action: 'CAMPAIGN_SEQUENCE_UPDATED',
+            entityType: 'LifecycleCampaignSequence',
+            entityId: id,
+            actorId,
+            before: { targetLifecycle: before.targetLifecycle, name: before.name, isEnabled: before.isEnabled, stepCount: before.steps.length },
+            after: { targetLifecycle: updated.targetLifecycle, name: updated.name, isEnabled: updated.isEnabled, stepCount: updated.steps.length },
+        });
+
+        return updated;
     }
 
-    async remove(id: string) {
-        await this.findOne(id);
+    async remove(id: string, actorId?: string) {
+        const sequence = await this.findOne(id);
         await this.prisma.lifecycleCampaignSequence.delete({ where: { id } });
+
+        await this.systemAuditService.log({
+            action: 'CAMPAIGN_SEQUENCE_DELETED',
+            entityType: 'LifecycleCampaignSequence',
+            entityId: id,
+            actorId,
+            before: { targetLifecycle: sequence.targetLifecycle, name: sequence.name },
+        });
     }
 }

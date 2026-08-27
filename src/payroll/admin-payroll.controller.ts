@@ -50,7 +50,7 @@ export class AdminPayrollController {
     // -- Compensation -------------------------------------------------------
 
     @Patch('staff/:staffId/compensation')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_MANAGE_COMPENSATION)
     @ApiOperation({ summary: "Set a staff member's ongoing base salary/allowances — recorded in history" })
     @ApiParam({ name: 'staffId' })
     async setCompensation(@Req() req: any, @Param('staffId', ParseUUIDPipe) staffId: string, @Body() dto: SetCompensationDto) {
@@ -96,7 +96,7 @@ export class AdminPayrollController {
     }
 
     @Patch('bank-accounts/:staffId/approve')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_APPROVE_BANK_CHANGE)
     @ApiOperation({ summary: "Approve a staff member's pending bank account change" })
     @ApiParam({ name: 'staffId' })
     async approveBankChange(@Param('staffId', ParseUUIDPipe) staffId: string) {
@@ -105,7 +105,7 @@ export class AdminPayrollController {
     }
 
     @Patch('bank-accounts/:staffId/reject')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_APPROVE_BANK_CHANGE)
     @ApiOperation({ summary: "Reject a staff member's pending bank account change" })
     @ApiParam({ name: 'staffId' })
     async rejectBankChange(@Param('staffId', ParseUUIDPipe) staffId: string) {
@@ -116,7 +116,7 @@ export class AdminPayrollController {
     // -- Payroll periods --------------------------------------------------------
 
     @Post('periods')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_CREATE_PERIOD)
     @ApiOperation({ summary: 'Create a new payroll period' })
     async createPeriod(@Req() req: any, @Body() dto: CreatePayrollPeriodDto) {
         const actor = await this.staffService.findByUserIdOrNull(req.user.id);
@@ -142,7 +142,7 @@ export class AdminPayrollController {
     }
 
     @Post('periods/:id/generate')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_GENERATE)
     @ApiOperation({ summary: 'Run the payroll engine for this period — generates payslips and credits every staff wallet (still locked until Payday is switched on)' })
     @ApiParam({ name: 'id' })
     async generatePayroll(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
@@ -152,7 +152,7 @@ export class AdminPayrollController {
     }
 
     @Patch('periods/:id/approve')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_APPROVE_PERIOD)
     @ApiOperation({ summary: 'Formally approve an already-generated payroll period' })
     @ApiParam({ name: 'id' })
     async approvePeriod(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
@@ -177,7 +177,7 @@ export class AdminPayrollController {
     // -- Adjustments --------------------------------------------------------
 
     @Post('periods/:periodId/adjustments')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_MANAGE_ADJUSTMENTS)
     @ApiOperation({ summary: 'Add a manual bonus or deduction to a staff member for this period' })
     @ApiParam({ name: 'periodId' })
     async createAdjustment(@Req() req: any, @Param('periodId', ParseUUIDPipe) periodId: string, @Body() dto: CreatePayrollAdjustmentDto) {
@@ -196,7 +196,7 @@ export class AdminPayrollController {
     }
 
     @Delete('adjustments/:id')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_MANAGE_ADJUSTMENTS)
     @ApiOperation({ summary: 'Remove an adjustment — only while its period is still in DRAFT' })
     @ApiParam({ name: 'id' })
     async removeAdjustment(@Req() req: any, @Param('id', ParseUUIDPipe) id: string) {
@@ -216,7 +216,7 @@ export class AdminPayrollController {
     }
 
     @Patch('settings/release')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_MANAGE_SETTINGS)
     @ApiOperation({ summary: 'Turn the Payday switch on or off — ON immediately unlocks withdrawal of every current wallet balance' })
     async setRelease(@Body('active') active: boolean) {
         const data = await this.releaseService.setReleaseActive(active);
@@ -224,7 +224,7 @@ export class AdminPayrollController {
     }
 
     @Patch('settings/pension-rate')
-    @Permission(PERMISSIONS.PAYROLL_MANAGE)
+    @Permission(PERMISSIONS.PAYROLL_MANAGE_SETTINGS)
     @ApiOperation({ summary: 'Update the pension contribution rate used by the payroll engine' })
     async setPensionRate(@Body('rate') rate: number) {
         const data = await this.releaseService.setPensionRate(rate);

@@ -1,7 +1,16 @@
 export const PERMISSIONS = {
   // ── Bookings ────────────────────────────────────────────────────────────────
   BOOKINGS_READ: 'bookings:read', // View all bookings
-  BOOKINGS_UPDATE_STATUS: 'bookings:update_status', // Confirm / complete / cancel
+  BOOKINGS_CREATE: 'bookings:create', // Create a walk-in/manual booking as admin
+  // Dev Feedback Round 4, item #33: EDIT (change services/products/stylist,
+  // customer classification settings) is a genuinely different action from
+  // UPDATE_STATUS (confirm/complete/cancel/no-show) -- an admin who can move
+  // a booking through its lifecycle shouldn't automatically be able to
+  // change what's actually in it, and vice versa.
+  BOOKINGS_UPDATE: 'bookings:update', // Edit an existing booking's services, products, stylist, or customer classification settings
+  BOOKINGS_UPDATE_STATUS: 'bookings:update_status', // Confirm / start / complete / cancel / no-show
+  // Item #43: delete is always its own explicit permission, never bundled with edit.
+  BOOKINGS_DELETE: 'bookings:delete', // Delete a booking record
   BOOKINGS_VERIFY_RESERVATION: 'bookings:verify_reservation', // Look up & mark codes used
   BOOKINGS_MANAGE_SCHEDULE: 'bookings:manage_schedule', // Manage business hours & exceptions
 
@@ -22,7 +31,15 @@ export const PERMISSIONS = {
 
   // ── Branches ────────────────────────────────────────────────────────────────
   BRANCHES_READ: 'branches:read', // View branches and branch service config
-  BRANCHES_MANAGE: 'branches:manage', // CRUD branches; manage availability & walk-in prices
+  // Dev Feedback Round 4, item #43: split from the previous single
+  // BRANCHES_MANAGE, which bundled create/edit/delete/manager-assignment/
+  // service-config together. Delete is always its own explicit
+  // permission -- never bundled with create/edit, per the same rule.
+  BRANCHES_CREATE: 'branches:create', // Create a new branch
+  BRANCHES_UPDATE: 'branches:update', // Edit branch details
+  BRANCHES_MANAGE_MANAGER: 'branches:manage_manager', // Assign or remove a branch's manager
+  BRANCHES_DELETE: 'branches:delete', // Delete a branch
+  BRANCHES_MANAGE_SERVICES: 'branches:manage_services', // Manage which services a branch offers, and their walk-in pricing
 
   // ── Discounts ────────────────────────────────────────────────────────────────
   DISCOUNTS_READ: 'discounts:read', // View discount codes
@@ -92,15 +109,43 @@ export const PERMISSIONS = {
   // ── Financial Transactions (Procurement Integration) ──────────────────────
   FINANCIAL_TRANSACTIONS_READ: 'financial_transactions:read',
 
+  // ── Main Admin Dashboard metrics (Dev Feedback Round 4, item #32) ─────────
+  // Grouped by logical metric category, not one permission per literal
+  // card -- e.g. Today's Bookings + Pending Bookings + the Booking Trends
+  // chart + Recent Bookings table are all gated together, since they're
+  // all the same underlying data (bookings) presented a few different ways.
+  DASHBOARD_VIEW_BOOKINGS_METRICS: 'dashboard:view_bookings_metrics', // Today's Bookings, Pending Bookings, Booking Trends chart, Recent Bookings table
+  DASHBOARD_VIEW_REVENUE_METRICS: 'dashboard:view_revenue_metrics', // Today's Revenue, Revenue Trend chart
+  DASHBOARD_VIEW_USER_METRICS: 'dashboard:view_user_metrics', // Total Users
+  DASHBOARD_VIEW_HR_METRICS: 'dashboard:view_hr_metrics', // HR Snapshot
+
   // ── Payroll (salary/financial data) ──────────────────────────────────────────
   PAYROLL_READ: 'payroll:read', // View payroll dashboard, periods, payslips, withdrawal history
-  PAYROLL_MANAGE: 'payroll:manage', // Set compensation, run payroll, approve periods, toggle Payday, add adjustments, approve bank changes
-  // Dev Feedback Round 4, item #22: deliberately separate from
-  // PAYROLL_MANAGE -- sending an already-generated period back for
-  // correction is meant to be a higher, more restricted bar than
-  // ordinary payroll management ("Super Admin or any authorized
-  // access"), not something every payroll manager can do by default.
+  // Dev Feedback Round 4, item #37: split from the previous single
+  // PAYROLL_MANAGE, which bundled every payroll action -- compensation,
+  // period lifecycle, adjustments, bank-change approval, and global
+  // settings -- into one permission. Payroll is explicitly flagged as
+  // critical-priority financial data, so "every action separately
+  // controlled" applies with full force here.
+  PAYROLL_MANAGE_COMPENSATION: 'payroll:manage_compensation', // Set a staff member's base salary/allowances/commission
+  PAYROLL_APPROVE_BANK_CHANGE: 'payroll:approve_bank_change', // Approve or reject a staff member's bank account change request
+  PAYROLL_CREATE_PERIOD: 'payroll:create_period', // Create a new payroll period
+  PAYROLL_GENERATE: 'payroll:generate', // Run payroll generation for a DRAFT period
+  PAYROLL_APPROVE_PERIOD: 'payroll:approve_period', // Formally approve an AWAITING_RELEASE period
+  PAYROLL_MANAGE_ADJUSTMENTS: 'payroll:manage_adjustments', // Add or remove a bonus/deduction adjustment
+  PAYROLL_MANAGE_SETTINGS: 'payroll:manage_settings', // Toggle Payday active/inactive, set the pension rate
+  // Dev Feedback Round 4, item #22: deliberately separate from the rest --
+  // sending an already-generated period back for correction is meant to
+  // be a higher, more restricted bar than ordinary payroll management
+  // ("Super Admin or any authorized access"), not something every
+  // payroll manager can do by default.
   PAYROLL_CORRECT: 'payroll:correct', // Send an AWAITING_RELEASE payroll period back to DRAFT for correction before final approval
+
+  // ── Payments (customer wallets & transactions) — Dev Feedback Round 4, item #34 ──
+  // Read-only reporting controller (no create/edit/delete/approve actions exist
+  // here at all), so a single permission is the right granularity -- adding
+  // more would just be permissions with nothing distinct for them to gate.
+  PAYMENTS_READ: 'payments:read', // View wallet stats and the cross-customer transaction ledger
 
   // ── Branch Finance (daily summary & cash reconciliation) ─────────────────────
   BRANCH_FINANCE_READ: 'branch_finance:read', // View the daily financial summary for a branch (bookings, sales, inventory movement)
@@ -144,11 +189,21 @@ export const PERMISSIONS = {
 
   // ── LMS (staff training library) ────────────────────────────────────────────
   LMS_READ: 'lms:read', // View courses in the admin management UI
-  LMS_MANAGE: 'lms:manage', // Create, edit, delete courses and their role assignments
+  // Dev Feedback Round 4, item #43: split from the previous single
+  // LMS_MANAGE, which bundled create/edit/delete together.
+  LMS_CREATE: 'lms:create', // Create a course and its role assignments
+  LMS_UPDATE: 'lms:update', // Edit a course or its role assignments
+  LMS_DELETE: 'lms:delete', // Delete a course
 
   // ── Lifecycle Campaigns ──────────────────────────────────────────────────────
-  LIFECYCLE_CAMPAIGNS_READ: 'lifecycle_campaigns:read', // View templates & transition history
-  LIFECYCLE_CAMPAIGNS_MANAGE: 'lifecycle_campaigns:manage', // Create/edit/delete templates
+  LIFECYCLE_CAMPAIGNS_READ: 'lifecycle_campaigns:read', // View templates, sequences & transition history
+  // Dev Feedback Round 4, item #36: split from the previous single
+  // LIFECYCLE_CAMPAIGNS_MANAGE, which bundled create/edit/delete for both
+  // templates and sequences into one permission. Delete is always its own
+  // explicit permission, per item #43 -- never bundled with create/edit.
+  LIFECYCLE_CAMPAIGNS_CREATE: 'lifecycle_campaigns:create', // Create a template or sequence
+  LIFECYCLE_CAMPAIGNS_UPDATE: 'lifecycle_campaigns:update', // Edit a template or sequence
+  LIFECYCLE_CAMPAIGNS_DELETE: 'lifecycle_campaigns:delete', // Delete a template or sequence
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -161,10 +216,16 @@ export const PERMISSION_GROUPS = [
     group: 'Bookings',
     permissions: [
       { key: PERMISSIONS.BOOKINGS_READ, label: 'View bookings' },
+      { key: PERMISSIONS.BOOKINGS_CREATE, label: 'Create a walk-in/manual booking' },
+      {
+        key: PERMISSIONS.BOOKINGS_UPDATE,
+        label: "Edit a booking's services, products, stylist, or customer classification settings",
+      },
       {
         key: PERMISSIONS.BOOKINGS_UPDATE_STATUS,
-        label: 'Update booking status',
+        label: 'Confirm, start, complete, cancel, or no-show a booking',
       },
+      { key: PERMISSIONS.BOOKINGS_DELETE, label: 'Delete a booking' },
       {
         key: PERMISSIONS.BOOKINGS_VERIFY_RESERVATION,
         label: 'Verify reservation codes',
@@ -212,10 +273,20 @@ export const PERMISSION_GROUPS = [
     group: 'Branches',
     permissions: [
       { key: PERMISSIONS.BRANCHES_READ, label: 'View branches & service config' },
-      {
-        key: PERMISSIONS.BRANCHES_MANAGE,
-        label: 'Manage branches, availability & walk-in prices',
-      },
+      { key: PERMISSIONS.BRANCHES_CREATE, label: 'Create a new branch' },
+      { key: PERMISSIONS.BRANCHES_UPDATE, label: 'Edit branch details' },
+      { key: PERMISSIONS.BRANCHES_MANAGE_MANAGER, label: "Assign or remove a branch's manager" },
+      { key: PERMISSIONS.BRANCHES_DELETE, label: 'Delete a branch' },
+      { key: PERMISSIONS.BRANCHES_MANAGE_SERVICES, label: 'Manage which services a branch offers, and their walk-in pricing' },
+    ],
+  },
+  {
+    group: 'Lifecycle Campaigns',
+    permissions: [
+      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_READ, label: 'View lifecycle campaign templates, sequences, and transition history' },
+      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_CREATE, label: 'Create a campaign template or sequence' },
+      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_UPDATE, label: 'Edit a campaign template or sequence' },
+      { key: PERMISSIONS.LIFECYCLE_CAMPAIGNS_DELETE, label: 'Delete a campaign template or sequence' },
     ],
   },
   {
@@ -318,7 +389,9 @@ export const PERMISSION_GROUPS = [
     group: 'LMS (Staff Training)',
     permissions: [
       { key: PERMISSIONS.LMS_READ, label: 'View courses' },
-      { key: PERMISSIONS.LMS_MANAGE, label: 'Create, edit, and delete courses and their role assignments' },
+      { key: PERMISSIONS.LMS_CREATE, label: 'Create a course and its role assignments' },
+      { key: PERMISSIONS.LMS_UPDATE, label: 'Edit a course or its role assignments' },
+      { key: PERMISSIONS.LMS_DELETE, label: 'Delete a course' },
     ],
   },
   {
@@ -377,17 +450,35 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
+    group: 'Main Dashboard Metrics',
+    permissions: [
+      { key: PERMISSIONS.DASHBOARD_VIEW_BOOKINGS_METRICS, label: "Today's Bookings, Pending Bookings, Booking Trends chart, and Recent Bookings table" },
+      { key: PERMISSIONS.DASHBOARD_VIEW_REVENUE_METRICS, label: "Today's Revenue and the Revenue Trend chart" },
+      { key: PERMISSIONS.DASHBOARD_VIEW_USER_METRICS, label: 'Total Users' },
+      { key: PERMISSIONS.DASHBOARD_VIEW_HR_METRICS, label: 'HR Snapshot' },
+    ],
+  },
+  {
     group: 'Payroll',
     permissions: [
       { key: PERMISSIONS.PAYROLL_READ, label: 'View the payroll dashboard, periods, payslips, and withdrawal history' },
-      {
-        key: PERMISSIONS.PAYROLL_MANAGE,
-        label: 'Set staff compensation, run and approve payroll, toggle Payday, add bonuses/deductions, approve bank account changes',
-      },
+      { key: PERMISSIONS.PAYROLL_MANAGE_COMPENSATION, label: "Set a staff member's base salary, allowances, or commission" },
+      { key: PERMISSIONS.PAYROLL_APPROVE_BANK_CHANGE, label: "Approve or reject a staff member's bank account change request" },
+      { key: PERMISSIONS.PAYROLL_CREATE_PERIOD, label: 'Create a new payroll period' },
+      { key: PERMISSIONS.PAYROLL_GENERATE, label: 'Run payroll generation for a Draft period' },
+      { key: PERMISSIONS.PAYROLL_APPROVE_PERIOD, label: 'Formally approve an Awaiting Release period' },
+      { key: PERMISSIONS.PAYROLL_MANAGE_ADJUSTMENTS, label: 'Add or remove a bonus/deduction adjustment' },
+      { key: PERMISSIONS.PAYROLL_MANAGE_SETTINGS, label: 'Toggle Payday active/inactive, set the pension rate' },
       {
         key: PERMISSIONS.PAYROLL_CORRECT,
         label: 'Send an already-generated payroll period back for correction before final approval',
       },
+    ],
+  },
+  {
+    group: 'Payments',
+    permissions: [
+      { key: PERMISSIONS.PAYMENTS_READ, label: "View wallet statistics and the cross-customer transaction ledger" },
     ],
   },
   {

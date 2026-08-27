@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -8,6 +8,7 @@ import { LifecycleCampaignTemplateService } from './lifecycle-campaign-template.
 import { LifecycleCampaignSequenceService } from './lifecycle-campaign-sequence.service';
 import { UpsertLifecycleCampaignTemplateDto } from './dto/upsert-lifecycle-campaign-template.dto';
 import { UpsertLifecycleCampaignSequenceDto } from './dto/upsert-lifecycle-campaign-sequence.dto';
+import { StaffService } from '../staff/staff.service';
 
 @ApiTags('Admin - Lifecycle Campaigns')
 @ApiBearerAuth()
@@ -17,6 +18,7 @@ export class AdminLifecycleCampaignController {
     constructor(
         private readonly templateService: LifecycleCampaignTemplateService,
         private readonly sequenceService: LifecycleCampaignSequenceService,
+        private readonly staffService: StaffService,
     ) { }
 
     @Get('templates')
@@ -36,26 +38,29 @@ export class AdminLifecycleCampaignController {
     }
 
     @Post('templates')
-    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE)
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_CREATE)
     @ApiOperation({ summary: 'Create a template for a (targetLifecycle, channel) pair' })
-    async create(@Body() dto: UpsertLifecycleCampaignTemplateDto) {
-        const data = await this.templateService.create(dto);
+    async create(@Req() req: any, @Body() dto: UpsertLifecycleCampaignTemplateDto) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.templateService.create(dto, actor?.id);
         return { success: true, message: 'Template created successfully', data };
     }
 
     @Patch('templates/:id')
-    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE)
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_UPDATE)
     @ApiOperation({ summary: 'Update a template' })
-    async update(@Param('id') id: string, @Body() dto: Partial<UpsertLifecycleCampaignTemplateDto>) {
-        const data = await this.templateService.update(id, dto);
+    async update(@Req() req: any, @Param('id') id: string, @Body() dto: Partial<UpsertLifecycleCampaignTemplateDto>) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.templateService.update(id, dto, actor?.id);
         return { success: true, message: 'Template updated successfully', data };
     }
 
     @Delete('templates/:id')
-    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE)
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_DELETE)
     @ApiOperation({ summary: 'Delete a template' })
-    async remove(@Param('id') id: string) {
-        await this.templateService.remove(id);
+    async remove(@Req() req: any, @Param('id') id: string) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        await this.templateService.remove(id, actor?.id);
         return { success: true, message: 'Template deleted successfully' };
     }
 
@@ -78,29 +83,32 @@ export class AdminLifecycleCampaignController {
     }
 
     @Post('sequences')
-    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE)
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_CREATE)
     @ApiOperation({ summary: 'Create a sequence for a target lifecycle, with its ordered steps' })
-    async createSequence(@Body() dto: UpsertLifecycleCampaignSequenceDto) {
-        const data = await this.sequenceService.create(dto);
+    async createSequence(@Req() req: any, @Body() dto: UpsertLifecycleCampaignSequenceDto) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.sequenceService.create(dto, actor?.id);
         return { success: true, message: 'Sequence created successfully', data };
     }
 
     @Patch('sequences/:id')
-    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE)
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_UPDATE)
     @ApiOperation({
         summary: 'Update a sequence',
         description: 'Sending "steps" replaces the ENTIRE step list -- send every step that should remain, in order. Omit "steps" entirely to leave them untouched. Replacing steps clears send history for the old steps.',
     })
-    async updateSequence(@Param('id') id: string, @Body() dto: Partial<UpsertLifecycleCampaignSequenceDto>) {
-        const data = await this.sequenceService.update(id, dto);
+    async updateSequence(@Req() req: any, @Param('id') id: string, @Body() dto: Partial<UpsertLifecycleCampaignSequenceDto>) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.sequenceService.update(id, dto, actor?.id);
         return { success: true, message: 'Sequence updated successfully', data };
     }
 
     @Delete('sequences/:id')
-    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_MANAGE)
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_DELETE)
     @ApiOperation({ summary: 'Delete a sequence and all its steps/send history' })
-    async removeSequence(@Param('id') id: string) {
-        await this.sequenceService.remove(id);
+    async removeSequence(@Req() req: any, @Param('id') id: string) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        await this.sequenceService.remove(id, actor?.id);
         return { success: true, message: 'Sequence deleted successfully' };
     }
 }

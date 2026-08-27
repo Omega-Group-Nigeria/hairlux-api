@@ -58,7 +58,7 @@ export class AdminLmsController {
         { name: 'video', maxCount: 1 },
         { name: 'pdf', maxCount: 1 },
     ], { limits: { fileSize: MAX_VIDEO_SIZE_BYTES } }))
-    @Permission(PERMISSIONS.LMS_MANAGE)
+    @Permission(PERMISSIONS.LMS_CREATE)
     async create(
         @UploadedFiles() files: { video?: Express.Multer.File[]; pdf?: Express.Multer.File[] },
         @Body() dto: UpsertLmsCourseDto,
@@ -76,7 +76,7 @@ export class AdminLmsController {
         { name: 'video', maxCount: 1 },
         { name: 'pdf', maxCount: 1 },
     ], { limits: { fileSize: MAX_VIDEO_SIZE_BYTES } }))
-    @Permission(PERMISSIONS.LMS_MANAGE)
+    @Permission(PERMISSIONS.LMS_UPDATE)
     async update(
         @Param('id', ParseUUIDPipe) id: string,
         @UploadedFiles() files: { video?: Express.Multer.File[]; pdf?: Express.Multer.File[] },
@@ -89,7 +89,7 @@ export class AdminLmsController {
     @Delete(':id')
     @ApiOperation({ summary: 'Delete a course permanently' })
     @ApiParam({ name: 'id' })
-    @Permission(PERMISSIONS.LMS_MANAGE)
+    @Permission(PERMISSIONS.LMS_DELETE)
     async remove(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.lmsService.remove(id);
         return { success: true, message: 'Course deleted', data };

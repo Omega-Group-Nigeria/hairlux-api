@@ -41,10 +41,10 @@ import { UpdateBranchDto } from './dto/update-branch.dto';
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminBranchController {
-  constructor(private readonly branchService: BranchService) {}
+  constructor(private readonly branchService: BranchService) { }
 
   @Post()
-  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @Permission(PERMISSIONS.BRANCHES_CREATE)
   @ApiOperation({ summary: 'Create branch' })
   @ApiResponse({ status: 201, description: 'Branch created successfully' })
   async create(@Body() dto: CreateBranchDto) {
@@ -88,7 +88,7 @@ export class AdminBranchController {
   }
 
   @Patch(':id')
-  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @Permission(PERMISSIONS.BRANCHES_UPDATE)
   @ApiOperation({
     summary: 'Update branch',
     description: 'Update name and/or open (isActive) status.',
@@ -103,7 +103,7 @@ export class AdminBranchController {
   }
 
   @Patch(':id/manager')
-  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @Permission(PERMISSIONS.BRANCHES_MANAGE_MANAGER)
   @ApiOperation({
     summary: 'Appoint the branch manager',
     description:
@@ -120,7 +120,7 @@ export class AdminBranchController {
 
   @Delete(':id/manager')
   @HttpCode(HttpStatus.OK)
-  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @Permission(PERMISSIONS.BRANCHES_MANAGE_MANAGER)
   @ApiOperation({ summary: 'Remove the branch manager appointment (branch reverts to unmanaged)' })
   @ApiParam({ name: 'id', description: 'Branch ID' })
   async removeManager(@Param('id', ParseUUIDPipe) id: string) {
@@ -130,7 +130,7 @@ export class AdminBranchController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @Permission(PERMISSIONS.BRANCHES_DELETE)
   @ApiOperation({ summary: 'Delete branch' })
   @ApiParam({ name: 'id', description: 'Branch ID' })
   async remove(@Param('id', ParseUUIDPipe) id: string) {
@@ -139,7 +139,7 @@ export class AdminBranchController {
   }
 
   @Put(':id/services')
-  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @Permission(PERMISSIONS.BRANCHES_MANAGE_SERVICES)
   @ApiOperation({ summary: 'Set available services at branch' })
   @ApiParam({ name: 'id', description: 'Branch ID' })
   async setServices(
@@ -155,7 +155,7 @@ export class AdminBranchController {
   }
 
   @Patch(':id/services')
-  @Permission(PERMISSIONS.BRANCHES_MANAGE)
+  @Permission(PERMISSIONS.BRANCHES_MANAGE_SERVICES)
   @ApiOperation({
     summary: 'Partially update branch service availability or walk-in prices',
   })
