@@ -40,6 +40,7 @@ export class RealtimePublisherService {
     payload: {
       offerId: string;
       bookingId: string;
+      bookingCode?: string | null;
       estEarnings: number;
       expiresAt: string;
       distanceKm?: number | null;

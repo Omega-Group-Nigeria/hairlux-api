@@ -130,6 +130,11 @@ export class OfferManagerService {
 
     const estEarningsNum = Number(offer.estEarningsAtOffer ?? 0);
 
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: params.bookingId },
+      select: { reservationCode: true },
+    });
+
     this.jobPushNotifier.notifyOffer({
       beauticianUserId: offer.beauticianUserId,
       bookingId: params.bookingId,
@@ -140,6 +145,7 @@ export class OfferManagerService {
     this.realtimePublisher.emitJobOffer(offer.beauticianUserId, {
       offerId: offer.id,
       bookingId: params.bookingId,
+      bookingCode: booking?.reservationCode ?? null,
       estEarnings: estEarningsNum,
       expiresAt: offer.expiresAt.toISOString(),
       distanceKm: offer.distanceKmAtOffer

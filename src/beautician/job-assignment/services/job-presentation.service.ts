@@ -196,6 +196,7 @@ export class JobPresentationService {
     estEarningsAtOffer: unknown;
     booking: {
       id: string;
+      reservationCode?: string | null;
       bookingDate: Date;
       bookingTime: string;
       totalAmount: unknown;
@@ -212,6 +213,7 @@ export class JobPresentationService {
     return {
       offerId: offer.id,
       bookingId: offer.bookingId,
+      bookingCode: offer.booking.reservationCode ?? null,
       status: offer.status,
       offeredAt: offer.offeredAt,
       expiresAt: offer.expiresAt,

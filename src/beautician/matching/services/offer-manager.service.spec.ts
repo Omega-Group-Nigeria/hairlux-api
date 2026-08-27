@@ -12,6 +12,7 @@ describe('OfferManagerService release after offer', () => {
     },
     booking: {
       findFirst: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue({ reservationCode: 'HLX-TEST' }),
     },
     jobOffer: {
       findFirst: jest.fn(),
