@@ -6,6 +6,7 @@ import { DispatchStateService } from './dispatch-state.service';
 import { DISPATCH_EVENT_TYPES } from '../constants/dispatch-event.constants';
 import { RealtimePublisherService } from '../../realtime/realtime-publisher.service';
 import { MatchingQueueService } from './matching-queue.service';
+import { JobPushNotifier } from '../../../notifications/job/job-push.notifier';
 
 export type ExpiredOfferResult = {
   expired: boolean;
@@ -26,6 +27,7 @@ export class OfferLifecycleService {
     private readonly dispatchState: DispatchStateService,
     private readonly realtimePublisher: RealtimePublisherService,
     private readonly matchingQueue: MatchingQueueService,
+    private readonly jobPushNotifier: JobPushNotifier,
   ) {}
 
   async hasActiveOffers(bookingId: string): Promise<boolean> {
@@ -72,7 +74,7 @@ export class OfferLifecycleService {
     });
 
     if (offer) {
-      await this.releaseAndNotify(offer.beauticianUserId, bookingId);
+      await this.releaseAndNotify(offer.beauticianUserId, bookingId, offerId);
     }
 
     await this.matchingQueue.removeExpireOfferJob(offerId);
@@ -117,7 +119,7 @@ export class OfferLifecycleService {
     });
 
     for (const offer of expiringOffers) {
-      await this.releaseAndNotify(offer.beauticianUserId, bookingId);
+      await this.releaseAndNotify(offer.beauticianUserId, bookingId, offer.id);
       await this.matchingQueue.removeExpireOfferJob(offer.id);
     }
 
@@ -157,6 +159,11 @@ export class OfferLifecycleService {
     });
 
     await this.offerManager.releaseBeauticianToOnline(beauticianUserId);
+
+    for (const offer of pendingOffers) {
+      this.realtimePublisher.emitOfferExpired(beauticianUserId, offer.bookingId);
+      this.jobPushNotifier.notifyOfferExpired({ beauticianUserId, bookingId: offer.bookingId, offerId: offer.id });
+    }
 
     const resume: Array<{ bookingId: string; matchingAttempt: number }> = [];
 
@@ -211,7 +218,7 @@ export class OfferLifecycleService {
       });
 
       for (const offer of activeOffers) {
-        await this.releaseAndNotify(offer.beauticianUserId, bookingId);
+        await this.releaseAndNotify(offer.beauticianUserId, bookingId, offer.id);
         await this.matchingQueue.removeExpireOfferJob(offer.id);
       }
     }
@@ -222,14 +229,16 @@ export class OfferLifecycleService {
   private async releaseAndNotify(
     beauticianUserId: string,
     bookingId: string,
+    offerId?: string,
   ): Promise<void> {
     await this.offerManager.releaseBeauticianToOnline(beauticianUserId);
     this.realtimePublisher.emitOfferExpired(beauticianUserId, bookingId);
+    this.jobPushNotifier.notifyOfferExpired({ beauticianUserId, bookingId, offerId });
   }
 
   /**
    * When one beautician accepts, release other concurrent offer holders:
-   * restore availability, cancel expiry jobs, and notify via WebSocket.
+   * restore availability, cancel expiry jobs, and notify via WebSocket + FCM.
    */
   async releaseOfferLosers(
     losers: Array<{ offerId: string; beauticianUserId: string }>,
@@ -239,6 +248,7 @@ export class OfferLifecycleService {
       await this.offerManager.releaseBeauticianToOnline(loser.beauticianUserId);
       await this.matchingQueue.removeExpireOfferJob(loser.offerId);
       this.realtimePublisher.emitOfferExpired(loser.beauticianUserId, bookingId);
+      this.jobPushNotifier.notifyOfferTaken({ beauticianUserId: loser.beauticianUserId, bookingId });
     }
   }
 }

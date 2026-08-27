@@ -23,20 +23,51 @@ export class JobPushNotifier {
     bookingId: string;
     offerId?: string;
     estEarnings: number;
+    bookingCode?: string | null;
+    distanceKm?: number | null;
+    expiresAt?: string | null;
+    serviceName?: string | null;
   }): void {
     const estLabel = this.factory.formatAmount(input.estEarnings);
+    const distanceLabel = input.distanceKm != null ? input.distanceKm.toFixed(1) : null;
     void this.dispatch
       .sendEvent(
         input.beauticianUserId,
         PUSH_EVENTS.JOB_OFFER,
-        { estEarnings: estLabel },
+        {
+          estEarnings: estLabel,
+          bookingCode: input.bookingCode ?? '',
+          distanceKm: distanceLabel ?? '',
+        },
         {
           bookingId: input.bookingId,
           estEarnings: String(input.estEarnings),
           ...(input.offerId ? { offerId: input.offerId } : {}),
+          ...(input.bookingCode ? { bookingCode: input.bookingCode } : {}),
+          ...(distanceLabel ? { distanceKm: distanceLabel } : {}),
+          ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+          ...(input.serviceName ? { serviceName: input.serviceName } : {}),
         },
       )
       .catch((err) => this.logErr('offer', err));
+  }
+
+  notifyOfferExpired(input: {
+    beauticianUserId: string;
+    bookingId: string;
+    offerId?: string;
+  }): void {
+    void this.dispatch
+      .sendEvent(
+        input.beauticianUserId,
+        'job.offer_expired' as never,
+        {},
+        {
+          bookingId: input.bookingId,
+          ...(input.offerId ? { offerId: input.offerId } : {}),
+        },
+      )
+      .catch((err) => this.logErr('offer_expired', err));
   }
 
   /**

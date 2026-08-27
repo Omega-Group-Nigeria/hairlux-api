@@ -107,7 +107,6 @@ export class JobAcceptService {
 
       const now = new Date();
 
-      // Concurrent offer holders who will lose when this accept commits.
       const concurrentLosers = await this.prisma.jobOffer.findMany({
         where: {
           bookingId,
@@ -119,15 +118,16 @@ export class JobAcceptService {
       });
 
       const updatedBooking = await this.prisma.$transaction(async (tx) => {
+        const freshNow = new Date();
         const acceptedOffer = await tx.jobOffer.updateMany({
           where: {
             id: offer.id,
             status: JobOfferStatus.OFFERED,
-            expiresAt: { gt: now },
+            expiresAt: { gt: freshNow },
           },
           data: {
             status: JobOfferStatus.ACCEPTED,
-            respondedAt: now,
+            respondedAt: freshNow,
           },
         });
 
@@ -155,7 +155,7 @@ export class JobAcceptService {
           },
           data: {
             status: JobOfferStatus.EXPIRED,
-            respondedAt: now,
+            respondedAt: freshNow,
           },
         });
 

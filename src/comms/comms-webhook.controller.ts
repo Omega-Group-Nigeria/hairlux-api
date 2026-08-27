@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Controller,
+  ForbiddenException,
   Headers,
   HttpCode,
   HttpStatus,
@@ -77,6 +78,10 @@ export class CommsWebhookController {
 
       if (message.includes('Missing Stream webhook signature')) {
         throw new BadRequestException(message);
+      }
+
+      if (message.includes('Ring rejected')) {
+        throw new ForbiddenException(message);
       }
 
       this.logger.error(`Stream webhook failed: ${message}`);

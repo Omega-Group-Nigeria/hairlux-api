@@ -13,9 +13,12 @@ import { KycVerifiedGuard } from '../guards/kyc-verified.guard';
 import { QoreidSessionService } from './services/qoreid-session.service';
 import { KycStatusService } from './services/kyc-status.service';
 import { KycVideoService } from './services/kyc-video.service';
+import { KycVideoMultipartService } from './services/kyc-video-multipart.service';
 import { InitiateKycDto } from './dto/initiate-kyc.dto';
 import { RequestKycVideoUploadDto } from './dto/request-kyc-video-upload.dto';
 import { ConfirmKycVideoUploadDto } from './dto/confirm-kyc-video-upload.dto';
+import { ConfirmKycVideoMultipartDto } from './dto/confirm-kyc-video-multipart.dto';
+import { RefreshKycVideoUploadDto } from './dto/refresh-kyc-video-upload.dto';
 
 @ApiTags('Beauticians – KYC')
 @ApiBearerAuth('JWT-auth')
@@ -26,6 +29,7 @@ export class KycController {
     private readonly qoreidSessionService: QoreidSessionService,
     private readonly kycStatusService: KycStatusService,
     private readonly kycVideoService: KycVideoService,
+    private readonly kycVideoMultipartService: KycVideoMultipartService,
   ) {}
 
   @Post('initiate')
@@ -73,11 +77,11 @@ export class KycController {
   @UseGuards(KycVerifiedGuard)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({
-    summary: 'Request presigned URL to upload KYC intro video',
+    summary: 'Request resumable multipart upload for KYC intro video',
     description:
-      'Step 3 of onboarding (after QoreID + profile submission). Profile must be AWAITING_VIDEO. Returns a presigned PUT URL valid ~10 minutes. Max 100 MB; video/mp4, video/quicktime, or video/webm.',
+      'Step 3 of onboarding (after QoreID + profile submission). Profile must be AWAITING_VIDEO. Returns uploadId + presigned part URLs (5 MB parts, R2 minimum) valid ~20 minutes. Client uploads parts with stall detection, refreshes URLs when <2min left, then confirms with etags. Falls back to single PUT for small files. Max 100 MB; video/mp4, video/quicktime, or video/webm.',
   })
-  @ApiResponse({ status: 201, description: 'Presigned upload URL created' })
+  @ApiResponse({ status: 201, description: 'Multipart upload session created' })
   @ApiResponse({
     status: 400,
     description: 'Profile not ready for video (must submit profile first)',
@@ -86,10 +90,38 @@ export class KycController {
     @GetUser('id') userId: string,
     @Body() dto: RequestKycVideoUploadDto,
   ) {
-    const data = await this.kycVideoService.requestUpload(userId, dto);
+    const data = await this.kycVideoMultipartService.createSession(
+      userId,
+      dto.contentType as never,
+      dto.fileSizeBytes,
+    );
     return {
       success: true,
-      message: 'Video upload URL created successfully',
+      message: 'Multipart upload session created successfully',
+      data: {
+        ...data,
+        instructions:
+          'Upload each part via PUT to partUrls[].url. Retry per part 3x with exponential backoff. If bytesSent stalls 15s, retry chunk from 0. When expiresAt <2min, call refresh-upload. Store uploadId/partUrls/etags in AsyncStorage for resume across background/foreground. Then call confirm-multipart with etags.',
+      },
+    };
+  }
+
+  @Post('video/refresh-upload')
+  @UseGuards(KycVerifiedGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Refresh presigned part URLs for an active multipart upload',
+    description: 'Re-issues part URLs when expiry <2 minutes. Requires uploadId from request-upload.',
+  })
+  @ApiResponse({ status: 201, description: 'Refreshed part URLs' })
+  async refreshVideoUpload(
+    @GetUser('id') userId: string,
+    @Body() dto: RefreshKycVideoUploadDto,
+  ) {
+    const data = await this.kycVideoMultipartService.refreshPartUrls(userId, dto.uploadId);
+    return {
+      success: true,
+      message: 'Part URLs refreshed successfully',
       data,
     };
   }
@@ -98,7 +130,7 @@ export class KycController {
   @UseGuards(KycVerifiedGuard)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({
-    summary: 'Confirm KYC video upload and place profile under review',
+    summary: 'Confirm KYC video upload and place profile under review (legacy single-PUT)',
     description:
       'Call after the client finishes PUT to R2. Verifies the object exists, stores the file key, and sets profileStatus to PENDING_REVIEW.',
   })
@@ -111,6 +143,34 @@ export class KycController {
     return {
       success: true,
       message: 'Video submitted successfully',
+      data,
+    };
+  }
+
+  @Post('video/confirm-multipart')
+  @UseGuards(KycVerifiedGuard)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Complete resumable multipart upload and place profile under review',
+    description:
+      'After uploading all parts, server completes R2 multipart with etags, verifies object, and sets profileStatus to PENDING_REVIEW. Idempotent - same fileKey/uploadId returns success if already PENDING_REVIEW.',
+  })
+  @ApiResponse({ status: 201, description: 'Multipart video confirmed; under review' })
+  async confirmMultipartUpload(
+    @GetUser('id') userId: string,
+    @Body() dto: ConfirmKycVideoMultipartDto,
+  ) {
+    const data = await this.kycVideoMultipartService.completeMultipart(
+      userId,
+      dto.uploadId,
+      dto.fileKey,
+      dto.contentType as never,
+      dto.parts,
+      dto.fileSizeBytes,
+    );
+    return {
+      success: true,
+      message: 'Video submitted successfully. Your profile and video are now under admin review.',
       data,
     };
   }

@@ -7,18 +7,24 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   GetObjectCommand,
   NotFound,
   S3Client,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'crypto';
 import {
   KYC_VIDEO_DOWNLOAD_URL_TTL_SECONDS,
   KYC_VIDEO_KEY_PREFIX,
+  KYC_VIDEO_MULTIPART_TTL_SECONDS,
+  KYC_VIDEO_PART_SIZE_BYTES,
   KYC_VIDEO_UPLOAD_URL_TTL_SECONDS,
   type KycVideoContentType,
 } from './r2.constants';
@@ -35,6 +41,23 @@ export type PresignedUploadResult = {
 export type PresignedDownloadResult = {
   downloadUrl: string;
   fileKey: string;
+  expiresIn: number;
+  expiresAt: string;
+};
+
+export type MultipartUploadSession = {
+  fileKey: string;
+  uploadId: string;
+  partSize: number;
+  partCount: number;
+  expiresIn: number;
+  expiresAt: string;
+  contentType: string;
+};
+
+export type PresignedPartUrl = {
+  partNumber: number;
+  uploadUrl: string;
   expiresIn: number;
   expiresAt: string;
 };
@@ -188,6 +211,118 @@ export class R2Service implements OnModuleInit {
         'Unable to create video download URL',
       );
     }
+  }
+
+  async createMultipartUpload(
+    fileKey: string,
+    contentType: KycVideoContentType,
+  ): Promise<string> {
+    const { client, bucket } = this.requireClient();
+    try {
+      const result = await client.send(
+        new CreateMultipartUploadCommand({
+          Bucket: bucket,
+          Key: fileKey,
+          ContentType: contentType,
+        }),
+      );
+      if (!result.UploadId) {
+        throw new Error('No UploadId returned');
+      }
+      return result.UploadId;
+    } catch (error) {
+      this.logger.error(
+        `Failed to create R2 multipart upload: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new InternalServerErrorException('Unable to initiate multipart upload');
+    }
+  }
+
+  async createPresignedPartUrls(
+    fileKey: string,
+    uploadId: string,
+    partCount: number,
+  ): Promise<PresignedPartUrl[]> {
+    const { client, bucket } = this.requireClient();
+    const urls: PresignedPartUrl[] = [];
+    for (let partNumber = 1; partNumber <= partCount; partNumber++) {
+      const command = new UploadPartCommand({
+        Bucket: bucket,
+        Key: fileKey,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+      });
+      const uploadUrl = await getSignedUrl(client, command, {
+        expiresIn: KYC_VIDEO_MULTIPART_TTL_SECONDS,
+      });
+      urls.push({
+        partNumber,
+        uploadUrl,
+        expiresIn: KYC_VIDEO_MULTIPART_TTL_SECONDS,
+        expiresAt: new Date(Date.now() + KYC_VIDEO_MULTIPART_TTL_SECONDS * 1000).toISOString(),
+      });
+    }
+    return urls;
+  }
+
+  async completeMultipartUpload(
+    fileKey: string,
+    uploadId: string,
+    parts: Array<{ ETag: string; PartNumber: number }>,
+  ): Promise<void> {
+    const { client, bucket } = this.requireClient();
+    try {
+      await client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: bucket,
+          Key: fileKey,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: parts.sort((a, b) => a.PartNumber - b.PartNumber) },
+        }),
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to complete R2 multipart upload: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new InternalServerErrorException('Unable to complete multipart upload');
+    }
+  }
+
+  async abortMultipartUpload(fileKey: string, uploadId: string): Promise<void> {
+    if (!this.client || !this.bucketName) return;
+    try {
+      await this.client.send(
+        new AbortMultipartUploadCommand({
+          Bucket: this.bucketName,
+          Key: fileKey,
+          UploadId: uploadId,
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `R2 AbortMultipartUpload failed for ${fileKey} ${uploadId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  buildMultipartSession(
+    fileKey: string,
+    uploadId: string,
+    fileSizeBytes: number | undefined,
+    contentType: string,
+  ): MultipartUploadSession {
+    const partCount = fileSizeBytes
+      ? Math.max(1, Math.ceil(fileSizeBytes / KYC_VIDEO_PART_SIZE_BYTES))
+      : 1;
+    return {
+      fileKey,
+      uploadId,
+      partSize: KYC_VIDEO_PART_SIZE_BYTES,
+      partCount,
+      expiresIn: KYC_VIDEO_MULTIPART_TTL_SECONDS,
+      expiresAt: new Date(Date.now() + KYC_VIDEO_MULTIPART_TTL_SECONDS * 1000).toISOString(),
+      contentType,
+    };
   }
 
   /**

@@ -140,6 +140,9 @@ export class OfferManagerService {
       bookingId: params.bookingId,
       offerId: offer.id,
       estEarnings: estEarningsNum,
+      bookingCode: booking?.reservationCode ?? null,
+      distanceKm: offer.distanceKmAtOffer ? Number(offer.distanceKmAtOffer) : params.candidate.distanceKm ?? null,
+      expiresAt: offer.expiresAt.toISOString(),
     });
 
     this.realtimePublisher.emitJobOffer(offer.beauticianUserId, {

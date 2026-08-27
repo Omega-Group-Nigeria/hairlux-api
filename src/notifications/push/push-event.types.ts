@@ -19,6 +19,7 @@ export const PUSH_EVENTS = {
   // Job (beautician + completion request to customer) — §3.3
   JOB_OFFER: 'job.offer',
   JOB_OFFER_TAKEN: 'job.offer_taken',
+  JOB_OFFER_EXPIRED: 'job.offer_expired',
   JOB_ARRIVAL_VERIFIED: 'job.arrival_verified',
   JOB_COMPLETION_REQUESTED: 'job.completion_requested',
   JOB_COMPLETED: 'job.completed',

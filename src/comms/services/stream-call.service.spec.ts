@@ -7,7 +7,8 @@ import { StreamVideoClientService } from './stream-video-client.service';
 
 describe('StreamCallService', () => {
   const mockEnd = jest.fn().mockResolvedValue({ duration: '0ms' });
-  const mockGetOrCreate = jest.fn().mockResolvedValue({ created: true });
+  const mockGetOrCreate = jest.fn().mockResolvedValue({ call: { members: [] }, created: true });
+  const mockUpdateCallMembers = jest.fn().mockResolvedValue({});
 
   const mockVideoClient = {
     isConfigured: jest.fn(() => true),
@@ -15,6 +16,7 @@ describe('StreamCallService', () => {
       video: {
         call: jest.fn(() => ({
           getOrCreate: mockGetOrCreate,
+          updateCallMembers: mockUpdateCallMembers,
           end: mockEnd,
         })),
       },

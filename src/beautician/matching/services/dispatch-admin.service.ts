@@ -23,6 +23,7 @@ import { MatchingOrchestratorService } from './matching-orchestrator.service';
 import { BeauticianLocationIndexService } from './beautician-location-index.service';
 import { HomeServiceSettingsService } from '../../services/home-service-settings.service';
 import { DISPATCH_EVENT_TYPES } from '../constants/dispatch-event.constants';
+import { ACTIVE_HOME_SERVICE_STATUSES } from '../../home-service-booking/home-service-status.service';
 import {
   DISPATCH_PROBATION_JOB,
   DISPATCH_PROBATION_QUEUE,
@@ -65,7 +66,7 @@ export class DispatchAdminService {
       where: {
         id: bookingId,
         assignedBeauticianUserId: beauticianUserId,
-        status: BookingStatus.ASSIGNED,
+        status: { in: [...ACTIVE_HOME_SERVICE_STATUSES] },
       },
       select: { id: true, assignedBeauticianUserId: true },
     });
@@ -87,6 +88,7 @@ export class DispatchAdminService {
         bookingType: true,
         totalAmount: true,
         dispatchStatus: true,
+        assignedBeauticianUserId: true,
       },
     });
 
@@ -94,11 +96,18 @@ export class DispatchAdminService {
       throw new NotFoundException('Booking not found');
     }
 
-    if (booking.status !== BookingStatus.PENDING_ASSIGNMENT) {
+    const isPendingAssignment = booking.status === BookingStatus.PENDING_ASSIGNMENT;
+    const isReassignment = (ACTIVE_HOME_SERVICE_STATUSES as readonly string[]).includes(
+      booking.status as string,
+    );
+
+    if (!isPendingAssignment && !isReassignment) {
       throw new BadRequestException(
-        'Force assign is only allowed for bookings awaiting beautician assignment',
+        'Force assign is only allowed for bookings awaiting assignment or already assigned (reassign)',
       );
     }
+
+    const previousBeauticianUserId = booking.assignedBeauticianUserId ?? null;
 
     const requiredServiceIds = extractHomeServiceIds(
       normalizeBookingServices(booking.services),
@@ -221,18 +230,47 @@ export class DispatchAdminService {
 
     await this.dispatchState.recordEvent(
       bookingId,
-      DISPATCH_EVENT_TYPES.FORCE_ASSIGNED,
+      isReassignment ? DISPATCH_EVENT_TYPES.REASSIGNED : DISPATCH_EVENT_TYPES.FORCE_ASSIGNED,
       {
         beauticianUserId,
         adminUserId,
         offerId: offer.id,
         previousDispatchStatus: booking.dispatchStatus,
+        previousBeauticianUserId,
         broughtOnlineFromOffline,
+        isReassignment,
       },
       `force-assign:${bookingId}:${beauticianUserId}`,
     );
 
     await this.locationIndex.remove(beauticianUserId);
+
+    if (isReassignment && previousBeauticianUserId && previousBeauticianUserId !== beauticianUserId) {
+      const activeCount = await this.prisma.booking.count({
+        where: {
+          assignedBeauticianUserId: previousBeauticianUserId,
+          status: { in: [...ACTIVE_HOME_SERVICE_STATUSES] },
+        },
+      });
+      if (activeCount === 0) {
+        const prevProfile = await this.prisma.beauticianProfile.update({
+          where: { userId: previousBeauticianUserId },
+          data: { availabilityStatus: AvailabilityStatus.ONLINE },
+          select: { currentLat: true, currentLng: true, lastLocationUpdate: true, assignedServices: { select: { serviceId: true } } },
+        });
+        if (prevProfile.currentLat != null && prevProfile.currentLng != null) {
+          try {
+            await this.locationIndex.upsertOnline({
+              userId: previousBeauticianUserId,
+              lat: Number(prevProfile.currentLat),
+              lng: Number(prevProfile.currentLng),
+              serviceIds: prevProfile.assignedServices.map((s) => s.serviceId),
+              updatedAt: prevProfile.lastLocationUpdate ?? undefined,
+            });
+          } catch {}
+        }
+      }
+    }
 
     await this.commsSessionService.openForBookingSafely(bookingId);
 
@@ -241,21 +279,26 @@ export class DispatchAdminService {
       BookingStatus.ASSIGNED,
       {
         assignedBeauticianUserId: beauticianUserId,
+        previousBeauticianUserId: previousBeauticianUserId ?? undefined,
       },
     );
 
     this.logger.warn(
-      `Booking ${bookingId} force-assigned to beautician ${beauticianUserId} by admin ${adminUserId}`,
+      `Booking ${bookingId} ${isReassignment ? 'reassigned' : 'force-assigned'} to beautician ${beauticianUserId} by admin ${adminUserId}${isReassignment && previousBeauticianUserId ? ` (from ${previousBeauticianUserId})` : ''}`,
     );
 
     return {
       bookingId,
       beauticianUserId,
+      previousBeauticianUserId,
+      isReassignment,
       offerId: offer.id,
       broughtOnlineFromOffline,
-      message: broughtOnlineFromOffline
-        ? 'Beautician was OFFLINE, set to ONLINE, then force-assigned to the booking.'
-        : 'Booking has been force-assigned to the beautician.',
+      message: isReassignment
+        ? `Booking reassigned from previous beautician to new beautician${broughtOnlineFromOffline ? ' (new beautician was OFFLINE, set to ONLINE)' : ''}.`
+        : broughtOnlineFromOffline
+          ? 'Beautician was OFFLINE, set to ONLINE, then force-assigned to the booking.'
+          : 'Booking has been force-assigned to the beautician.',
     };
   }
 

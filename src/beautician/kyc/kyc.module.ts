@@ -12,6 +12,7 @@ import { KycStatusService } from './services/kyc-status.service';
 import { QoreidWebhookService } from './services/qoreid-webhook.service';
 import { KycProfilePhotoService } from './services/kyc-profile-photo.service';
 import { KycVideoService } from './services/kyc-video.service';
+import { KycVideoMultipartService } from './services/kyc-video-multipart.service';
 import { QoreidProfilePhotoProcessor } from './processors/qoreid-profile-photo.processor';
 import { BeauticianNotificationModule } from '../notification/notification.module';
 import { OnboardingNotificationsModule } from '../../notifications/onboarding/onboarding-notifications.module';
@@ -36,9 +37,10 @@ import { BeauticianMeCacheService } from '../services/beautician-me-cache.servic
     QoreidWebhookService,
     KycProfilePhotoService,
     KycVideoService,
+    KycVideoMultipartService,
     QoreidProfilePhotoProcessor,
     BeauticianMeCacheService,
   ],
-  exports: [KycStatusService, QoreidSessionService, KycVideoService],
+  exports: [KycStatusService, QoreidSessionService, KycVideoService, KycVideoMultipartService],
 })
 export class KycModule {}

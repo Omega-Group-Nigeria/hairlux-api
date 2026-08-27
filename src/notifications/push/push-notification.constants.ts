@@ -50,12 +50,16 @@ export const PUSH_COPY: Record<
 
   // ── Job (beautician + completion request) — §3.3 ─────────────────────────
   [PUSH_EVENTS.JOB_OFFER]: {
-    title: 'New job offer',
-    body: 'You have a new home-service job. Est. earnings ₦{{estEarnings}}.',
+    title: 'New order • {{bookingCode}} • ₦{{estEarnings}}',
+    body: '{{distanceKm}} km • Est. ₦{{estEarnings}}',
   },
   [PUSH_EVENTS.JOB_OFFER_TAKEN]: {
     title: 'Job offer no longer available',
     body: 'Another beautician accepted this job.',
+  },
+  [PUSH_EVENTS.JOB_OFFER_EXPIRED]: {
+    title: 'Job offer expired',
+    body: 'This job offer has expired.',
   },
   [PUSH_EVENTS.JOB_ARRIVAL_VERIFIED]: {
     title: 'Arrival confirmed',

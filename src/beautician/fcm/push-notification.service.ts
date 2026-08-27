@@ -78,6 +78,12 @@ export class PushNotificationService implements OnModuleInit {
       return { sent: 0, skipped: true };
     }
 
+    const type = payload.data?.type ?? '';
+    const isJobOffer = type === 'job.offer' || type === 'job_offer';
+    const isJobOfferTaken = type === 'job.offer_taken' || type === 'job_offer_taken';
+    const isJobOfferExpired = type === 'job.offer_expired' || type === 'job_offer_expired';
+    const isTimeSensitive = isJobOffer || isJobOfferTaken || isJobOfferExpired;
+
     let sent = 0;
     for (const entry of tokens) {
       try {
@@ -90,17 +96,48 @@ export class PushNotificationService implements OnModuleInit {
           data: this.stringifyData(payload.data),
           android: {
             priority: 'high',
+            notification: isJobOffer
+              ? {
+                  channelId: 'hairlux_orders_high',
+                  priority: 'max',
+                  visibility: 'public',
+                  sound: 'order_alert.wav',
+                  defaultSound: false,
+                  sticky: false,
+                  notificationCount: 1,
+                  tag: payload.data?.bookingId,
+                }
+              : isJobOfferExpired || isJobOfferTaken
+                ? {
+                    channelId: 'hairlux_orders_high',
+                    tag: payload.data?.bookingId,
+                  }
+                : undefined,
           },
-          apns: {
-            headers: {
-              'apns-priority': '10',
-            },
-            payload: {
-              aps: {
-                sound: 'default',
+          apns: isTimeSensitive
+            ? {
+                headers: {
+                  'apns-priority': '10',
+                  'apns-push-type': 'alert',
+                },
+                payload: {
+                  aps: {
+                    sound: isJobOffer ? { critical: true, name: 'order.caf', volume: 1 } as never : 'default',
+                    'interruption-level': isJobOffer ? 'time-sensitive' : 'active',
+                    category: isJobOffer ? 'ORDER_OFFER' : undefined,
+                  },
+                },
+              }
+            : {
+                headers: {
+                  'apns-priority': '10',
+                },
+                payload: {
+                  aps: {
+                    sound: 'default',
+                  },
+                },
               },
-            },
-          },
         });
         sent += 1;
       } catch (error) {

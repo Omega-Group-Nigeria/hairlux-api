@@ -26,7 +26,7 @@ describe('JobPushNotifier', () => {
     expect(dispatch.sendEvent).toHaveBeenCalledWith(
       'be1',
       PUSH_EVENTS.JOB_OFFER,
-      { estEarnings: '12,000' },
+      { estEarnings: '12,000', bookingCode: '', distanceKm: '' },
       {
         bookingId: 'b1',
         estEarnings: '12000',

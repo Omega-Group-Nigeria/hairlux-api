@@ -47,6 +47,11 @@ export class StreamWebhookService {
   async processEvent(
     event: WHEvent,
   ): Promise<{ processed: boolean; duplicate: boolean }> {
+    if (event.type === 'call.ring') {
+      await this.enforceRingParticipant(event as unknown as { call_cid: string; user?: { id: string } });
+      return { processed: true, duplicate: false };
+    }
+
     if (!TRACKED_STREAM_WEBHOOK_TYPES.has(event.type)) {
       return { processed: false, duplicate: false };
     }
@@ -87,6 +92,50 @@ export class StreamWebhookService {
     }
 
     return { processed: true, duplicate: false };
+  }
+
+  private async enforceRingParticipant(event: { call_cid: string; user?: { id: string } }): Promise<void> {
+    const bookingId = parseBookingIdFromStreamCallCid(event.call_cid);
+    if (!bookingId) {
+      throw new Error('Invalid call_cid for ring enforcement');
+    }
+
+    const session = await this.prisma.bookingCommsSession.findUnique({
+      where: { bookingId },
+    });
+
+    if (!session || session.status !== 'ACTIVE') {
+      throw new Error(`Ring rejected: no ACTIVE comms session for booking ${bookingId}`);
+    }
+
+    const callerId = event.user?.id;
+    const isParticipant = callerId === session.customerUserId || callerId === session.beauticianUserId;
+
+    if (!callerId || !isParticipant) {
+      throw new Error(`Ring rejected: caller ${callerId ?? 'unknown'} is not a participant for booking ${bookingId}`);
+    }
+
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { status: true },
+    });
+
+    if (!booking) {
+      throw new Error(`Ring rejected: booking ${bookingId} not found`);
+    }
+
+    const canUse = session.status === 'ACTIVE' && [
+      'ASSIGNED',
+      'EN_ROUTE',
+      'ARRIVED',
+      'ARRIVED_VERIFIED',
+      'IN_PROGRESS',
+      'AWAITING_CUSTOMER_CONFIRM',
+    ].includes(booking.status);
+
+    if (!canUse) {
+      throw new Error(`Ring rejected: booking ${bookingId} status ${booking.status} cannot call`);
+    }
   }
 
   private mapEvent(event: WHEvent): MappedStreamEvent | null {

@@ -5,6 +5,7 @@ export const TRACKED_STREAM_WEBHOOK_TYPES = new Set([
   'call.session_started',
   'call.session_ended',
   'call.ended',
+  'call.ring',
 ]);
 
 export const STREAM_EVENT_TYPE_MAP: Record<string, BookingCommsEventType> = {
