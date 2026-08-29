@@ -83,6 +83,10 @@ export class InventoryService {
         if (dto.category === 'FOR_SALE' && (dto.price === undefined || dto.price === null)) {
             throw new BadRequestException('A price is required for items in the "For Sale" category');
         }
+        if (dto.productId) {
+            const product = await this.prisma.inventoryProduct.findUnique({ where: { id: dto.productId } });
+            if (!product) throw new BadRequestException('Product master record not found');
+        }
 
         return this.prisma.inventoryItem.create({
             data: {
@@ -90,6 +94,7 @@ export class InventoryService {
                 category: dto.category,
                 branchId,
                 supplierId: dto.supplierId,
+                productId: dto.productId,
                 unit: dto.unit,
                 lowStockThreshold: dto.lowStockThreshold ?? 5,
                 // New stock always starts unallocated in Store, per the
@@ -162,6 +167,10 @@ export class InventoryService {
         if (nextCategory === 'FOR_SALE' && !nextPrice) {
             throw new BadRequestException('A price is required for items in the "For Sale" category');
         }
+        if (dto.productId) {
+            const product = await this.prisma.inventoryProduct.findUnique({ where: { id: dto.productId } });
+            if (!product) throw new BadRequestException('Product master record not found');
+        }
 
         return this.prisma.inventoryItem.update({
             where: { id },
@@ -169,6 +178,7 @@ export class InventoryService {
                 name: dto.name,
                 category: dto.category,
                 ...(dto.supplierId !== undefined && { supplierId: dto.supplierId }),
+                ...(dto.productId !== undefined && { productId: dto.productId }),
                 unit: dto.unit,
                 lowStockThreshold: dto.lowStockThreshold,
                 expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,

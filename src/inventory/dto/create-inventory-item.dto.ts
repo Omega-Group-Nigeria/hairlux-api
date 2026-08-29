@@ -44,4 +44,16 @@ export class CreateInventoryItemDto {
     @IsNumber()
     @Min(0)
     price?: number;
+
+    @ApiPropertyOptional({
+        description:
+            'Links this item to a global InventoryProduct master record at creation time -- ' +
+            'items created here directly (rather than via goods receiving, which links this ' +
+            'automatically) should generally set this too, since several downstream features ' +
+            '(the stock-alerts-to-purchase-request bridge, service product-consumption ' +
+            'recipes, profitability/COGS reporting) depend on it.',
+    })
+    @IsOptional()
+    @IsUUID()
+    productId?: string;
 }
