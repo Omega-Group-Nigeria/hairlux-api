@@ -40,4 +40,17 @@ export class UpdateInventoryItemDto {
     @IsNumber()
     @Min(0)
     price?: number;
+
+    @ApiPropertyOptional({
+        description:
+            'Links this item to a global InventoryProduct master record. Required for several ' +
+            'downstream features (the stock-alerts-to-purchase-request bridge, service ' +
+            'product-consumption recipes, profitability/COGS reporting) -- an item created ' +
+            'before the product master-data system existed, or added directly rather than via ' +
+            'goods receiving, may never have been linked. Send null to clear an existing link.',
+        nullable: true,
+    })
+    @IsOptional()
+    @IsUUID()
+    productId?: string;
 }

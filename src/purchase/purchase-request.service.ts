@@ -103,7 +103,10 @@ export class PurchaseRequestService {
             throw new BadRequestException('One or more selected alerts have already been resolved');
         }
         if (!allAlerts.every((a) => a.item.productId)) {
-            throw new BadRequestException('One or more alerted items are not linked to a product master record');
+            const unlinkedNames = allAlerts.filter((a) => !a.item.productId).map((a) => a.item.name);
+            throw new BadRequestException(
+                `"${unlinkedNames.join('", "')}" ${unlinkedNames.length > 1 ? 'are' : 'is'} not linked to a product master record -- open the item on the Inventory Items page and set its "Linked Product" field, then try again`,
+            );
         }
         const branchId = allAlerts[0].item.branchId;
         if (!allAlerts.every((a) => a.item.branchId === branchId)) {
