@@ -306,6 +306,18 @@ enum StaffEmploymentStatus {
   ARCHIVED
 }
 
+/// Payroll System Developer Implementation Guide, section 9-11. Determines
+/// which sections of the payroll calculation and payslip apply to a staff
+/// member -- SALARY is the plain, non-commission case implied by the guide's
+/// "Salary employees" section but never given its own explicit type name
+/// there, so it's spelled out here for clarity against the other three.
+enum CompensationType {
+  SALARY
+  SALARY_TO_COMMISSION
+  SALARY_PLUS_COMMISSION
+  COMMISSION
+}
+
 enum StaffEmploymentType {
   FULL_TIME
   PART_TIME
@@ -333,15 +345,6 @@ enum OnboardingItemReviewStatus {
   NOT_STARTED
   SUBMITTED
   COMPLETE
-}
-
-enum CompanyDocumentType {
-  EMPLOYMENT_CONTRACT
-  NDA
-  IT_ACCEPTABLE_USE_POLICY
-  STAFF_HANDBOOK
-  CODE_OF_CONDUCT
-  DATA_PROTECTION_POLICY
 }
 
 enum JobPostingStatus {
@@ -478,15 +481,35 @@ model StaffOnboardingItem {
   @@map("staff_onboarding_items")
 }
 
-model CompanyDocument {
-  id         String              @id @default(uuid())
-  type       CompanyDocumentType
-  version    Int                 @default(1)
-  title      String
-  contentUrl String              @map("content_url")
-  isActive   Boolean             @default(true) @map("is_active")
-  createdAt  DateTime            @default(now()) @map("created_at")
+/**
+ * Dev Feedback Round 5, item #2: "allow custom document types for
+ * uploads." The 6 original values are seeded here as isSystem rows
+ * (kept, non-deletable, since existing CompanyDocument/acknowledgment
+ * data references them) alongside whatever an admin adds afterward --
+ * Admin-manageable master data, same pattern as CommissionPlan.
+ */
+model DocumentType {
+  id       String   @id @default(uuid())
+  name     String   @unique
+  isSystem Boolean  @default(false) @map("is_system")
+  isActive Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
 
+  documents CompanyDocument[]
+
+  @@map("document_types")
+}
+
+model CompanyDocument {
+  id             String   @id @default(uuid())
+  documentTypeId String   @map("document_type_id")
+  version        Int      @default(1)
+  title          String
+  contentUrl     String   @map("content_url")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  documentType    DocumentType                   @relation(fields: [documentTypeId], references: [id])
   acknowledgments StaffDocumentAcknowledgment[]
 
   @@map("company_documents")
@@ -537,6 +560,27 @@ enum StockMovementType {
   TRANSFER_OUT // moved to another branch
   TRANSFER_IN // received from another branch
   ALLOCATED // internal move between stock types at the same branch (e.g. Store -> Sales)
+}
+
+/**
+ * Procurement/Inventory/Finance Integration, Phase 7. The spec's own
+ * fixed category list for a stock adjustment's reason -- constrains
+ * StockMovement.reasonCategory below. The pre-existing free-text
+ * StockMovement.reason field is kept as-is alongside this, for the
+ * specific detail a category alone can't capture (e.g. "DAMAGED" +
+ * "3 units crushed in transit") -- OTHER exists in the spec's own list
+ * precisely because the fixed categories won't always be enough on
+ * their own.
+ */
+enum StockAdjustmentReason {
+  DAMAGED
+  LOST
+  EXPIRED
+  FOUND
+  COUNTING_ERROR
+  OPENING_BALANCE
+  CORRECTION
+  OTHER
 }
 
 // The three-way split every branch's stock is now tracked across, per the
@@ -722,6 +766,7 @@ model Purchase {
   lines           PurchaseLine[]
   payments        PurchasePayment[]
   goodsReceipts   GoodsReceipt[]
+  ledgerAdjustments VendorLedgerAdjustment[]
 
   @@index([branchId, status])
   @@index([vendorId])
@@ -817,6 +862,45 @@ model GoodsReceiptLine {
   @@index([goodsReceiptId])
   @@index([purchaseLineId])
   @@map("goods_receipt_lines")
+}
+
+enum VendorLedgerAdjustmentType {
+  CREDIT // reduces what Hairlux owes the vendor (e.g. a credit note for damaged/returned goods)
+  DEBIT  // increases what Hairlux owes the vendor (e.g. a pricing correction found after the fact)
+}
+
+/**
+ * Procurement/Inventory/Finance Integration, Phase 5 (Vendor Ledger).
+ * The spec's own words: the ledger is "fully derived/calculated from
+ * Procurement + Payment + Receiving + Adjustments... never manually
+ * maintained as a separate balance." Purchases, payments, and receiving
+ * are already fully modeled (Purchase.grandTotal/amountPaid,
+ * PurchasePayment, GoodsReceipt/GoodsReceiptLine) -- this is the one
+ * missing input: a standalone credit/debit entry against a vendor that
+ * isn't itself a purchase or a payment. The ledger balance itself is
+ * computed on read (VendorLedgerService), never stored here or anywhere
+ * else -- this table holds only the adjustment inputs to that
+ * computation, immutable and append-only once created (spec: "completed
+ * financial/stock transactions should use archive/soft-delete... rather
+ * than permanent deletion").
+ */
+model VendorLedgerAdjustment {
+  id                 String                     @id @default(uuid())
+  vendorId           String                     @map("vendor_id")
+  type               VendorLedgerAdjustmentType
+  amount             Decimal                    @db.Decimal(12, 2)
+  reason             String
+  referencePurchaseId String?                   @map("reference_purchase_id")
+  createdById        String?                    @map("created_by_id")
+  createdAt          DateTime                   @default(now()) @map("created_at")
+
+  vendor            Supplier  @relation(fields: [vendorId], references: [id])
+  referencePurchase Purchase? @relation(fields: [referencePurchaseId], references: [id], onDelete: SetNull)
+  createdBy         Staff?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([vendorId])
+  @@index([referencePurchaseId])
+  @@map("vendor_ledger_adjustments")
 }
 
 enum DisciplinaryActionType {
@@ -1111,8 +1195,35 @@ model Service {
   beauticianServices     BeauticianService[]
   commissionRateOverride ServiceCommissionRate?
   salonBookingLines      SalonBookingService[]
+  productConsumption     ServiceProductConsumption[]
 
   @@map("services")
+}
+
+/**
+ * Procurement/Inventory/Finance Integration, Phase 6. A service's
+ * "recipe" -- e.g. Hair Treatment = 1 Shampoo + 1 Conditioner + 1
+ * Treatment Cream. Deliberately keyed to InventoryProduct (the global,
+ * branch-independent master record) rather than InventoryItem (the
+ * per-branch stock row) -- the recipe itself is the same everywhere a
+ * service is performed; only the actual deduction at completion time
+ * needs to resolve down to a specific branch's InventoryItem for that
+ * product. Spec: "marking a service Completed automatically deducts
+ * from Usage Stock and records Product Usage -- staff never manually
+ * deduct."
+ */
+model ServiceProductConsumption {
+  id        String @id @default(uuid())
+  serviceId String @map("service_id")
+  productId String @map("product_id")
+  quantity  Int    @default(1)
+
+  service Service          @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  product InventoryProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, productId])
+  @@index([productId])
+  @@map("service_product_consumption")
 }
 
 /// Optional per-service beautician commission override.
@@ -1477,6 +1588,12 @@ model SalonBookingInventoryItem {
   itemId    String   @map("item_id")
   quantity  Int
   unitPrice Decimal? @map("unit_price") @db.Decimal(10, 2)
+  // Phase 8: same cost-basis snapshot as ProductSaleItem.unitCost -- a
+  // product sold during a booking is still a genuine product sale for
+  // profitability-reporting purposes, and should count the same way.
+  // Only meaningful alongside unitPrice (sellable, FOR_SALE lines);
+  // non-billed CONSUMED lines have no revenue to net a cost against.
+  unitCost  Decimal? @map("unit_cost") @db.Decimal(10, 2)
   createdAt DateTime @default(now()) @map("created_at")
 
   booking SalonBooking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
@@ -1488,6 +1605,58 @@ model SalonBookingInventoryItem {
 
 // One row per completed booking, enforced by the unique constraint on
 // bookingId — mirrors the idempotency rule from the SRS's Commission module.
+/// Payroll Developer Implementation Guide, section 11. A reusable, named
+/// commission template -- staff members reference one via
+/// Staff.commissionPlanId, so the same plan can be shared across a role or
+/// branch, or a staff member can have their own dedicated one. Deliberately
+/// carries no creator/updater fields of its own: SystemAuditLog already
+/// captures who changed a plan and when, and every actual commission
+/// record this plan produces freezes its own rate/eligibility at
+/// calculation time (SalonBookingCommission.rateApplied), so the plan
+/// itself never needs to answer "what rate did we use historically" --
+/// only "what rate applies going forward."
+model CommissionPlan {
+  id   String @id @default(uuid())
+  name String
+
+  commissionRate Decimal @map("commission_rate") @db.Decimal(5, 4) // percentage as decimal, e.g. 0.15 = 15%
+
+  /// Which services generate commission under this plan. Empty array means
+  /// every service is eligible -- matches the DiscountCode.targetBranchIds
+  /// convention already used elsewhere in this schema (empty = no
+  /// restriction), rather than requiring an explicit "all services"
+  /// sentinel value.
+  eligibleServiceIds String[] @map("eligible_service_ids")
+
+  /// Optional scoping -- null means this plan isn't restricted to a
+  /// specific branch/role, so it can be assigned to any staff member
+  /// regardless of where they work or what role they hold.
+  applicableBranchId String? @map("applicable_branch_id")
+  applicableRole     String? @map("applicable_role")
+
+  effectiveDate DateTime @map("effective_date") @db.Date
+
+  /// "Only approved eligible transactions generate commission" -- when
+  /// true, a SalonBookingCommission produced under this plan starts in a
+  /// pending state and needs explicit admin approval before it's included
+  /// in payroll; when false, eligible transactions count automatically.
+  requiresApproval Boolean @default(false) @map("requires_approval")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  applicableBranch StaffLocation? @relation(fields: [applicableBranchId], references: [id], onDelete: SetNull)
+  assignedStaff    Staff[]        @relation("StaffCommissionPlan")
+  commissions      SalonBookingCommission[]
+  payslipsUsedOn   Payslip[]
+
+  @@index([applicableBranchId])
+  @@index([isActive])
+  @@map("commission_plans")
+}
+
 model SalonBookingCommission {
   id           String   @id @default(uuid())
   bookingId    String   @unique @map("booking_id")
@@ -1496,10 +1665,29 @@ model SalonBookingCommission {
   rateApplied  Decimal  @map("rate_applied") @db.Decimal(5, 4)
   calculatedAt DateTime @default(now()) @map("calculated_at")
 
-  booking SalonBooking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  staff   Staff        @relation("SalonBookingCommissionStaff", fields: [staffId], references: [id])
+  /// Nullable -- older records predating this feature, and any commission
+  /// still coming from a staff member's plain Staff.commissionRate rather
+  /// than a formal plan, won't have one.
+  commissionPlanId String? @map("commission_plan_id")
+
+  /// Payroll Developer Implementation Guide, section 11: "only approved
+  /// eligible transactions generate commission" -- when the applied plan
+  /// has requiresApproval set, this starts PENDING and an admin must
+  /// approve it before payroll will count it; when the plan doesn't
+  /// require approval (or there's no plan at all, i.e. the plain
+  /// Staff.commissionRate path), it's created already APPROVED.
+  approvalStatus  ApprovalStatus @default(APPROVED) @map("approval_status")
+  approvedById    String?                    @map("approved_by_id")
+  approvedAt      DateTime?                  @map("approved_at")
+
+  booking        SalonBooking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  staff          Staff           @relation("SalonBookingCommissionStaff", fields: [staffId], references: [id])
+  commissionPlan CommissionPlan? @relation(fields: [commissionPlanId], references: [id], onDelete: SetNull)
+  approvedBy     Staff?          @relation("SalonBookingCommissionApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
 
   @@index([staffId, calculatedAt])
+  @@index([commissionPlanId])
+  @@index([approvalStatus])
   @@map("salon_booking_commissions")
 }
 
@@ -2047,9 +2235,30 @@ model Staff {
   archivedAt              DateTime?             @map("archived_at")
   birthdayLastEmailedYear Int?                  @map("birthday_last_emailed_year")
 
+  /// Payroll Developer Implementation Guide, sections 4 and 9: required for
+  /// mid-month proration and the SALARY_TO_COMMISSION cutoff calculation.
+  /// Deliberately its own explicit field rather than derived from the
+  /// earliest StaffEmploymentHistory row -- that model tracks role/location
+  /// changes and isn't guaranteed to have an initial row for every staff
+  /// member, so deriving from it would be fragile for a figure this
+  /// calculation-critical.
+  hireDate DateTime? @map("hire_date") @db.Date
+
+  /// Section 9-11: which calculation path applies. Defaults to SALARY
+  /// (today's only real path) rather than leaving it nullable, so every
+  /// existing staff row has an unambiguous, valid type from the moment
+  /// this column exists.
+  compensationType CompensationType @default(SALARY) @map("compensation_type")
+
   commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 4) // overrides the service's own rate when set; percentage as decimal e.g. 0.15 = 15%
 
-  salaryOnlyFirstMonth Boolean @default(false) @map("salary_only_first_month")
+  /// Payroll Developer Implementation Guide, section 11 -- when set, this
+  /// staff member's commission is calculated from the referenced plan's
+  /// rate/eligible-services/approval rules instead of the plain
+  /// commissionRate above. Nullable: a plan is only meaningful once one
+  /// has actually been created and assigned; commissionRate above remains
+  /// the fallback for SALARY_PLUS_COMMISSION staff with no formal plan yet.
+  commissionPlanId String? @map("commission_plan_id")
 
   // Fast-read snapshot of current pay — the audited history of changes
   // lives in StaffCompensationHistory. Distinct from OfferLetter.baseSalary,
@@ -2132,6 +2341,7 @@ model Staff {
   addressVerificationsRequested StaffAddressVerification[] @relation("AddressVerificationRequestedBy")
   purchaseRequestsSubmitted PurchaseRequest[]
   purchasePaymentsRecorded  PurchasePayment[]
+  vendorLedgerAdjustmentsCreated VendorLedgerAdjustment[]
   goodsReceiptsReceived     GoodsReceipt[]
   compensationHistory     StaffCompensationHistory[] @relation("StaffCompensationHistory")
   compensationChangesMade StaffCompensationHistory[] @relation("CompensationChangedBy")
@@ -2148,6 +2358,9 @@ model Staff {
   payrollAuditSubjectOf   PayrollAuditLog[]          @relation("PayrollAuditSubject")
   systemAuditActions      SystemAuditLog[]           @relation("SystemAuditActor")
   systemAuditSubjectOf    SystemAuditLog[]           @relation("SystemAuditSubject")
+  commissionPlan             CommissionPlan?           @relation("StaffCommissionPlan", fields: [commissionPlanId], references: [id], onDelete: SetNull)
+  approvedCommissions        SalonBookingCommission[]  @relation("SalonBookingCommissionApprovedBy")
+  payslipCutoffOverridesMade Payslip[]                 @relation("PayslipCutoffOverrideBy")
 
   @@index([employmentStatus])
   @@index([locationId])
@@ -2214,9 +2427,33 @@ enum PayrollPeriodStatus {
   RELEASED // Payday switched on for this period — staff can withdraw
 }
 
+/// Payroll Developer Implementation Guide, section 15: "Show clear states:
+/// unavailable, pending, published, corrected, and superseded." DRAFT here
+/// covers both "unavailable" and "pending" from the guide's wording (there
+/// is genuinely nothing to distinguish between them before a period leaves
+/// DRAFT -- see PayrollPeriodStatus above, which already gates staff
+/// visibility at the period level).
+enum PayslipStatus {
+  DRAFT
+  PUBLISHED
+  CORRECTED
+  SUPERSEDED
+  CANCELLED
+}
+
 enum PayslipAdjustmentType {
   BONUS
   DEDUCTION
+}
+
+// Dev Feedback Round 5, item #3: same correction pattern as Payslip
+// itself (status/supersedesId/correctionReference) -- a correction
+// keeps the original row (SUPERSEDED) and creates a new one, rather
+// than overwriting amount in place, so "original amount, revised
+// amount, reason, user, timestamp" is never lost.
+enum PayrollAdjustmentStatus {
+  ACTIVE
+  SUPERSEDED
 }
 
 enum StaffWalletTransactionType {
@@ -2321,6 +2558,11 @@ model Payslip {
   payrollPeriodId String @map("payroll_period_id")
   staffId         String @map("staff_id")
 
+  /// Human-readable, unique reference shown on the payslip itself --
+  /// distinct from `id` (a UUID isn't the kind of reference an employee
+  /// reads over the phone to their HR office). Assigned once, at creation.
+  payslipReference String @unique @map("payslip_reference")
+
   baseSalary           Decimal @map("base_salary") @db.Decimal(10, 2)
   allowances           Decimal @default(0) @db.Decimal(10, 2)
   overtimeAmount       Decimal @default(0) @map("overtime_amount") @db.Decimal(10, 2)
@@ -2343,15 +2585,75 @@ model Payslip {
 
   isFirstMonth Boolean @default(false) @map("is_first_month")
 
+  // ── Payroll Developer Implementation Guide, section 15 "Salary fields" ──
+  // Show only when salary applies (compensationType is not COMMISSION).
+  // salaryEffectiveDate/scheduledWorkdays/etc. are all frozen here at
+  // calculation time rather than derived live from Staff/StaffCompensationHistory
+  // at display time, matching the guide's "generate payslips from immutable
+  // finalized payroll data" and "finalized payroll must retain the rate used"
+  // requirements -- a later change to the staff record must never alter an
+  // already-finalized payslip's numbers.
+  salaryEffectiveDate        DateTime? @map("salary_effective_date") @db.Date
+  fullMonthScheduledWorkdays Int?      @map("full_month_scheduled_workdays")
+  applicableScheduledWorkdays Int?     @map("applicable_scheduled_workdays")
+  missedWorkdays              Int?     @map("missed_workdays")
+  approvedExtraWorkdaysCount  Int?     @map("approved_extra_workdays_count")
+  payableWorkdays             Decimal? @map("payable_workdays") @db.Decimal(5, 2)
+  dailyRate                   Decimal? @map("daily_rate") @db.Decimal(10, 2)
+  salaryEarned                Decimal? @map("salary_earned") @db.Decimal(10, 2)
+
+  // ── "First applicable payroll month" fields — show only when relevant ──
+  staffHireDateSnapshot DateTime? @map("staff_hire_date_snapshot") @db.Date
+
+  // ── "Salary-to-commission fields" — show only for SALARY_TO_COMMISSION ──
+  cutoffDayUsed          Int?      @map("cutoff_day_used")
+  cutoffClassification   String?   @map("cutoff_classification") // "BEFORE_CUTOFF" | "ON_OR_AFTER_CUTOFF"
+  salaryPeriodStart      DateTime? @map("salary_period_start") @db.Date
+  salaryPeriodEnd        DateTime? @map("salary_period_end") @db.Date
+  commissionPeriodStart  DateTime? @map("commission_period_start") @db.Date
+  commissionPeriodEnd    DateTime? @map("commission_period_end") @db.Date
+  transitionDate         DateTime? @map("transition_date") @db.Date
+  /// "Any cutoff override requires authorized admin permission, a reason,
+  /// and an audit record." The audit record itself lives in SystemAuditLog;
+  /// these two fields let the payslip display the override inline without
+  /// needing a join back to that log.
+  cutoffOverrideReason   String?   @map("cutoff_override_reason")
+  cutoffOverrideById     String?   @map("cutoff_override_by_id")
+
+  // ── "Commission fields" — show only when commission applies ──
+  commissionPlanIdUsed       String?   @map("commission_plan_id_used")
+  commissionRateUsed         Decimal?  @map("commission_rate_used") @db.Decimal(5, 4)
+  commissionRateEffectiveDate DateTime? @map("commission_rate_effective_date") @db.Date
+
+  // ── Status / correction model (section 15, "Staff portal and download requirements") ──
+  status              PayslipStatus @default(DRAFT)
+  publishedAt         DateTime?     @map("published_at")
+  supersedesId        String?       @unique @map("supersedes_id") // the older payslip this one replaces, if this IS a correction
+  correctionReference String?       @map("correction_reference") // human-readable note on why this correction was issued
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   payrollPeriod PayrollPeriod       @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
   staff         Staff               @relation("StaffPayslips", fields: [staffId], references: [id])
   adjustments   PayrollAdjustment[]
+  cutoffOverrideBy Staff?           @relation("PayslipCutoffOverrideBy", fields: [cutoffOverrideById], references: [id], onDelete: SetNull)
+  commissionPlanUsed CommissionPlan? @relation(fields: [commissionPlanIdUsed], references: [id], onDelete: SetNull)
+  supersedes    Payslip?            @relation("PayslipCorrection", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy  Payslip?            @relation("PayslipCorrection")
 
-  @@unique([payrollPeriodId, staffId])
+  // Dev note: NOT @@unique([payrollPeriodId, staffId]) any more -- a
+  // correction (Phase 3) needs a second row to coexist with the original
+  // for the same period+staff pair (the original stays, marked SUPERSEDED,
+  // per the guide's "retain the original" requirement). Real uniqueness
+  // among ACTIVE payslips is enforced by a partial unique index at the DB
+  // level instead (see migration 20260827160000), which Prisma's schema
+  // DSL can't express natively -- generatePayroll()'s upsert was rewritten
+  // as an explicit find-then-create/update for the same reason (it can no
+  // longer target a compound-unique Prisma doesn't know about).
+  @@index([payrollPeriodId, staffId])
   @@index([staffId])
+  @@index([status])
   @@map("payslips")
 }
 
@@ -2368,13 +2670,26 @@ model PayrollAdjustment {
   category        String
   amount          Decimal               @db.Decimal(10, 2)
   reason          String
+  // Dev Feedback Round 5, item #3 additions below. effectiveDate is the
+  // date the deduction/bonus actually pertains to (e.g. the date of the
+  // incident it charges for) -- distinct from createdAt, which is just
+  // when the record was entered. notes is a longer free-text field
+  // alongside reason's shorter categorical label, same split already
+  // used for StockAdjustment's reasonCategory + reason.
+  effectiveDate   DateTime?             @map("effective_date") @db.Date
+  notes           String?
+  status              PayrollAdjustmentStatus @default(ACTIVE)
+  supersedesId        String?                 @unique @map("supersedes_id")
+  correctionReason    String?                 @map("correction_reason")
   createdById     String?               @map("created_by_id") // nullable — admin-elevated action with no linked staff record
   createdAt       DateTime              @default(now()) @map("created_at")
 
-  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
-  payslip       Payslip?      @relation(fields: [payslipId], references: [id], onDelete: SetNull)
-  staff         Staff         @relation("StaffAdjustments", fields: [staffId], references: [id])
-  createdBy     Staff?        @relation("AdjustmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  payrollPeriod PayrollPeriod            @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+  payslip       Payslip?                 @relation(fields: [payslipId], references: [id], onDelete: SetNull)
+  staff         Staff                    @relation("StaffAdjustments", fields: [staffId], references: [id])
+  createdBy     Staff?                   @relation("AdjustmentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  supersedes    PayrollAdjustment?       @relation("AdjustmentCorrection", fields: [supersedesId], references: [id], onDelete: SetNull)
+  correctedBy   PayrollAdjustment?       @relation("AdjustmentCorrection")
 
   @@index([staffId])
   @@index([payrollPeriodId])
@@ -2509,6 +2824,11 @@ model PayrollSettings {
   // the Nigeria Tax Act 2025 (effective Jan 2026) — configurable here in
   // case Hairlux's accountant determines a different treatment applies.
   pensionRate   Decimal  @default(0.08) @map("pension_rate") @db.Decimal(5, 4)
+  // Payroll Developer Implementation Guide, section 9: "Apply the
+  // configured 15th cutoff rule" -- the guide's own wording implies this
+  // is a setting, not a hardcoded constant, even though every example in
+  // the document uses 15.
+  salaryToCommissionCutoffDay Int @default(15) @map("salary_to_commission_cutoff_day")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@map("payroll_settings")
@@ -2582,6 +2902,7 @@ model StaffLocation {
   purchaseRequests  PurchaseRequest[]
   purchases         Purchase[]
   managedByAdditionalStaff StaffManagedFinanceBranch[]
+  commissionPlans   CommissionPlan[]
 
   @@map("staff_locations")
 }
@@ -3331,6 +3652,7 @@ model Supplier {
   suppliedProducts    VendorProduct[]
   purchaseRequests    PurchaseRequest[]
   purchases           Purchase[]
+  ledgerAdjustments   VendorLedgerAdjustment[]
 
   @@index([type])
   @@map("suppliers")
@@ -3368,6 +3690,7 @@ model InventoryProduct {
   inventoryItems InventoryItem[]
   purchaseRequestLines PurchaseRequestLine[]
   purchaseLines        PurchaseLine[]
+  serviceConsumption   ServiceProductConsumption[]
 
   @@index([isActive])
   @@index([category])
@@ -3449,7 +3772,13 @@ model StockAdjustmentRequest {
   // adjustment record.
   stockType         StockType      @map("stock_type")
   quantityDelta     Int            @map("quantity_delta")
-  reason            String
+  // Phase 7: constrained category (spec's fixed list), required -- same
+  // "required, no default" convention as stockType above. reason itself
+  // relaxed to optional alongside it: still required in practice when
+  // reasonCategory is OTHER (enforced by AdjustStockDto), but a category
+  // like DAMAGED or FOUND is often self-explanatory without a note.
+  reasonCategory    StockAdjustmentReason @map("reason_category")
+  reason            String?
   requestedById     String?        @map("requested_by_id") // null = admin-initiated with no linked staff record
   approvalRequestId String         @unique @map("approval_request_id")
   status            ApprovalStatus @default(PENDING)
@@ -3492,6 +3821,16 @@ model ProductSaleItem {
   itemId    String  @map("item_id")
   quantity  Int
   unitPrice Decimal @map("unit_price") @db.Decimal(10, 2)
+  // Phase 8: the spec's own, previously-unfulfilled promise -- "Product
+  // Sale automatically records revenue, identifies cost, records COGS,
+  // calculates Gross Profit." Snapshotted from InventoryProduct.costPrice
+  // at the moment of sale, same "never recomputed later" principle used
+  // everywhere else in this project (Payslip's rate snapshots, Purchase's
+  // price snapshots) -- a cost change afterward must never silently
+  // rewrite a past sale's recorded margin. Nullable: InventoryItem.productId
+  // is itself optional, so cost is genuinely unknown for an item with no
+  // linked master record.
+  unitCost  Decimal? @map("unit_cost") @db.Decimal(10, 2)
 
   sale ProductSale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
   item InventoryItem @relation(fields: [itemId], references: [id])
@@ -3544,6 +3883,10 @@ model StockMovement {
   referenceId   String?           @map("reference_id") // links to a Sale, Transfer, or AdjustmentRequest
   performedById String?           @map("performed_by_id") // null = admin-initiated with no linked staff record
   reason        String? // required for ADJUSTMENT
+  // Phase 7: constrained category, required specifically for ADJUSTMENT
+  // movements -- nullable here too since every other movement type, and
+  // historical adjustments that predate this field, have none.
+  reasonCategory StockAdjustmentReason? @map("reason_category")
   createdAt     DateTime          @default(now()) @map("created_at")
 
   item        InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -3611,3 +3954,4 @@ model StockTransfer {
 
   @@map("stock_transfers")
 }
+ 

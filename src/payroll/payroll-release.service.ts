@@ -61,6 +61,37 @@ export class PayrollReleaseService {
             data: { status: 'RELEASED', approvedAt: new Date(), approvedById, releasedAt: new Date(), releasedById: approvedById },
         });
 
+        // Payroll System Developer Implementation Guide, section 15/12: a
+        // payslip is only ever displayed to staff "after payroll is
+        // finalized and published" -- period approval IS that finalization
+        // step, so every payslip generated under it publishes together,
+        // right here, rather than needing a separate, third publish action.
+        // Only DRAFT payslips flip -- none should exist in any other status
+        // at this point, but the guard keeps this idempotent regardless.
+        const toPublish = await this.prisma.payslip.findMany({
+            where: { payrollPeriodId: periodId, status: 'DRAFT' },
+            select: { id: true, staffId: true },
+        });
+        if (toPublish.length) {
+            await this.prisma.payslip.updateMany({
+                where: { id: { in: toPublish.map((p: { id: string; staffId: string }) => p.id) } },
+                data: { status: 'PUBLISHED', publishedAt: new Date() },
+            });
+            // "Publication" is its own auditable event per the guide,
+            // distinct from generation -- logged per payslip (not just
+            // once at the period level) so "when was THIS staff member's
+            // payslip actually published" is directly answerable.
+            for (const p of toPublish) {
+                await this.payrollAuditService.log({
+                    action: 'PAYSLIP_PUBLISHED',
+                    entityType: 'Payslip',
+                    entityId: p.id,
+                    staffId: p.staffId,
+                    actorId: approvedById,
+                });
+            }
+        }
+
         await this.payrollAuditService.log({
             action: 'PERIOD_APPROVED',
             entityType: 'PayrollPeriod',

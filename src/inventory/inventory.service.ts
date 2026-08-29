@@ -11,7 +11,7 @@ import {
 import { ApprovalService } from '../approval/approval.service';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { AdjustStockDto, StockAdjustmentReasonValue } from './dto/adjust-stock.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { BulkCreateInventoryItemDto } from './dto/bulk-create-inventory-item.dto';
 import { QueryInventoryDto } from './dto/query-inventory.dto';
@@ -287,7 +287,7 @@ export class InventoryService {
     }
 
     /** The actual stock mutation — only ever called once an adjustment is approved (or by an elevated Admin submitting one, which auto-approves). */
-    private async applyAdjustment(itemId: string, stockType: StockType, quantityDelta: number, reason: string, staffId: string | undefined) {
+    private async applyAdjustment(itemId: string, stockType: StockType, quantityDelta: number, reasonCategory: StockAdjustmentReasonValue, reason: string | null, staffId: string | undefined) {
         const item = await this.findOne(itemId);
         const newQuantity = this.getStockValue(item, stockType) + quantityDelta;
 
@@ -307,6 +307,7 @@ export class InventoryService {
                     stockType,
                     quantityDelta,
                     performedById: staffId,
+                    reasonCategory,
                     reason,
                 },
             }),
@@ -339,6 +340,7 @@ export class InventoryService {
                 itemId,
                 stockType: dto.stockType,
                 quantityDelta: dto.quantityDelta,
+                reasonCategory: dto.reasonCategory,
                 reason: dto.reason,
                 requestedById: staffId,
                 approvalRequestId: approvalRequest.id,
@@ -363,7 +365,7 @@ export class InventoryService {
 
         // Re-validate at execution time, not just at request time — stock may
         // have moved since this was submitted (sale, another adjustment, etc.).
-        await this.applyAdjustment(request.itemId, request.stockType, request.quantityDelta, request.reason, actorId);
+        await this.applyAdjustment(request.itemId, request.stockType, request.quantityDelta, request.reasonCategory, request.reason, actorId);
 
         return this.prisma.stockAdjustmentRequest.update({
             where: { id: requestId },

@@ -9,6 +9,7 @@ import { PERMISSIONS } from '../common/constants/permissions';
 import { StaffService } from '../staff/staff.service';
 import { PurchaseRequestService } from './purchase-request.service';
 import { UpsertPurchaseRequestDto } from './dto/upsert-purchase-request.dto';
+import { CreatePurchaseRequestFromAlertsDto } from './dto/create-purchase-request-from-alerts.dto';
 
 @ApiTags('Admin - Purchase Requests')
 @ApiBearerAuth('JWT-auth')
@@ -74,6 +75,18 @@ export class AdminPurchaseRequestController {
         const staffId = await this.resolveActingStaffId(req.user.id);
         const data = await this.purchaseRequestService.create(dto, staffId);
         return { success: true, message: 'Purchase request created', data };
+    }
+
+    @Post('from-alerts')
+    @Permission(PERMISSIONS.PURCHASE_REQUESTS_CREATE)
+    @ApiOperation({
+        summary: 'Push selected stock alerts into a new draft purchase request',
+        description: 'Procurement/Inventory/Finance Integration, Phase 7 -- "the loop that closes Inventory back to Procurement." Suggested quantity and last purchase price are pre-filled; the resulting Draft can still be reviewed and edited like any other request before submitting.',
+    })
+    async createFromAlerts(@Body() dto: CreatePurchaseRequestFromAlertsDto, @Req() req: any) {
+        const staffId = await this.resolveActingStaffId(req.user.id);
+        const data = await this.purchaseRequestService.createFromAlerts(dto, staffId);
+        return { success: true, message: 'Draft purchase request created from selected alerts', data };
     }
 
     @Patch(':id')

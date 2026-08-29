@@ -63,6 +63,95 @@ export class PurchaseRequestService {
         return request;
     }
 
+    /**
+     * Procurement/Inventory/Finance Integration, Phase 7: "Alert items can
+     * be multi-selected and pushed directly into a new Purchase Request
+     * (suggested quantity + last purchase price pre-filled) -- this is the
+     * loop that closes Inventory back to Procurement." Creates an actual
+     * DRAFT PurchaseRequest (per Phase 1's own status list) rather than
+     * just returning a computed payload -- the admin still reviews/edits
+     * quantities and prices before submitting it (DRAFT is the only
+     * editable status, see EDITABLE_STATUSES above), exactly like any
+     * other purchase request.
+     */
+    async createFromAlerts(
+        params: { lowStockAlertIds?: string[]; expiryAlertIds?: string[]; vendorId: string; reason?: string },
+        requestedById: string | undefined,
+    ) {
+        const lowStockAlertIds = params.lowStockAlertIds ?? [];
+        const expiryAlertIds = params.expiryAlertIds ?? [];
+        if (!lowStockAlertIds.length && !expiryAlertIds.length) {
+            throw new BadRequestException('Select at least one alert to push into a purchase request');
+        }
+
+        const [lowStockAlerts, expiryAlerts] = await Promise.all([
+            this.prisma.lowStockAlert.findMany({
+                where: { id: { in: lowStockAlertIds } },
+                include: { item: { include: { product: true } } },
+            }),
+            this.prisma.expiryAlert.findMany({
+                where: { id: { in: expiryAlertIds } },
+                include: { item: { include: { product: true } } },
+            }),
+        ]);
+
+        const allAlerts = [...lowStockAlerts, ...expiryAlerts];
+        if (allAlerts.length !== lowStockAlertIds.length + expiryAlertIds.length) {
+            throw new BadRequestException('One or more selected alerts do not exist');
+        }
+        if (allAlerts.some((a) => a.resolvedAt)) {
+            throw new BadRequestException('One or more selected alerts have already been resolved');
+        }
+        if (!allAlerts.every((a) => a.item.productId)) {
+            throw new BadRequestException('One or more alerted items are not linked to a product master record');
+        }
+        const branchId = allAlerts[0].item.branchId;
+        if (!allAlerts.every((a) => a.item.branchId === branchId)) {
+            throw new BadRequestException('All selected alerts must be from the same branch -- a purchase request is per-branch');
+        }
+
+        // Dedupe by product -- the same product can have both a low-stock
+        // and an expiry alert open on the same item at once.
+        const itemsByProductId = new Map<string, any>();
+        for (const alert of allAlerts) {
+            if (alert.item.productId) itemsByProductId.set(alert.item.productId, alert.item);
+        }
+
+        const linesData = await Promise.all(
+            Array.from(itemsByProductId.values()).map(async (item: any) => {
+                const totalStock = item.storeStock + item.salesStock + item.usageStock;
+                // Simple, transparent reorder heuristic: bring stock back up
+                // to twice the low-stock threshold. Deliberately not a
+                // demand-forecasting algorithm -- the spec asks for a
+                // reasonable starting suggestion the admin reviews and can
+                // freely override, not an automated purchasing decision.
+                const suggestedQty = Math.max(1, item.lowStockThreshold * 2 - totalStock);
+                const estimatedPrice = (await this.getLastApprovedPrice(item.productId)) ?? Number(item.product?.costPrice ?? 0);
+                return {
+                    productId: item.productId,
+                    quantity: suggestedQty,
+                    estimatedPrice,
+                    lineTotal: estimatedPrice * suggestedQty,
+                };
+            }),
+        );
+
+        const grandTotal = linesData.reduce((sum, l) => sum + l.lineTotal, 0);
+
+        return this.prisma.purchaseRequest.create({
+            data: {
+                branchId,
+                vendorId: params.vendorId,
+                reason: params.reason ?? 'Auto-generated from stock alerts',
+                requestedById,
+                status: PurchaseRequestStatus.DRAFT,
+                grandTotal,
+                lines: { create: linesData },
+            },
+            include: { lines: true },
+        });
+    }
+
     async create(dto: UpsertPurchaseRequestDto, requestedById: string | undefined) {
         const linesData = await Promise.all(dto.lines.map(async (line) => {
             const estimatedPrice = line.estimatedPrice ?? (await this.getLastApprovedPrice(line.productId));
@@ -219,7 +308,7 @@ export class PurchaseRequestService {
                 vendorId: request.vendorId,
                 grandTotal: request.grandTotal,
                 lines: {
-                    create: request.lines.map((line) => ({
+                    create: request.lines.map((line: { productId: string; quantity: number; estimatedPrice: any; lineTotal: any }) => ({
                         productId: line.productId,
                         quantity: line.quantity,
                         unitPrice: line.estimatedPrice,

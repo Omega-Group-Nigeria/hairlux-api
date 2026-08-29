@@ -45,6 +45,7 @@ import { LmsModule } from './lms/lms.module';
 import { InventoryProductModule } from './inventory-product/inventory-product.module';
 import { FinanceModule } from './finance/finance.module';
 import { PurchaseModule } from './purchase/purchase.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -130,7 +131,8 @@ import { PurchaseModule } from './purchase/purchase.module';
     InventoryProductModule,
     FinanceModule,
     PurchaseModule,
-    
+    ReportsModule,
+
   ],
   controllers: [AppController],
   providers: [
@@ -152,4 +154,4 @@ import { PurchaseModule } from './purchase/purchase.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule { }

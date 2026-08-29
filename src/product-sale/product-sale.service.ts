@@ -22,6 +22,9 @@ export class ProductSaleService {
         const itemIds = dto.items.map((line) => line.itemId);
         const items = await this.prisma.inventoryItem.findMany({
             where: { id: { in: itemIds }, branchId },
+            // Phase 8: resolved here, once, so cost can be snapshotted onto
+            // each ProductSaleItem below without a query per line.
+            include: { product: { select: { costPrice: true } } },
         });
         if (items.length !== new Set(itemIds).size) {
             throw new NotFoundException('One or more items were not found at this branch');
@@ -56,7 +59,12 @@ export class ProductSaleService {
                     items: {
                         create: dto.items.map((line) => {
                             const item = items.find((i) => i.id === line.itemId)!;
-                            return { itemId: line.itemId, quantity: line.quantity, unitPrice: item.price! };
+                            return {
+                                itemId: line.itemId,
+                                quantity: line.quantity,
+                                unitPrice: item.price!,
+                                unitCost: (item as any).product?.costPrice ?? null,
+                            };
                         }),
                     },
                 },
