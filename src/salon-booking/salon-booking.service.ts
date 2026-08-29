@@ -929,7 +929,13 @@ export class SalonBookingService {
 
     private async resolveInventoryLines(branchId: string, lines: { itemId: string; quantity: number }[]) {
         const itemIds = lines.map((l) => l.itemId);
-        const items = await this.prisma.inventoryItem.findMany({ where: { id: { in: itemIds } } });
+        const items = await this.prisma.inventoryItem.findMany({
+            where: { id: { in: itemIds } },
+            // Phase 8: resolved here so the cost snapshot below covers
+            // both callers of this helper (addInventoryItem's single-line
+            // path, and the bulk createMany path elsewhere in this file).
+            include: { product: { select: { costPrice: true } } },
+        });
 
         return lines.map((line) => {
             const item = items.find((i) => i.id === line.itemId);
@@ -941,6 +947,7 @@ export class SalonBookingService {
                 itemId: item.id,
                 quantity: line.quantity,
                 unitPrice: item.category === 'FOR_SALE' ? Number(item.price ?? 0) : null,
+                unitCost: (item as any).product?.costPrice ?? null,
             };
         });
     }
@@ -1004,7 +1011,7 @@ export class SalonBookingService {
         const [line] = await this.resolveInventoryLines(booking.branchId, [dto]);
 
         await this.prisma.salonBookingInventoryItem.create({
-            data: { bookingId, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice },
+            data: { bookingId, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice, unitCost: line.unitCost },
         });
 
         return this.recomputeTotal(bookingId);
@@ -1052,7 +1059,11 @@ export class SalonBookingService {
     async complete(id: string, actorId: string | undefined) {
         const booking = await this.prisma.salonBooking.findUnique({
             where: { id },
-            include: { inventoryItems: { include: { item: true } }, services: true, assignedStaff: true },
+            include: {
+                inventoryItems: { include: { item: true } },
+                services: { include: { service: { include: { productConsumption: { include: { product: true } } } } } },
+                assignedStaff: { include: { commissionPlan: true } },
+            },
         });
         if (!booking) throw new NotFoundException('Booking not found');
         this.assertModifiable(booking.status as SalonBookingStatus);
@@ -1065,6 +1076,44 @@ export class SalonBookingService {
             if (available < line.quantity) {
                 throw new BadRequestException(
                     `Insufficient ${line.item.category === 'FOR_SALE' ? 'sales' : 'usage'} stock for "${line.item.name}" — ${available} available, ${line.quantity} needed`,
+                );
+            }
+        }
+
+        // Procurement/Inventory/Finance Integration, Phase 6: each
+        // service's configured "recipe" (ServiceProductConsumption) is
+        // deducted automatically -- distinct from the manual
+        // booking.inventoryItems lines above (extra products sold/used
+        // beyond a service's standard materials). A product can appear
+        // in more than one service's recipe on the same booking, so
+        // quantities are aggregated by resolved InventoryItem BEFORE
+        // validating -- checking each service's need against the same
+        // not-yet-decremented stock figure independently could miss a
+        // genuine shortfall that only appears once combined.
+        const autoConsumptionByItemId = new Map<string, { item: any; qty: number; productName: string }>();
+        for (const bookingService of booking.services) {
+            for (const recipe of bookingService.service.productConsumption) {
+                const totalQty = recipe.quantity * bookingService.quantity;
+                const item = await this.prisma.inventoryItem.findFirst({
+                    where: { productId: recipe.productId, branchId: booking.branchId },
+                });
+                if (!item) {
+                    throw new BadRequestException(
+                        `"${recipe.product.name}" is required by ${bookingService.service.name} but isn't stocked at this branch`,
+                    );
+                }
+                const existing = autoConsumptionByItemId.get(item.id);
+                autoConsumptionByItemId.set(item.id, {
+                    item,
+                    qty: (existing?.qty ?? 0) + totalQty,
+                    productName: recipe.product.name,
+                });
+            }
+        }
+        for (const { item, qty, productName } of autoConsumptionByItemId.values()) {
+            if (item.usageStock < qty) {
+                throw new BadRequestException(
+                    `Insufficient usage stock for "${productName}" — ${item.usageStock} available, ${qty} needed for the configured service(s)`,
                 );
             }
         }
@@ -1092,9 +1141,45 @@ export class SalonBookingService {
                 });
             }
 
-            const rate = booking.assignedStaff?.commissionRate ? Number(booking.assignedStaff.commissionRate) : 0;
-            const serviceTotal = booking.services.reduce((sum, s) => sum + Number(s.price) * s.quantity, 0);
-            const commissionAmount = Math.round(serviceTotal * rate * 100) / 100;
+            for (const { item, qty } of autoConsumptionByItemId.values()) {
+                await tx.inventoryItem.update({
+                    where: { id: item.id },
+                    data: { usageStock: { decrement: qty } },
+                });
+                await tx.stockMovement.create({
+                    data: {
+                        itemId: item.id,
+                        type: StockMovementType.CONSUMED,
+                        stockType: 'USAGE',
+                        quantityDelta: -qty,
+                        referenceId: booking.id,
+                        reason: 'Automatic service product consumption',
+                        performedById: actorId,
+                    },
+                });
+            }
+
+            const plan = booking.assignedStaff?.commissionPlan;
+            let rate: number;
+            let eligibleServiceTotal: number;
+            if (plan && plan.isActive) {
+                // Payroll Engine v2, Phase 4: an assigned Commission Plan
+                // takes priority over the staff member's own flat
+                // commissionRate. Only services in the plan's own
+                // eligibleServiceIds generate commission under it -- an
+                // empty list means every service is eligible (see the
+                // schema's own comment on CommissionPlan.eligibleServiceIds).
+                rate = Number(plan.commissionRate);
+                const eligibleIds = plan.eligibleServiceIds;
+                eligibleServiceTotal = booking.services.reduce((sum: number, s: any) => {
+                    const isEligible = eligibleIds.length === 0 || eligibleIds.includes(s.serviceId);
+                    return isEligible ? sum + Number(s.price) * s.quantity : sum;
+                }, 0);
+            } else {
+                rate = booking.assignedStaff?.commissionRate ? Number(booking.assignedStaff.commissionRate) : 0;
+                eligibleServiceTotal = booking.services.reduce((sum, s) => sum + Number(s.price) * s.quantity, 0);
+            }
+            const commissionAmount = Math.round(eligibleServiceTotal * rate * 100) / 100;
 
             await tx.salonBookingCommission.create({
                 data: {
@@ -1102,6 +1187,14 @@ export class SalonBookingService {
                     staffId: booking.assignedStaffId!,
                     amount: commissionAmount,
                     rateApplied: rate,
+                    commissionPlanId: plan?.isActive ? plan.id : undefined,
+                    // Guide, section 11: "only approved eligible
+                    // transactions generate commission" -- a plan that
+                    // requires approval starts this record PENDING;
+                    // everything else (no plan, or a plan that doesn't
+                    // require it) is APPROVED immediately, matching the
+                    // schema's own default.
+                    approvalStatus: plan?.isActive && plan.requiresApproval ? 'PENDING' : 'APPROVED',
                 },
             });
 
@@ -1224,7 +1317,7 @@ export class SalonBookingService {
                 this.prisma.salonBookingInventoryItem.deleteMany({ where: { bookingId: id } }),
                 ...(inventoryLines.length
                     ? [this.prisma.salonBookingInventoryItem.createMany({
-                        data: inventoryLines.map((line) => ({ bookingId: id, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice })),
+                        data: inventoryLines.map((line) => ({ bookingId: id, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice, unitCost: line.unitCost })),
                     })]
                     : []),
             ]);

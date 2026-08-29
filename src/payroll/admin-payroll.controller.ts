@@ -9,7 +9,9 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { StaffService } from '../staff/staff.service';
 import { CreatePayrollAdjustmentDto } from './dto/create-payroll-adjustment.dto';
+import { CorrectPayrollAdjustmentDto } from './dto/correct-payroll-adjustment.dto';
 import { RequestCorrectionDto } from './dto/request-correction.dto';
+import { CorrectPayslipDto } from './dto/correct-payslip.dto';
 import { PayrollAuditService } from './payroll-audit.service';
 import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
 import { SetCompensationDto } from './dto/set-compensation.dto';
@@ -174,6 +176,19 @@ export class AdminPayrollController {
         return { success: true, message: 'Payroll period sent back for correction', data };
     }
 
+    @Patch('payslips/:id/correct')
+    @Permission(PERMISSIONS.PAYROLL_CORRECT)
+    @ApiOperation({
+        summary: 'Correct a single, already-published payslip',
+        description: 'Retains the original (marked SUPERSEDED) and generates a fresh, recalculated replacement (marked CORRECTED) alongside it -- the original is never mutated or deleted.',
+    })
+    @ApiParam({ name: 'id' })
+    async correctPayslip(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CorrectPayslipDto) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.engineService.correctPayslip(id, dto.reason, actor?.id);
+        return { success: true, message: 'Payslip corrected successfully', data };
+    }
+
     // -- Adjustments --------------------------------------------------------
 
     @Post('periods/:periodId/adjustments')
@@ -203,6 +218,28 @@ export class AdminPayrollController {
         const actor = await this.staffService.findByUserIdOrNull(req.user.id);
         const data = await this.adjustmentService.remove(id, actor?.id);
         return { success: true, message: 'Adjustment removed successfully', data };
+    }
+
+    @Patch('adjustments/:id/correct')
+    @Permission(PERMISSIONS.PAYROLL_MANAGE_ADJUSTMENTS)
+    @ApiOperation({
+        summary: "Correct an adjustment's amount",
+        description: 'Dev Feedback Round 5, item #3. The original is kept (marked SUPERSEDED, not deleted) and a new row is created with the revised amount -- the full audit trail (original amount, revised amount, reason, user, timestamp) is always visible via GET adjustments/:id/history. Only available once the period is past DRAFT -- edit a still-draft adjustment directly instead.',
+    })
+    @ApiParam({ name: 'id' })
+    async correctAdjustment(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CorrectPayrollAdjustmentDto) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.adjustmentService.correct(id, dto.amount, dto.correctionReason, actor?.id);
+        return { success: true, message: 'Adjustment corrected successfully', data };
+    }
+
+    @Get('adjustments/:id/history')
+    @Permission(PERMISSIONS.PAYROLL_READ)
+    @ApiOperation({ summary: 'Full correction chain for one adjustment -- the original plus every correction issued against it, oldest first' })
+    @ApiParam({ name: 'id' })
+    async getAdjustmentHistory(@Param('id', ParseUUIDPipe) id: string) {
+        const data = await this.adjustmentService.getCorrectionHistory(id);
+        return { success: true, message: 'Retrieved successfully', data };
     }
 
     // -- Payday switch --------------------------------------------------------

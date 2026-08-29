@@ -876,6 +876,9 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
       where: { id },
       include: {
         location: true,
+        // Payroll Engine v2, Phase 4: so the staff profile can display
+        // the assigned plan's name/rate without a separate API call.
+        commissionPlan: { select: { id: true, name: true, commissionRate: true } },
         histories: {
           orderBy: { startDate: 'desc' },
           include: {
@@ -964,8 +967,8 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         ...(dto.commissionRate !== undefined && {
           commissionRate: dto.commissionRate,
         }),
-        ...(dto.salaryOnlyFirstMonth !== undefined && {
-          salaryOnlyFirstMonth: dto.salaryOnlyFirstMonth,
+        ...(dto.hireDate !== undefined && {
+          hireDate: dto.hireDate ? new Date(dto.hireDate) : null,
         }),
         ...(dto.lateGracePeriodOverride !== undefined && {
           lateGracePeriodOverride: dto.lateGracePeriodOverride,

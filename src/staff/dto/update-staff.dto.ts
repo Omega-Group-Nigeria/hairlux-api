@@ -107,10 +107,10 @@ export class UpdateStaffDto {
   @Max(1)
   commissionRate?: number;
 
-  @ApiPropertyOptional({ description: 'True if this staff member gets a base salary in their first month (plus any commission earned that same month), then moves to commission-only from month two on. Not yet used by any payroll calculation — data capture only until a Payroll module exists.' })
+  @ApiPropertyOptional({ description: 'Required for mid-month proration and the SALARY_TO_COMMISSION cutoff calculation.' })
   @IsOptional()
-  @IsBoolean()
-  salaryOnlyFirstMonth?: boolean;
+  @IsDateString()
+  hireDate?: string;
 
   @ApiPropertyOptional({
     example: 15,

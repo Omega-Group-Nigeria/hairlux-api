@@ -1,6 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PayslipAdjustmentType } from '@prisma/client';
-import { IsEnum, IsNumber, IsString, IsUUID, Min } from 'class-validator';
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 
 export class CreatePayrollAdjustmentDto {
     @ApiProperty({ example: 'staff-uuid' })
@@ -26,4 +26,14 @@ export class CreatePayrollAdjustmentDto {
     @ApiProperty({ example: 'Exceeded monthly sales target by 20%' })
     @IsString()
     reason: string;
+
+    @ApiPropertyOptional({ description: 'The date this bonus/deduction actually pertains to (e.g. the date of the incident it charges for) -- distinct from when the record is entered.' })
+    @IsOptional()
+    @IsDateString()
+    effectiveDate?: string;
+
+    @ApiPropertyOptional({ description: 'Longer free-text detail alongside the shorter reason field.' })
+    @IsOptional()
+    @IsString()
+    notes?: string;
 }

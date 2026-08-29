@@ -1,10 +1,12 @@
 import {
   Controller,
+  Get,
   Post,
   Put,
   Delete,
   Body,
   Param,
+  ParseUUIDPipe,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -24,23 +26,52 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { ServiceCatalogService } from './service-catalog.service';
+import { ServiceRecipeService } from './service-recipe.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { UpdateServiceStatusDto } from './dto/update-service-status.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { SetServiceRecipeDto } from './dto/set-service-recipe.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { Permission } from '../auth/decorators/permission.decorator';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 
 @ApiTags('Admin - Services')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/services')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminServiceCatalogController {
-  constructor(private readonly serviceCatalogService: ServiceCatalogService) {}
+  constructor(
+    private readonly serviceCatalogService: ServiceCatalogService,
+    private readonly serviceRecipeService: ServiceRecipeService,
+  ) { }
+
+  @Get(':id/recipe')
+  @Permission(PERMISSIONS.SERVICES_MANAGE_RECIPE)
+  @ApiOperation({ summary: "Get a service's configured product-consumption recipe" })
+  @ApiParam({ name: 'id' })
+  async getRecipe(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.serviceRecipeService.getRecipe(id);
+    return { success: true, message: 'Retrieved successfully', data };
+  }
+
+  @Put(':id/recipe')
+  @Permission(PERMISSIONS.SERVICES_MANAGE_RECIPE)
+  @ApiOperation({
+    summary: "Set a service's product-consumption recipe",
+    description: 'Full replace -- send every line that should remain. An empty array clears the recipe entirely.',
+  })
+  @ApiParam({ name: 'id' })
+  async setRecipe(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetServiceRecipeDto) {
+    const data = await this.serviceRecipeService.setRecipe(id, dto.lines);
+    return { success: true, message: 'Recipe updated successfully', data };
+  }
 
   @Post()
   @ApiConsumes('multipart/form-data')

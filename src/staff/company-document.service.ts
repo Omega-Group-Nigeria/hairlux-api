@@ -1,27 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../storage/s3.service';
 import { StaffService } from './staff.service';
 import { CreateCompanyDocumentDto } from './dto/create-company-document.dto';
-
-type CompanyDocumentRecord = {
-  id: string;
-  type: string;
-  version: number;
-  title: string;
-  contentUrl: string;
-  isActive: boolean;
-  createdAt: Date;
-};
-
-type AcknowledgmentRecord = {
-  id: string;
-  staffId: string;
-  documentId: string;
-  acknowledgedAt: Date;
-  ipAddress: string | null;
-  userAgent: string | null;
-};
 
 @Injectable()
 export class CompanyDocumentService {
@@ -29,32 +10,7 @@ export class CompanyDocumentService {
     private readonly prisma: PrismaService,
     private readonly staffService: StaffService,
     private readonly s3Service: S3Service,
-  ) {}
-
-  private get documentModel() {
-    return (
-      this.prisma as unknown as {
-        companyDocument: {
-          findFirst(args: any): Promise<CompanyDocumentRecord | null>;
-          findMany(args: any): Promise<CompanyDocumentRecord[]>;
-          create(args: any): Promise<CompanyDocumentRecord>;
-          update(args: any): Promise<CompanyDocumentRecord>;
-        };
-      }
-    ).companyDocument;
-  }
-
-  private get acknowledgmentModel() {
-    return (
-      this.prisma as unknown as {
-        staffDocumentAcknowledgment: {
-          findFirst(args: any): Promise<AcknowledgmentRecord | null>;
-          findMany(args: any): Promise<AcknowledgmentRecord[]>;
-          create(args: any): Promise<AcknowledgmentRecord>;
-        };
-      }
-    ).staffDocumentAcknowledgment;
-  }
+  ) { }
 
   /**
    * Creates a new version of a document and deactivates whatever was
@@ -64,23 +20,27 @@ export class CompanyDocumentService {
    * actually agreed to, even after the handbook gets updated.
    */
   async createDocument(dto: CreateCompanyDocumentDto) {
-    const currentActive = await this.documentModel.findFirst({
-      where: { type: dto.type, isActive: true },
+    const documentType = await this.prisma.documentType.findUnique({ where: { id: dto.documentTypeId } });
+    if (!documentType) throw new BadRequestException('Document type not found');
+    if (!documentType.isActive) throw new BadRequestException(`"${documentType.name}" has been deactivated -- reactivate it first if you need to add a new version`);
+
+    const currentActive = await this.prisma.companyDocument.findFirst({
+      where: { documentTypeId: dto.documentTypeId, isActive: true },
       orderBy: { version: 'desc' },
     });
 
     const nextVersion = (currentActive?.version ?? 0) + 1;
 
     if (currentActive) {
-      await this.documentModel.update({
+      await this.prisma.companyDocument.update({
         where: { id: currentActive.id },
         data: { isActive: false },
       });
     }
 
-    return this.documentModel.create({
+    return this.prisma.companyDocument.create({
       data: {
-        type: dto.type,
+        documentTypeId: dto.documentTypeId,
         version: nextVersion,
         title: dto.title,
         contentUrl: dto.contentUrl,
@@ -97,15 +57,17 @@ export class CompanyDocumentService {
    * persisted as if they were permanent links.
    */
   async listActiveDocuments() {
-    const docs = await this.documentModel.findMany({
+    const docs = await this.prisma.companyDocument.findMany({
       where: { isActive: true },
-      orderBy: { type: 'asc' },
+      include: { documentType: { select: { id: true, name: true } } },
+      orderBy: { documentType: { name: 'asc' } },
     });
 
     return Promise.all(
-      docs.map(async (doc) => ({
+      docs.map(async (doc: any) => ({
         id: doc.id,
-        type: doc.type,
+        documentTypeId: doc.documentTypeId,
+        typeName: doc.documentType.name,
         version: doc.version,
         title: doc.title,
         isActive: doc.isActive,
@@ -122,24 +84,24 @@ export class CompanyDocumentService {
    */
   async getStaffDocumentStatus(staffId: string) {
     const activeDocs = await this.listActiveDocuments();
-    const acknowledgments = await this.acknowledgmentModel.findMany({
+    const acknowledgments = await this.prisma.staffDocumentAcknowledgment.findMany({
       where: { staffId },
     });
-    const ackByDocId = new Map(acknowledgments.map((a) => [a.documentId, a]));
+    const ackByDocId = new Map(acknowledgments.map((a: any) => [a.documentId, a]));
 
-    const items = activeDocs.map((doc) => ({
+    const items = activeDocs.map((doc: any) => ({
       documentId: doc.id,
-      type: doc.type,
+      typeName: doc.typeName,
       title: doc.title,
       version: doc.version,
       viewUrl: doc.viewUrl,
       acknowledged: ackByDocId.has(doc.id),
-      acknowledgedAt: ackByDocId.get(doc.id)?.acknowledgedAt ?? null,
+      acknowledgedAt: (ackByDocId.get(doc.id) as any)?.acknowledgedAt ?? null,
     }));
 
     return {
       documents: items,
-      allAcknowledged: items.length > 0 && items.every((i) => i.acknowledged),
+      allAcknowledged: items.length > 0 && items.every((i: any) => i.acknowledged),
     };
   }
 
@@ -156,19 +118,19 @@ export class CompanyDocumentService {
     ipAddress: string | undefined,
     userAgent: string | undefined,
   ) {
-    const doc = await this.documentModel.findFirst({ where: { id: documentId, isActive: true } });
+    const doc = await this.prisma.companyDocument.findFirst({ where: { id: documentId, isActive: true } });
     if (!doc) {
       throw new NotFoundException('Document not found or is no longer the active version');
     }
 
-    const existing = await this.acknowledgmentModel.findFirst({
+    const existing = await this.prisma.staffDocumentAcknowledgment.findFirst({
       where: { staffId, documentId },
     });
     if (existing) {
       throw new ConflictException('This document has already been acknowledged');
     }
 
-    const acknowledgment = await this.acknowledgmentModel.create({
+    const acknowledgment = await this.prisma.staffDocumentAcknowledgment.create({
       data: {
         staffId,
         documentId,

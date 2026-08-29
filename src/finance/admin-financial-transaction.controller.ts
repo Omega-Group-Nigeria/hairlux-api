@@ -8,13 +8,7 @@ import { Permission } from '../auth/decorators/permission.decorator';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { FinancialTransactionService } from './financial-transaction.service';
 
-/**
- * Exposes FinancialTransactionService's existing record/query engine
- * (built in Phase 3, wired into ProductSale/SalonBooking/Wallet as an
- * internal dependency) as its own directly-queryable admin API -- the
- * one piece that was missing for the ledger to be viewable on its own,
- * not just a side effect of other modules.
- */
+
 @ApiTags('Admin - Financial Transactions')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/financial-transactions')
@@ -64,6 +58,31 @@ export class AdminFinancialTransactionController {
         @Query('to') to?: string,
     ) {
         const data = await this.financialTransactionService.getSummary({
+            branchId,
+            from: from ? new Date(from) : undefined,
+            to: to ? new Date(to) : undefined,
+        });
+        return { success: true, message: 'Retrieved successfully', data };
+    }
+
+    @Get('export')
+    @Permission(PERMISSIONS.FINANCIAL_TRANSACTIONS_READ)
+    @ApiOperation({ summary: 'Every transaction matching the given filters, unpaginated -- for exporting the currently-filtered view rather than one page of it' })
+    @ApiQuery({ name: 'direction', required: false, enum: FinancialTransactionDirection })
+    @ApiQuery({ name: 'category', required: false, enum: FinancialTransactionCategory })
+    @ApiQuery({ name: 'branchId', required: false })
+    @ApiQuery({ name: 'from', required: false, description: 'ISO date string' })
+    @ApiQuery({ name: 'to', required: false, description: 'ISO date string' })
+    async export(
+        @Query('direction') direction?: FinancialTransactionDirection,
+        @Query('category') category?: FinancialTransactionCategory,
+        @Query('branchId') branchId?: string,
+        @Query('from') from?: string,
+        @Query('to') to?: string,
+    ) {
+        const data = await this.financialTransactionService.export({
+            direction,
+            category,
             branchId,
             from: from ? new Date(from) : undefined,
             to: to ? new Date(to) : undefined,

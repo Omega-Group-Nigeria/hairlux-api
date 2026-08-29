@@ -28,6 +28,12 @@ export const PERMISSIONS = {
   SERVICES_TOGGLE_STATUS: 'services:toggle_status', // Activate / deactivate a service
   SERVICES_DELETE: 'services:delete', // Remove services
   SERVICES_MANAGE_CATEGORIES: 'services:manage_categories', // CRUD categories
+  // Procurement/Inventory/Finance Integration, Phase 6: configuring which
+  // products a service consumes is distinct from editing the service's
+  // own name/price/image (SERVICES_UPDATE) -- it's inventory-consumption
+  // config, matching the same separate-permission pattern already used
+  // for categories above.
+  SERVICES_MANAGE_RECIPE: 'services:manage_recipe', // Configure a service's product consumption ("recipe")
 
   // ── Branches ────────────────────────────────────────────────────────────────
   BRANCHES_READ: 'branches:read', // View branches and branch service config
@@ -84,6 +90,11 @@ export const PERMISSIONS = {
   SUPPLIERS_UPDATE: 'suppliers:update', // Edit supplier/vendor details
   SUPPLIERS_DELETE: 'suppliers:delete', // Delete a supplier/vendor (blocked while items are linked)
   SUPPLIERS_VIEW_BANKING: 'suppliers:view_banking', // View vendor bank name/account number/verified account name -- separate from general suppliers:read per the spec's access-restriction requirement
+  // Procurement/Inventory/Finance Integration, Phase 5: creating a manual
+  // credit/debit against a vendor's balance is a financially-sensitive
+  // write action, deliberately separate from suppliers:create/update
+  // (editing the vendor's own record) since it directly affects money owed.
+  SUPPLIERS_MANAGE_LEDGER: 'suppliers:manage_ledger', // Create a manual credit/debit adjustment against a vendor's ledger
 
   // ── Inventory Products (Procurement Integration) ─────────────────────────────
   INVENTORY_PRODUCTS_READ: 'inventory_products:read',
@@ -108,6 +119,11 @@ export const PERMISSIONS = {
 
   // ── Financial Transactions (Procurement Integration) ──────────────────────
   FINANCIAL_TRANSACTIONS_READ: 'financial_transactions:read',
+  // Procurement/Inventory/Finance Integration, Phase 8: revenue/COGS/
+  // margin data is more sensitive than the cash-flow ledger above --
+  // kept as its own permission rather than folded into
+  // financial_transactions:read.
+  REPORTS_READ_PROFITABILITY: 'reports:read_profitability',
 
   // ── Main Admin Dashboard metrics (Dev Feedback Round 4, item #32) ─────────
   // Grouped by logical metric category, not one permission per literal
@@ -134,6 +150,17 @@ export const PERMISSIONS = {
   PAYROLL_APPROVE_PERIOD: 'payroll:approve_period', // Formally approve an AWAITING_RELEASE period
   PAYROLL_MANAGE_ADJUSTMENTS: 'payroll:manage_adjustments', // Add or remove a bonus/deduction adjustment
   PAYROLL_MANAGE_SETTINGS: 'payroll:manage_settings', // Toggle Payday active/inactive, set the pension rate
+  // Payroll Engine v2, Phase 4: managing Commission Plan records
+  // (financially-sensitive -- a plan's rate directly affects pay) is
+  // deliberately separate from assigning one to a staff member --
+  // someone who can pick which plan an employee is on shouldn't
+  // automatically be able to change what that plan actually pays.
+  // Delete kept separate from create/update per item #43's rule.
+  PAYROLL_READ_COMMISSION_PLANS: 'payroll:read_commission_plans', // View Commission Plan records
+  PAYROLL_CREATE_COMMISSION_PLAN: 'payroll:create_commission_plan', // Create a Commission Plan
+  PAYROLL_UPDATE_COMMISSION_PLAN: 'payroll:update_commission_plan', // Edit a Commission Plan
+  PAYROLL_DELETE_COMMISSION_PLAN: 'payroll:delete_commission_plan', // Delete a Commission Plan
+  PAYROLL_ASSIGN_COMMISSION_PLAN: 'payroll:assign_commission_plan', // Assign a compensation type and/or Commission Plan to a staff member
   // Dev Feedback Round 4, item #22: deliberately separate from the rest --
   // sending an already-generated period back for correction is meant to
   // be a higher, more restricted bar than ordinary payroll management
@@ -267,6 +294,7 @@ export const PERMISSION_GROUPS = [
         key: PERMISSIONS.SERVICES_MANAGE_CATEGORIES,
         label: 'Manage service categories',
       },
+      { key: PERMISSIONS.SERVICES_MANAGE_RECIPE, label: "Configure a service's product consumption" },
     ],
   },
   {
@@ -405,6 +433,7 @@ export const PERMISSION_GROUPS = [
         label: 'Delete a supplier/vendor (blocked while inventory items are still linked)',
       },
       { key: PERMISSIONS.SUPPLIERS_VIEW_BANKING, label: "View a vendor's bank account details" },
+      { key: PERMISSIONS.SUPPLIERS_MANAGE_LEDGER, label: "Create a manual credit/debit adjustment against a vendor's ledger" },
     ],
   },
   {
@@ -447,6 +476,7 @@ export const PERMISSION_GROUPS = [
     group: 'Financial Transactions (Procurement Integration)',
     permissions: [
       { key: PERMISSIONS.FINANCIAL_TRANSACTIONS_READ, label: 'View the financial transaction ledger and dashboard' },
+      { key: PERMISSIONS.REPORTS_READ_PROFITABILITY, label: 'View revenue, COGS, and gross profit reporting' },
     ],
   },
   {
@@ -469,6 +499,11 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.PAYROLL_APPROVE_PERIOD, label: 'Formally approve an Awaiting Release period' },
       { key: PERMISSIONS.PAYROLL_MANAGE_ADJUSTMENTS, label: 'Add or remove a bonus/deduction adjustment' },
       { key: PERMISSIONS.PAYROLL_MANAGE_SETTINGS, label: 'Toggle Payday active/inactive, set the pension rate' },
+      { key: PERMISSIONS.PAYROLL_READ_COMMISSION_PLANS, label: 'View Commission Plan records' },
+      { key: PERMISSIONS.PAYROLL_CREATE_COMMISSION_PLAN, label: 'Create a Commission Plan' },
+      { key: PERMISSIONS.PAYROLL_UPDATE_COMMISSION_PLAN, label: 'Edit a Commission Plan' },
+      { key: PERMISSIONS.PAYROLL_DELETE_COMMISSION_PLAN, label: 'Delete a Commission Plan' },
+      { key: PERMISSIONS.PAYROLL_ASSIGN_COMMISSION_PLAN, label: "Assign a compensation type and/or Commission Plan to a staff member" },
       {
         key: PERMISSIONS.PAYROLL_CORRECT,
         label: 'Send an already-generated payroll period back for correction before final approval',

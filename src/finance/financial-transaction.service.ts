@@ -71,8 +71,8 @@ export class FinancialTransactionService {
         });
     }
 
-    async findAll(filters: FinancialQueryFilters, page = 1, limit = 50) {
-        const where = {
+    private buildListWhere(filters: FinancialQueryFilters) {
+        return {
             ...(filters.direction && { direction: filters.direction }),
             ...(filters.category && { category: filters.category }),
             ...(filters.branchId && { branchId: filters.branchId }),
@@ -83,6 +83,10 @@ export class FinancialTransactionService {
                 },
             }),
         };
+    }
+
+    async findAll(filters: FinancialQueryFilters, page = 1, limit = 50) {
+        const where = this.buildListWhere(filters);
 
         const [items, total] = await Promise.all([
             this.prisma.financialTransaction.findMany({
@@ -99,6 +103,26 @@ export class FinancialTransactionService {
         ]);
 
         return { items, total, page, limit };
+    }
+
+    /**
+     * Phase 8: same filters and ordering as findAll, but every matching
+     * row rather than one page -- what an "export the current view"
+     * action on a paginated list actually needs. Capped rather than truly
+     * unbounded: a request with no date range at all, run for years,
+     * could otherwise pull the entire table into memory at once.
+     */
+    async export(filters: FinancialQueryFilters) {
+        const EXPORT_ROW_CAP = 10000;
+        return this.prisma.financialTransaction.findMany({
+            where: this.buildListWhere(filters),
+            orderBy: { createdAt: 'desc' },
+            take: EXPORT_ROW_CAP,
+            include: {
+                branch: { select: { id: true, name: true } },
+                recordedBy: { select: { id: true, firstName: true, lastName: true } },
+            },
+        });
     }
 
     /**
