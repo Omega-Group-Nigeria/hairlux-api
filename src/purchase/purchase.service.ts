@@ -12,12 +12,25 @@ export class PurchaseService {
         private readonly financialTransactionService: FinancialTransactionService,
     ) { }
 
-    async findAll(filters: { branchId?: string; vendorId?: string; status?: PurchaseStatus }) {
+    async findAll(filters: { branchId?: string; vendorId?: string; status?: PurchaseStatus; search?: string; from?: Date; to?: Date }) {
         return this.prisma.purchase.findMany({
             where: {
                 ...(filters.branchId && { branchId: filters.branchId }),
                 ...(filters.vendorId && { vendorId: filters.vendorId }),
                 ...(filters.status && { status: filters.status }),
+                // purchaseNumber is a plain Int (no year embedded in the
+                // stored value -- only in its "PO-2026-000123" display
+                // formatting), so pull the last digit run out of whatever
+                // the admin typed rather than stripping all non-digits
+                // and concatenating them (which would wrongly fold a
+                // typed year prefix into the number itself).
+                ...(filters.search && { purchaseNumber: Number((filters.search.match(/(\d+)(?!.*\d)/) || [])[0]) || -1 }),
+                ...((filters.from || filters.to) && {
+                    purchaseDate: {
+                        ...(filters.from && { gte: filters.from }),
+                        ...(filters.to && { lte: filters.to }),
+                    },
+                }),
             },
             orderBy: { createdAt: 'desc' },
             include: {

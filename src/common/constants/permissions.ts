@@ -129,6 +129,13 @@ export const PERMISSIONS = {
   // and set marketing overrides on top of them.
   SITE_STATS_MANAGE: 'site_stats:manage',
 
+  // System-wide Audit Trail viewer -- separately permissioned since it
+  // surfaces before/after values across every module (including
+  // sensitive ones like compensation and role changes), not scoped to
+  // Admin/SUPER_ADMIN alone so a compliance/HR lead can be granted it
+  // without full admin rights.
+  AUDIT_TRAIL_READ: 'audit_trail:read',
+
   // ── Main Admin Dashboard metrics (Dev Feedback Round 4, item #32) ─────────
   // Grouped by logical metric category, not one permission per literal
   // card -- e.g. Today's Bookings + Pending Bookings + the Booking Trends
@@ -484,6 +491,7 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.FINANCIAL_TRANSACTIONS_READ, label: 'View the financial transaction ledger and dashboard' },
       { key: PERMISSIONS.REPORTS_READ_PROFITABILITY, label: 'View revenue, COGS, and gross profit reporting' },
       { key: PERMISSIONS.SITE_STATS_MANAGE, label: 'View and configure the homepage "Trusted by Thousands" stats' },
+      { key: PERMISSIONS.AUDIT_TRAIL_READ, label: 'View the system-wide audit trail (who changed what, and when)' },
     ],
   },
   {

@@ -9,6 +9,14 @@ export interface RecordFinancialTransactionParams {
     branchId?: string;
     description?: string;
     paymentMethod?: string;
+    /**
+     * A Staff id -- every existing caller already has one of these on
+     * hand (it's the primary identity concept throughout this admin/
+     * staff-facing codebase), not a User id. recordedById's own FK
+     * points at User though, so record() resolves Staff -> User
+     * internally (see its own comment) rather than requiring every
+     * caller to separately track and pass a User id too.
+     */
     recordedById?: string;
     /** Polymorphic source reference, e.g. { sourceType: 'ProductSale', sourceId: sale.id } — same "Source Transaction" pattern StockMovement already uses. */
     sourceType?: string;
@@ -46,9 +54,27 @@ export class FinancialTransactionService {
      * deductForSale from being called from within ProductSaleService's
      * transaction earlier in this rebuild, resolved properly here instead
      * of worked around.
+     *
+     * Bug fix: every one of this method's three existing callers (salon
+     * booking completion, product sale, purchase payment) passed a Staff
+     * id straight through as recordedById, which crashed with a foreign
+     * key violation the first time any of them actually ran --
+     * recordedById's own FK points at User, not Staff (confirmed by
+     * findAll/export's own recordedBy include already selecting
+     * firstName/lastName, User's fields, not Staff's name). Rather than
+     * fix each of the three callers individually (and risk a fourth
+     * future caller repeating the same mistake), resolved once here:
+     * params.recordedById is treated as a Staff id and looked up to its
+     * linked userId before being written.
      */
     async record(params: RecordFinancialTransactionParams, tx?: Prisma.TransactionClient) {
         const client = tx ?? this.prisma;
+
+        let recordedByUserId: string | undefined;
+        if (params.recordedById) {
+            const staff = await client.staff.findUnique({ where: { id: params.recordedById }, select: { userId: true } });
+            recordedByUserId = staff?.userId ?? undefined;
+        }
 
         const created = await client.financialTransaction.create({
             data: {
@@ -59,7 +85,7 @@ export class FinancialTransactionService {
                 branchId: params.branchId,
                 description: params.description,
                 paymentMethod: params.paymentMethod,
-                recordedById: params.recordedById,
+                recordedById: recordedByUserId,
                 sourceType: params.sourceType,
                 sourceId: params.sourceId,
             },

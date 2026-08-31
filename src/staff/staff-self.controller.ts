@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   Res,
   StreamableFile,
@@ -53,6 +54,18 @@ export class StaffSelfController {
     private readonly operationsService: StaffOperationsService,
     private readonly addressVerificationService: StaffAddressVerificationService,
   ) { }
+
+  @Get('options')
+  @Roles(UserRole.STAFF, UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Dev Feedback Round 7, item #10: minimal staff list (id/name/staffCode/locationId) for populating a dropdown -- ACTIVE + ON_LEAVE only by default, since both mean "still with the company"' })
+  @ApiResponse({ status: 200, description: 'Staff options retrieved successfully' })
+  async listOptions(
+    @Query('locationId') locationId?: string,
+    @Query('includeAllStatuses') includeAllStatuses?: string,
+  ) {
+    const data = await this.staffService.listDropdownOptions(locationId, includeAllStatuses === 'true');
+    return { success: true, message: 'Staff options retrieved successfully', data };
+  }
 
   @Get('me')
   @ApiOperation({ summary: "Get the logged-in staff member's own record" })

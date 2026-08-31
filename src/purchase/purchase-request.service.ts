@@ -37,12 +37,27 @@ export class PurchaseRequestService {
         return lastLine ? Number(lastLine.unitPrice) : null;
     }
 
-    async findAll(filters: { branchId?: string; vendorId?: string; status?: PurchaseRequestStatus }) {
+    async findAll(filters: { branchId?: string; vendorId?: string; status?: PurchaseRequestStatus; search?: string; from?: Date; to?: Date }) {
         return this.prisma.purchaseRequest.findMany({
             where: {
                 ...(filters.branchId && { branchId: filters.branchId }),
                 ...(filters.vendorId && { vendorId: filters.vendorId }),
                 ...(filters.status && { status: filters.status }),
+                // requestNumber is a plain Int (no year embedded in the
+                // stored value -- only in its "PR-2026-000123" display
+                // formatting) -- same approach as Purchase.findAll's own
+                // search, see that method's comment for why this pulls
+                // the last digit run rather than stripping all non-digits.
+                ...(filters.search && { requestNumber: Number((filters.search.match(/(\d+)(?!.*\d)/) || [])[0]) || -1 }),
+                // No separate "request date" field exists (unlike
+                // Purchase.purchaseDate) -- createdAt is the only
+                // meaningful date a request actually has.
+                ...((filters.from || filters.to) && {
+                    createdAt: {
+                        ...(filters.from && { gte: filters.from }),
+                        ...(filters.to && { lte: filters.to }),
+                    },
+                }),
             },
             orderBy: { createdAt: 'desc' },
             include: {

@@ -42,12 +42,22 @@ export class AdminPurchaseRequestController {
     @ApiQuery({ name: 'branchId', required: false })
     @ApiQuery({ name: 'vendorId', required: false })
     @ApiQuery({ name: 'status', required: false, enum: PurchaseRequestStatus })
+    @ApiQuery({ name: 'search', required: false, description: 'Request number, e.g. "123" or "PR-2026-000123" -- Dev Feedback Round 7, item #4' })
+    @ApiQuery({ name: 'from', required: false, description: 'ISO date string, filters by createdAt' })
+    @ApiQuery({ name: 'to', required: false, description: 'ISO date string, filters by createdAt' })
     async findAll(
         @Query('branchId') branchId?: string,
         @Query('vendorId') vendorId?: string,
         @Query('status') status?: PurchaseRequestStatus,
+        @Query('search') search?: string,
+        @Query('from') from?: string,
+        @Query('to') to?: string,
     ) {
-        const data = await this.purchaseRequestService.findAll({ branchId, vendorId, status });
+        const data = await this.purchaseRequestService.findAll({
+            branchId, vendorId, status, search,
+            from: from ? new Date(from) : undefined,
+            to: to ? new Date(to) : undefined,
+        });
         return { success: true, message: 'Retrieved successfully', data };
     }
 

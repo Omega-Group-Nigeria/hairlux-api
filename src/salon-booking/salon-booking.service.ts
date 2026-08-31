@@ -862,7 +862,10 @@ export class SalonBookingService {
     }
 
     async getMyCommissionSummary(staffId: string) {
-        const staff = await this.prisma.staff.findUnique({ where: { id: staffId } });
+        const staff = await this.prisma.staff.findUnique({
+            where: { id: staffId },
+            include: { commissionPlan: { select: { name: true, commissionRate: true } } },
+        });
         if (!staff) throw new NotFoundException('Staff record not found');
 
         const commissions = await this.prisma.salonBookingCommission.findMany({
@@ -924,7 +927,20 @@ export class SalonBookingService {
         }));
 
         return {
-            commissionRate: staff.commissionRate != null ? Number(staff.commissionRate) : null,
+            // Dev Feedback Round 7, item #7: hasCommissionSetup checks both a
+            // Commission Plan and the flat rate -- checking commissionRate
+            // alone used to wrongly gate out a staff member whose only setup
+            // is a plan (a valid, real setup -- see Staff.commissionRate's
+            // own schema comment: it's "the fallback... with no formal plan
+            // yet"). effectiveRate is the plan's rate when one's assigned
+            // (it always takes priority), otherwise the flat rate -- shown
+            // with its source so it's never presented as a number that
+            // isn't actually the one being applied.
+            hasCommissionSetup: staff.commissionRate != null || !!staff.commissionPlanId,
+            effectiveRate: staff.commissionPlan
+                ? Number(staff.commissionPlan.commissionRate)
+                : (staff.commissionRate != null ? Number(staff.commissionRate) : null),
+            effectiveRateSource: staff.commissionPlan ? staff.commissionPlan.name : (staff.commissionRate != null ? 'Flat rate' : null),
             thisMonthTotal,
             bookingsThisMonth,
             allTimeTotal,
