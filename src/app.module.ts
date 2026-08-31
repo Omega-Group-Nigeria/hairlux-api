@@ -47,6 +47,7 @@ import { FinanceModule } from './finance/finance.module';
 import { PurchaseModule } from './purchase/purchase.module';
 import { ReportsModule } from './reports/reports.module';
 import { SiteStatsModule } from './site-stats/site-stats.module';
+import { AuditTrailModule } from './audit-trail/audit-trail.module';
 
 @Module({
   imports: [
@@ -134,6 +135,7 @@ import { SiteStatsModule } from './site-stats/site-stats.module';
     PurchaseModule,
     ReportsModule,
     SiteStatsModule,
+    AuditTrailModule,
 
   ],
   controllers: [AppController],

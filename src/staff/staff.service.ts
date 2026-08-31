@@ -716,6 +716,31 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
     return this.findOne(staff.id);
   }
 
+  /**
+   * Dev Feedback Round 7, item #10: a single, reusable "list staff for a
+   * dropdown" source -- ACTIVE + ON_LEAVE only by default (both mean
+   * "still with the company"; ON_LEAVE staff being missing from these
+   * lists was the reported bug). Kept deliberately separate from findAll
+   * (the full admin staff list, which needs every status including
+   * exited/archived for record-keeping) rather than overloading that
+   * endpoint's own filters. Lives on StaffSelfController (Roles: STAFF,
+   * not ADMIN/SUPER_ADMIN) rather than AdminStaffController specifically
+   * so any authenticated staff member can populate a dropdown on a page
+   * they have access to, regardless of whether that page itself needs
+   * admin rights -- the same access-mismatch already found and fixed for
+   * leave-requests/staff-options in Round 6, item #22.
+   */
+  async listDropdownOptions(locationId?: string, includeAllStatuses?: boolean) {
+    return this.staffModel.findMany({
+      where: {
+        ...(includeAllStatuses ? {} : { employmentStatus: { in: ['ACTIVE', 'ON_LEAVE'] } }),
+        ...(locationId && { locationId }),
+      },
+      select: { id: true, name: true, staffCode: true, locationId: true },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   async findByUserId(userId: string) {
     const cacheKey = `staff:byUser:${userId}`;
     const cached = await this.redis.get<StaffWithHistories>(cacheKey);

@@ -349,6 +349,28 @@ export class PayrollEngineService {
         }
 
         for (const payslip of createdPayslips) {
+            // Dev Feedback Round 7, item #9: reference is deterministic
+            // (periodId + staffId), by design, so a re-run correctly finds
+            // and reuses the same payslip (see the comment on that logic
+            // above) -- but this loop had no matching guard, so it always
+            // tried to create a second wallet transaction with that same
+            // reference, crashing on the unique constraint. Skipping both
+            // the balance increment and the transaction together when one
+            // already exists for this exact reference makes the whole
+            // operation safely re-runnable rather than crashing, matching
+            // the payslip logic's own re-run design intent.
+            //
+            // Known limitation: if a correction changed this payslip's
+            // netPay since the wallet was first credited, this skip does
+            // NOT reconcile the wallet to the new amount -- it leaves the
+            // original credit as-is. Flagged rather than solved here,
+            // since reconciling would need a signed adjustment entry (or
+            // similar) and this fix's own priority was stopping the crash
+            // that currently blocks generation entirely, every time.
+            const reference = `PAYROLL-${periodId}-${payslip.staffId}`;
+            const existingTransaction = await this.prisma.staffWalletTransaction.findUnique({ where: { reference } });
+            if (existingTransaction) continue;
+
             const wallet = await this.prisma.staffWallet.upsert({
                 where: { staffId: payslip.staffId },
                 create: { staffId: payslip.staffId, balance: 0 },
@@ -366,7 +388,7 @@ export class PayrollEngineService {
                         type: 'PAYROLL_CREDIT',
                         amount: payslip.netPay,
                         status: 'COMPLETED',
-                        reference: `PAYROLL-${periodId}-${payslip.staffId}`,
+                        reference,
                         description: `Net salary for this payroll period`,
                     },
                 }),
