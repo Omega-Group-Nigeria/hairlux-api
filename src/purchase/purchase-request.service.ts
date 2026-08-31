@@ -5,6 +5,13 @@ import { ApprovalService } from '../approval/approval.service';
 import { UpsertPurchaseRequestDto } from './dto/upsert-purchase-request.dto';
 
 const EDITABLE_STATUSES: PurchaseRequestStatus[] = [PurchaseRequestStatus.DRAFT];
+// Dev Feedback Round 6, item #9. Broader than EDITABLE_STATUSES --
+// deleting a dead/terminal request (never approved, nothing was ever
+// ordered against it) is safe even though editing it wouldn't make
+// sense. APPROVED is deliberately excluded: an approved request has a
+// linked Purchase record, which the DB itself would also reject via a
+// RESTRICT foreign key even if this guard were somehow bypassed.
+const DELETABLE_STATUSES: PurchaseRequestStatus[] = [PurchaseRequestStatus.DRAFT, PurchaseRequestStatus.REJECTED, PurchaseRequestStatus.CANCELLED];
 
 @Injectable()
 export class PurchaseRequestService {
@@ -221,6 +228,16 @@ export class PurchaseRequestService {
             },
             include: { lines: true },
         });
+    }
+
+    /** Dev Feedback Round 6, item #9. Only a Draft, Rejected, or Cancelled request can be deleted -- see DELETABLE_STATUSES. */
+    async remove(id: string) {
+        const existing = await this.prisma.purchaseRequest.findUnique({ where: { id } });
+        if (!existing) throw new NotFoundException('Purchase request not found');
+        if (!DELETABLE_STATUSES.includes(existing.status)) {
+            throw new BadRequestException(`Cannot delete -- request is ${existing.status}. Only a Draft, Rejected, or Cancelled request can be deleted.`);
+        }
+        await this.prisma.purchaseRequest.delete({ where: { id } });
     }
 
     /** Draft -> Pending. Creates the underlying ApprovalRequest -- routes through an admin-configured chain if one exists for PURCHASE_REQUEST, otherwise the original single-approver behavior. */

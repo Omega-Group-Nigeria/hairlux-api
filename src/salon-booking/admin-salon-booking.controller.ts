@@ -38,6 +38,19 @@ export class AdminSalonBookingController {
         const data = await this.salonBookingService.create(dto, staff?.id);
         return { success: true, message: 'Booking created successfully', data };
     }
+
+    @Get('preview-discount')
+    @ApiOperation({ summary: 'Preview a coupon\'s discount amount before creating the booking -- Dev Feedback Round 6, item #15' })
+    @Permission(PERMISSIONS.BOOKINGS_CREATE)
+    async previewDiscount(
+        @Query('code') code: string,
+        @Query('branchId') branchId: string,
+        @Query('subtotal') subtotal: string,
+        @Query('customerId') customerId?: string,
+    ) {
+        const data = await this.salonBookingService.previewDiscount(code, branchId, customerId, Number(subtotal));
+        return { success: true, message: 'Discount is valid', data };
+    }
     @Get()
     @ApiOperation({ summary: 'List bookings, filterable by branch/staff/status/date' })
     @Permission(PERMISSIONS.BOOKINGS_READ)

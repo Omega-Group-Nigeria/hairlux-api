@@ -46,6 +46,7 @@ import { InventoryProductModule } from './inventory-product/inventory-product.mo
 import { FinanceModule } from './finance/finance.module';
 import { PurchaseModule } from './purchase/purchase.module';
 import { ReportsModule } from './reports/reports.module';
+import { SiteStatsModule } from './site-stats/site-stats.module';
 
 @Module({
   imports: [
@@ -132,6 +133,7 @@ import { ReportsModule } from './reports/reports.module';
     FinanceModule,
     PurchaseModule,
     ReportsModule,
+    SiteStatsModule,
 
   ],
   controllers: [AppController],

@@ -52,6 +52,19 @@ export class StaffSalonBookingController {
         return { success: true, message: 'Booking created successfully', data };
     }
 
+    @Get('preview-discount')
+    @ApiOperation({ summary: 'Preview a coupon\'s discount amount before creating the booking -- Dev Feedback Round 6, item #15' })
+    async previewDiscount(
+        @Req() req: any,
+        @Query('code') code: string,
+        @Query('subtotal') subtotal: string,
+        @Query('customerId') customerId?: string,
+    ) {
+        const staff = await this.staffService.findByUserId(req.user.id) as unknown as { locationId: string };
+        const data = await this.salonBookingService.previewDiscount(code, staff.locationId, customerId, Number(subtotal));
+        return { success: true, message: 'Discount is valid', data };
+    }
+
     @Get('branch-staff')
     @ApiOperation({ summary: "List active staff at the logged-in staff member's own branch — for the Stylist picker" })
     async listBranchStaff(@Req() req: any) {

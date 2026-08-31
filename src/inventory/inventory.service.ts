@@ -296,6 +296,73 @@ export class InventoryService {
         return updated;
     }
 
+    /**
+     * Dev Feedback Round 6, item #6: move quantity between the three
+     * stock buckets (e.g. Store -> Sales) at the same branch/item,
+     * without changing the item's total stock. Uses the ALLOCATED
+     * movement type, which already existed in the schema for exactly
+     * this purpose but had never actually been wired up to anything.
+     * Two StockMovement rows (one negative on the source bucket, one
+     * positive on the destination) rather than one, mirroring how
+     * TRANSFER_OUT/TRANSFER_IN already record a branch-to-branch
+     * transfer as two sides for audit clarity.
+     */
+    async transferBetweenStockTypes(itemId: string, fromStockType: StockType, toStockType: StockType, quantity: number, reason: string | undefined, staffId: string | undefined) {
+        if (fromStockType === toStockType) {
+            throw new BadRequestException('Source and destination stock types must be different');
+        }
+        if (quantity <= 0) {
+            throw new BadRequestException('Quantity must be greater than zero');
+        }
+
+        const item = await this.findOne(itemId);
+        const available = this.getStockValue(item, fromStockType);
+        if (available < quantity) {
+            throw new BadRequestException(`Not enough ${fromStockType.toLowerCase()} stock to transfer — only ${available} available`);
+        }
+
+        const newFromQuantity = available - quantity;
+        const newToQuantity = this.getStockValue(item, toStockType) + quantity;
+
+        const [updated] = await this.prisma.$transaction([
+            this.prisma.inventoryItem.update({
+                where: { id: itemId },
+                data: {
+                    ...this.stockFieldUpdate(fromStockType, newFromQuantity),
+                    ...this.stockFieldUpdate(toStockType, newToQuantity),
+                },
+            }),
+            this.prisma.stockMovement.create({
+                data: {
+                    itemId,
+                    type: StockMovementType.ALLOCATED,
+                    stockType: fromStockType,
+                    quantityDelta: -quantity,
+                    performedById: staffId,
+                    reason: reason ? `${reason} (to ${toStockType.toLowerCase()})` : `Transferred to ${toStockType.toLowerCase()}`,
+                },
+            }),
+            this.prisma.stockMovement.create({
+                data: {
+                    itemId,
+                    type: StockMovementType.ALLOCATED,
+                    stockType: toStockType,
+                    quantityDelta: quantity,
+                    performedById: staffId,
+                    reason: reason ? `${reason} (from ${fromStockType.toLowerCase()})` : `Transferred from ${fromStockType.toLowerCase()}`,
+                },
+            }),
+        ]);
+
+        // The source bucket always decreases here (quantity > 0 was
+        // already validated above), so this check always fires --
+        // same logical outcome as applyAdjustment's own "delta < 0"
+        // condition, just phrased for a transfer instead.
+        await this.checkAndTriggerLowStockAlert(itemId);
+
+        return updated;
+    }
+
     /** The actual stock mutation — only ever called once an adjustment is approved (or by an elevated Admin submitting one, which auto-approves). */
     private async applyAdjustment(itemId: string, stockType: StockType, quantityDelta: number, reasonCategory: StockAdjustmentReasonValue, reason: string | null, staffId: string | undefined) {
         const item = await this.findOne(itemId);

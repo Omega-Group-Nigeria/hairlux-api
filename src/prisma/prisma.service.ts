@@ -532,6 +532,14 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.documentType;
   }
 
+  get siteStats() {
+    return this.client.siteStats;
+  }
+
+  get branchFinanceSettings() {
+    return this.client.branchFinanceSettings;
+  }
+
   get staffManagedFinanceBranch() {
     return this.client.staffManagedFinanceBranch;
   }

@@ -17,7 +17,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { SystemAuditService } from '../common/services/system-audit.service';
-import { classifyCustomerLifecycle, classifyCustomerValue, getUserVisitStats, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
+import { classifyCustomerLifecycle, classifyCustomerValue, getUserVisitStats, getCustomerVisitStats, getUserTotalSpend, getCustomerTotalSpend, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
 import { CreateDiscountDto } from './dto/create-discount.dto';
 import { UpdateDiscountDto } from './dto/update-discount.dto';
 import { QueryDiscountsDto } from './dto/query-discounts.dto';
@@ -183,7 +183,7 @@ export class DiscountService {
    * validate -- the classification queries only run once ANY dimension
    * that needs them is actually set.
    */
-  async validate(code: string, userId?: string, branchId?: string) {
+  async validate(code: string, userId?: string, branchId?: string, customerId?: string) {
     const discount = await this.prisma.discountCode.findUnique({
       where: { code: code.trim().toUpperCase() },
       include: {
@@ -232,8 +232,16 @@ export class DiscountService {
     }
 
     // Lifecycle stage / value tier / campaign-recipient targeting -- all
-    // need to know who's redeeming, so require userId once ANY of these
-    // dimensions is actually set on the coupon.
+    // need to know who's redeeming, so require a subject (User OR
+    // Customer -- Dev Feedback Round 6, item #15 added the walk-in
+    // Customer path, e.g. redemption from Salon Booking) once ANY of
+    // these dimensions is actually set on the coupon. targetLifecycleStages/
+    // targetValueTiers can no longer be set via the admin UI (Round 6,
+    // item #14 removed those fields from coupon creation, since a coupon's
+    // lifecycle/value targeting now comes from its gated campaign
+    // template instead) but the fields themselves still exist on the
+    // model, so any coupon created before that change still needs this
+    // check honored.
     const needsSubjectCheck =
       discount.targetLifecycleStages.length > 0 ||
       discount.targetValueTiers.length > 0 ||
@@ -241,22 +249,44 @@ export class DiscountService {
       !!discount.targetCampaignSequenceId;
 
     if (needsSubjectCheck) {
-      if (!userId) {
+      if (!userId && !customerId) {
         throw new BadRequestException('This discount code requires an account to check eligibility');
       }
 
       if (discount.targetLifecycleStages.length || discount.targetValueTiers.length) {
-        const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { createdAt: true } });
-        if (!user) throw new NotFoundException('Account not found');
-
-        const visitStats = (await getUserVisitStats(this.prisma, [userId])).get(userId);
         const thresholds = await getCustomerClassificationThresholds(this.prisma);
+        let lastVisitDate: Date | null = null;
+        let completedVisitCount = 0;
+        let accountCreatedAt: Date;
+        let totalSpend = 0;
+
+        if (userId) {
+          const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { createdAt: true } });
+          if (!user) throw new NotFoundException('Account not found');
+          accountCreatedAt = user.createdAt;
+          const visitStats = (await getUserVisitStats(this.prisma, [userId])).get(userId);
+          lastVisitDate = visitStats?.lastVisitDate ?? null;
+          completedVisitCount = visitStats?.visitCount ?? 0;
+          if (discount.targetValueTiers.length) {
+            totalSpend = (await getUserTotalSpend(this.prisma, [userId])).get(userId) ?? 0;
+          }
+        } else {
+          const customer = await this.prisma.customer.findUnique({ where: { id: customerId }, select: { createdAt: true } });
+          if (!customer) throw new NotFoundException('Customer record not found');
+          accountCreatedAt = customer.createdAt;
+          const visitStats = (await getCustomerVisitStats(this.prisma, [customerId!])).get(customerId!);
+          lastVisitDate = visitStats?.lastVisitDate ?? null;
+          completedVisitCount = visitStats?.visitCount ?? 0;
+          if (discount.targetValueTiers.length) {
+            totalSpend = (await getCustomerTotalSpend(this.prisma, [customerId!])).get(customerId!) ?? 0;
+          }
+        }
 
         if (discount.targetLifecycleStages.length) {
           const stage = classifyCustomerLifecycle({
-            lastVisitDate: visitStats?.lastVisitDate ?? null,
-            completedVisitCount: visitStats?.visitCount ?? 0,
-            accountCreatedAt: user.createdAt,
+            lastVisitDate,
+            completedVisitCount,
+            accountCreatedAt,
             thresholds: thresholds.lifecycle,
           });
           if (!discount.targetLifecycleStages.includes(stage)) {
@@ -265,16 +295,7 @@ export class DiscountService {
         }
 
         if (discount.targetValueTiers.length) {
-          // No existing utility computes marketplace-Booking spend for a
-          // User (classifyCustomerValue elsewhere in this codebase is
-          // computed from the separate walk-in Customer/SalonBooking
-          // path) -- summed directly here, only when this dimension is
-          // actually set on the coupon.
-          const spendAgg = await this.prisma.booking.aggregate({
-            where: { userId, status: 'COMPLETED' },
-            _sum: { totalAmount: true },
-          });
-          const tier = classifyCustomerValue(Number(spendAgg._sum.totalAmount ?? 0), thresholds.value);
+          const tier = classifyCustomerValue(totalSpend, thresholds.value);
           if (!discount.targetValueTiers.includes(tier)) {
             throw new BadRequestException('This discount code is not available for your account');
           }
@@ -289,7 +310,7 @@ export class DiscountService {
           where: {
             templateId: discount.targetCampaignTemplateId,
             status: 'SENT',
-            transition: { userId },
+            transition: userId ? { userId } : { customerId },
           },
         });
         if (!sent) {
@@ -301,7 +322,7 @@ export class DiscountService {
           where: {
             sequenceId: discount.targetCampaignSequenceId,
             status: 'SENT',
-            transition: { userId },
+            transition: userId ? { userId } : { customerId },
           },
         });
         if (!sent) {

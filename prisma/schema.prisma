@@ -1349,6 +1349,17 @@ model LifecycleCampaignTemplate {
   cooldownDays   Int                  @default(30) @map("cooldown_days")
   sendHour       Int?                 @map("send_hour") // 0-23, local server time
   sendMinute     Int?                 @map("send_minute") // 0-59
+  // Dev Feedback Round 6, item #12. Both independent, optional
+  // audience-narrowing filters on top of targetLifecycle -- null means
+  // "no restriction on this dimension" (matches every value / every
+  // source), same convention as sendHour meaning "no time restriction".
+  // targetValue is a plain string, not a Prisma enum, mirroring how
+  // targetLifecycle itself is stored -- both are validated against the
+  // CustomerLifecycle/CustomerValue TS union types in
+  // src/common/utils/customer-status.util.ts via class-validator's
+  // @IsIn, not a DB-level enum constraint.
+  targetValue    String?              @map("target_value") // STANDARD | PREMIUM | VIP
+  audienceSource String?              @map("audience_source") // USER | CUSTOMER
   createdAt      DateTime             @default(now()) @map("created_at")
   updatedAt      DateTime             @updatedAt @map("updated_at")
 
@@ -1357,6 +1368,7 @@ model LifecycleCampaignTemplate {
 
   sends LifecycleCampaignSend[]
   targetingDiscountCodes DiscountCode[]
+  usedInSequenceSteps LifecycleCampaignSequenceStep[]
 }
 
 /**
@@ -1391,15 +1403,26 @@ model LifecycleCampaignSequenceStep {
   id       String               @id @default(uuid())
   sequenceId String             @map("sequence_id")
   stepOrder  Int                @map("step_order") // 1, 2, 3... execution order
-  channel    CommunicationChannel
+  // Dev Feedback Round 6, item #13: a step now selects an existing
+  // LifecycleCampaignTemplate rather than re-entering channel/subject/
+  // message per step -- content (and channel) is resolved from the
+  // linked template at send time, so an edit to the template
+  // automatically applies to every sequence step referencing it.
+  // channel/subject/bodyTemplate below are now nullable and unused by
+  // new steps -- kept in place (not dropped) only so any pre-existing
+  // step rows created before this change still have a valid row shape;
+  // the DTO requires templateId for every step going forward.
+  templateId String?            @map("template_id")
+  channel    CommunicationChannel?
   subject    String?            // EMAIL only, same convention as LifecycleCampaignTemplate
-  bodyTemplate String           @map("body_template")
+  bodyTemplate String?          @map("body_template")
   delayAfterPreviousMinutes Int @default(0) @map("delay_after_previous_minutes")
   sendHour   Int?               @map("send_hour")
   sendMinute Int?               @map("send_minute")
   createdAt  DateTime           @default(now()) @map("created_at")
 
   sequence LifecycleCampaignSequence       @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  template LifecycleCampaignTemplate?      @relation(fields: [templateId], references: [id])
   sends    LifecycleCampaignSequenceSend[]
 
   @@unique([sequenceId, stepOrder])
@@ -1412,7 +1435,7 @@ model LifecycleCampaignSequenceSend {
   transitionId String    @map("transition_id")
   sequenceId   String    @map("sequence_id")
   stepId       String    @map("step_id")
-  status       String    // SENT | SKIPPED_NO_CONSENT | SKIPPED_NO_CONTACT | SKIPPED_COOLDOWN | SKIPPED_SEQUENCE_DISABLED | SKIPPED_PREVIOUS_STEP_NOT_SENT | FAILED
+  status       String    // SENT | SKIPPED_NO_CONSENT | SKIPPED_NO_CONTACT | SKIPPED_NO_TEMPLATE | SKIPPED_COOLDOWN | SKIPPED_SEQUENCE_DISABLED | SKIPPED_PREVIOUS_STEP_NOT_SENT | FAILED
   sentAt       DateTime? @map("sent_at")
   createdAt    DateTime  @default(now()) @map("created_at")
 
@@ -1546,6 +1569,13 @@ model SalonBooking {
   cancelledAt     DateTime?          @map("cancelled_at")
   reservationCode String?            @unique @map("reservation_code")
   reservationUsed Boolean            @default(false) @map("reservation_used")
+  // Dev Feedback Round 6, item #15: coupon redemption for walk-in
+  // customers. One coupon per booking, matching the marketplace side's
+  // own constraint (DiscountUsage.bookingId is unique there too) --
+  // just direct fields here rather than a separate usage model, since
+  // there's no need to track more than "which code, how much off".
+  discountCodeId  String?            @map("discount_code_id")
+  discountAmount  Decimal?           @map("discount_amount") @db.Decimal(10, 2)
   createdAt       DateTime           @default(now()) @map("created_at")
   updatedAt       DateTime           @updatedAt @map("updated_at")
 
@@ -1555,6 +1585,7 @@ model SalonBooking {
   createdBy      Staff?                      @relation("SalonBookingCreatedBy", fields: [createdById], references: [id])
   services       SalonBookingService[]
   inventoryItems SalonBookingInventoryItem[]
+  discountCode   DiscountCode?               @relation(fields: [discountCodeId], references: [id], onDelete: SetNull)
   commission     SalonBookingCommission?
 
   @@index([branchId, bookingDate])
@@ -1889,6 +1920,7 @@ model DiscountCode {
   // Relations
   influencer Influencer?     @relation(fields: [influencerId], references: [id], onDelete: SetNull)
   usages     DiscountUsage[]
+  salonBookings SalonBooking[]
   targetCampaignTemplate LifecycleCampaignTemplate? @relation(fields: [targetCampaignTemplateId], references: [id], onDelete: SetNull)
   targetCampaignSequence LifecycleCampaignSequence? @relation(fields: [targetCampaignSequenceId], references: [id], onDelete: SetNull)
 
@@ -2300,6 +2332,7 @@ model Staff {
   lateGracePeriodOverride     Int?                     @map("late_grace_period_override")
   leaveRequests               LeaveRequest[]
   leaveRequestsToApprove      LeaveRequest[]           @relation("LeaveRequestApprover")
+  leaveRequestsReassigned     LeaveRequest[]           @relation("LeaveRequestReassignedBy")
   approvalRequestsSubmitted   ApprovalRequest[]        @relation("ApprovalSubmittedBy")
   approvalRequestsToAction    ApprovalRequest[]        @relation("ApprovalCurrentApprover")
   approvalActionsTaken        ApprovalAction[]         @relation("ApprovalActionActor")
@@ -2342,6 +2375,8 @@ model Staff {
   purchaseRequestsSubmitted PurchaseRequest[]
   purchasePaymentsRecorded  PurchasePayment[]
   vendorLedgerAdjustmentsCreated VendorLedgerAdjustment[]
+  siteStatsUpdates          SiteStats[]
+  branchFinanceSettingsUpdates BranchFinanceSettings[]
   goodsReceiptsReceived     GoodsReceipt[]
   compensationHistory     StaffCompensationHistory[] @relation("StaffCompensationHistory")
   compensationChangesMade StaffCompensationHistory[] @relation("CompensationChangedBy")
@@ -2834,6 +2869,49 @@ model PayrollSettings {
   @@map("payroll_settings")
 }
 
+/**
+ * Dev Feedback Round 6, item #17: the daily revenue-submission deadline
+ * (Dev Feedback Round 4, items #25-29 -- "yesterday's window closes at
+ * noon today") was hardcoded as '12:00'. Admin-configurable, singleton
+ * settings row, matching PayrollSettings' own pattern above. Plain
+ * "HH:mm" string, matching watDateAtTime's own expected format.
+ */
+model BranchFinanceSettings {
+  id                     String   @id @default(uuid())
+  submissionDeadlineTime String   @default("12:00") @map("submission_deadline_time")
+  updatedById            String?  @map("updated_by_id")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  updatedBy Staff? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("branch_finance_settings")
+}
+
+/**
+ * The homepage "Trusted by Thousands" stats strip -- each field is an
+ * admin-set override for the number actually displayed. All nullable:
+ * when null, the live-computed count is used instead (completed
+ * bookings, registered customers, average rating, active branches,
+ * active staff). Real "trust" numbers on a marketing page are commonly
+ * curated/rounded rather than the literal live DB count, so this is
+ * deliberately override-based rather than purely computed -- an admin
+ * sees the live figure and can choose to display it as-is or adjust it.
+ */
+model SiteStats {
+  id                        String   @id @default(uuid())
+  completedBookingsOverride Int?     @map("completed_bookings_override")
+  registeredCustomersOverride Int?   @map("registered_customers_override")
+  averageRatingOverride     Decimal? @map("average_rating_override") @db.Decimal(2, 1)
+  branchesOverride          Int?     @map("branches_override")
+  professionalsOverride     Int?     @map("professionals_override")
+  updatedById               String?  @map("updated_by_id")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  updatedBy Staff? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@map("site_stats")
+}
+
 model BranchService {
   id          String   @id @default(uuid())
   branchId    String   @map("branch_id")
@@ -3029,11 +3107,21 @@ model LeaveRequest {
   approvedAt        DateTime?          @map("approved_at")
   rejectionReason   String?            @map("rejection_reason")
   approvalRequestId String?            @unique @map("approval_request_id")
+  // Dev Feedback Round 6, item #22: the frontend already collected a
+  // required reassignment reason and called a PATCH .../reassign
+  // endpoint that never existed on the backend at all. approverId is
+  // overwritten on reassign (matches its own existing "current
+  // approver" semantics) -- these three track the fact and reason of
+  // the most recent reassignment, not a full history log.
+  reassignmentReason String?           @map("reassignment_reason")
+  reassignedAt       DateTime?         @map("reassigned_at")
+  reassignedById     String?           @map("reassigned_by_id")
   createdAt         DateTime           @default(now()) @map("created_at")
   updatedAt         DateTime           @updatedAt @map("updated_at")
 
   staff           Staff            @relation(fields: [staffId], references: [id], onDelete: Cascade)
   approver        Staff?           @relation("LeaveRequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  reassignedBy    Staff?           @relation("LeaveRequestReassignedBy", fields: [reassignedById], references: [id], onDelete: SetNull)
   approvalRequest ApprovalRequest? @relation(fields: [approvalRequestId], references: [id], onDelete: SetNull)
 
   @@index([staffId, status])

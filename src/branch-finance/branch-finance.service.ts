@@ -320,7 +320,7 @@ export class BranchFinanceService {
      * doesn't carve out an exception, and introducing an unstated one
      * would be a surprising, undocumented gap in the rule.
      */
-    private assertWithinSubmissionWindow(dateStr: string, now: Date) {
+    private async assertWithinSubmissionWindow(dateStr: string, now: Date) {
         const todayWat = toWatDateStr(now);
         const yesterdayWat = toWatDateStr(new Date(now.getTime() - 24 * 60 * 60 * 1000));
 
@@ -330,15 +330,45 @@ export class BranchFinanceService {
             );
         }
 
-        const noonToday = watDateAtTime(todayWat, '12:00');
-        if (now.getTime() >= noonToday.getTime()) {
-            throw new BadRequestException(`The submission window for ${yesterdayWat} closed at 12:00pm today.`);
+        const deadlineTime = (await this.prisma.branchFinanceSettings.findFirst())?.submissionDeadlineTime ?? '12:00';
+        const deadlineToday = watDateAtTime(todayWat, deadlineTime);
+        if (now.getTime() >= deadlineToday.getTime()) {
+            throw new BadRequestException(`The submission window for ${yesterdayWat} closed at ${deadlineTime} today.`);
         }
+    }
+
+    /** Dev Feedback Round 6, item #17. */
+    async getSettings() {
+        const row = await this.prisma.branchFinanceSettings.findFirst({
+            include: { updatedBy: { select: { id: true, name: true } } },
+        });
+        return { submissionDeadlineTime: row?.submissionDeadlineTime ?? '12:00', updatedAt: row?.updatedAt ?? null, updatedBy: row?.updatedBy ?? null };
+    }
+
+    async updateSettings(submissionDeadlineTime: string, actorUserId: string | undefined) {
+        // Dev Feedback Round 6, item #22 uncovered this same mistake in a
+        // sibling feature: req.user.id off the JWT is a User id, not a
+        // Staff id -- updatedById's FK points at Staff. Resolved here
+        // rather than passed straight through from the controller.
+        const actorStaff = actorUserId
+            ? await this.prisma.staff.findFirst({ where: { userId: actorUserId } })
+            : null;
+
+        const existing = await this.prisma.branchFinanceSettings.findFirst();
+        if (existing) {
+            return this.prisma.branchFinanceSettings.update({
+                where: { id: existing.id },
+                data: { submissionDeadlineTime, updatedById: actorStaff?.id },
+            });
+        }
+        return this.prisma.branchFinanceSettings.create({
+            data: { submissionDeadlineTime, updatedById: actorStaff?.id },
+        });
     }
 
     async submitReconciliation(userId: string, isAdmin: boolean, dto: SubmitReconciliationDto) {
         const branchId = await this.resolveBranchIdRequired(userId, isAdmin, dto.branchId);
-        this.assertWithinSubmissionWindow(dto.date, new Date());
+        await this.assertWithinSubmissionWindow(dto.date, new Date());
 
         // Snapshot the expected figures for this single date right now, rather
         // than relying on the caller to have fetched them separately — avoids a

@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { CommunicationChannel } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Max, Min, ValidateNested } from 'class-validator';
 
 // Matches CustomerLifecycle exactly (src/common/utils/customer-status.util.ts)
 // -- same literal-array approach as UpsertLifecycleCampaignTemplateDto,
@@ -16,19 +15,9 @@ const LIFECYCLE_VALUES = ['NEVER_VISITED', 'NEW', 'ACTIVE', 'AT_RISK', 'DORMANT'
  * out of sync with the array itself.
  */
 export class UpsertLifecycleCampaignSequenceStepDto {
-    @ApiProperty({ enum: CommunicationChannel })
-    @IsEnum(CommunicationChannel)
-    channel: CommunicationChannel;
-
-    @ApiPropertyOptional({ description: 'Email subject line -- ignored for SMS/PUSH' })
-    @IsOptional()
-    @IsString()
-    subject?: string;
-
-    @ApiProperty({ description: 'Supports {{firstName}}, {{lastName}}, {{lastVisitDate}}' })
-    @IsString()
-    @IsNotEmpty()
-    bodyTemplate: string;
+    @ApiProperty({ description: 'Dev Feedback Round 6, item #13: selects an existing LifecycleCampaignTemplate for this step\'s content (and channel) rather than re-entering subject/message here -- editing the template later automatically applies to every step referencing it.' })
+    @IsUUID()
+    templateId: string;
 
     @ApiPropertyOptional({ default: 0, description: 'For the first step: minutes after the lifecycle transition. For later steps: minutes after the PREVIOUS step was processed.' })
     @IsOptional()

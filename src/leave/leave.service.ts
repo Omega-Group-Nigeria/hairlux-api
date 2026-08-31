@@ -8,7 +8,7 @@ import {
     Prisma,
 } from '@prisma/client';
 import { CreateLeaveRequestDto } from './dto/create-leave-request.dto';
-import { RejectLeaveRequestDto } from './dto/leave-request-action.dto';
+import { RejectLeaveRequestDto, ReassignLeaveRequestDto } from './dto/leave-request-action.dto';
 import { QueryLeaveRequestDto } from './dto/query-leave-request.dto';
 
 const NON_ATTENDANCE_TYPES: LeaveRequestType[] = [LeaveRequestType.OVERTIME_REQUEST];
@@ -78,6 +78,27 @@ export class LeaveService {
         return this.prisma.leaveRequest.findMany({
             where: { staffId },
             orderBy: { createdAt: 'desc' },
+        });
+    }
+
+    /**
+     * Dev Feedback Round 6, item #22. AdminLeaveController is gated only
+     * by the ADMIN/SUPER_ADMIN role (see its class-level @Roles), with no
+     * @Permission check on any of its endpoints -- but the frontend's
+     * staff dropdowns were calling GET /admin/staff, which requires the
+     * staff:read permission specifically. SUPER_ADMIN bypasses permission
+     * checks unconditionally (PermissionGuard), but a plain ADMIN does
+     * not -- one without staff:read individually granted could reach this
+     * page (role check passes) yet have the dropdown silently fail to
+     * populate (permission check fails, error swallowed by the frontend's
+     * non-fatal catch). A minimal, same-gating endpoint here sidesteps
+     * that mismatch entirely rather than widening staff:read's own scope.
+     */
+    async listStaffOptions() {
+        return this.prisma.staff.findMany({
+            where: { employmentStatus: { not: 'ARCHIVED' } }, // matches /admin/staff's own default (includeArchived: false) -- not just ACTIVE, since ON_LEAVE/SUSPENDED staff can still have leave requests worth filtering by
+            select: { id: true, name: true, staffCode: true, locationId: true },
+            orderBy: { name: 'asc' },
         });
     }
 
@@ -170,6 +191,79 @@ export class LeaveService {
         }
 
         return updated;
+    }
+
+    /**
+     * Dev Feedback Round 6, item #22: the frontend already had a working
+     * reassign UI (dropdown, required reason) calling PATCH
+     * .../reassign, but nothing on the backend implemented it at all.
+     * Only a PENDING request can be reassigned -- matches approve/reject's
+     * own guard, since an already-decided request has nothing left to
+     * hand off. approverId is overwritten (its existing "current
+     * approver" semantics); reassignmentReason/reassignedAt/reassignedById
+     * record the fact and reason of the most recent reassignment.
+     */
+    async reassign(requestId: string, dto: ReassignLeaveRequestDto, actorUserId: string | undefined) {
+        const request = await this.prisma.leaveRequest.findUnique({
+            where: { id: requestId },
+            include: { staff: true },
+        });
+        if (!request) throw new NotFoundException('Leave request not found');
+        if (request.status !== LeaveRequestStatus.PENDING) {
+            throw new BadRequestException(`Cannot reassign — request is already ${request.status}`);
+        }
+
+        const newApprover = await this.prisma.staff.findUnique({ where: { id: dto.toApproverId } });
+        if (!newApprover) throw new NotFoundException('Staff member to reassign to was not found');
+        if (dto.toApproverId === request.approverId) {
+            throw new BadRequestException('This request is already assigned to that staff member');
+        }
+
+        // req.user.id off the JWT is a User id, not a Staff id --
+        // reassignedById's FK points at Staff, so resolve it here rather
+        // than at the controller (keeps StaffService out of this
+        // controller's dependencies for one simple lookup).
+        const actorStaff = actorUserId
+            ? await this.prisma.staff.findFirst({ where: { userId: actorUserId } })
+            : null;
+
+        const updated = await this.prisma.leaveRequest.update({
+            where: { id: requestId },
+            data: {
+                approverId: dto.toApproverId,
+                reassignmentReason: dto.reason,
+                reassignedAt: new Date(),
+                reassignedById: actorStaff?.id,
+            },
+        });
+
+        // Non-blocking, same pattern as approve/reject above.
+        if (newApprover.email) {
+            this.mailService.sendGenericEmail(
+                newApprover.email,
+                'A Leave Request Has Been Reassigned To You',
+                this.renderReassignmentEmail(request, dto.reason),
+            ).catch(() => { });
+        }
+
+        return updated;
+    }
+
+    private renderReassignmentEmail(
+        request: { type: LeaveRequestType; startDate: Date; endDate: Date; reason: string; staff?: { name: string } | null },
+        reassignmentReason: string,
+    ): string {
+        const dateRange = request.startDate.toDateString() === request.endDate.toDateString()
+            ? request.startDate.toDateString()
+            : `${request.startDate.toDateString()} to ${request.endDate.toDateString()}`;
+        return [
+            `<p>A leave/permission request has been reassigned to you for review.</p>`,
+            `<p><strong>Staff member:</strong> ${request.staff?.name ?? 'Unknown'}<br/>`,
+            `<strong>Type:</strong> ${request.type}<br/>`,
+            `<strong>Dates:</strong> ${dateRange}<br/>`,
+            `<strong>Their reason:</strong> ${request.reason}</p>`,
+            `<p><strong>Why it was reassigned to you:</strong> ${reassignmentReason}</p>`,
+        ].join('\n');
     }
 
     /** Full content, not a vague "your request was updated" -- the type, the date range, the outcome, and (for a rejection) the reason. */

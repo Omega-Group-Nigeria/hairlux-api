@@ -41,6 +41,10 @@ export class LifecycleCampaignTemplateService {
                 bodyTemplate: dto.bodyTemplate,
                 delayDays: dto.delayDays ?? 0,
                 cooldownDays: dto.cooldownDays ?? 30,
+                sendHour: dto.sendHour ?? null,
+                sendMinute: dto.sendMinute ?? null,
+                targetValue: dto.targetValue ?? null,
+                audienceSource: dto.audienceSource ?? null,
             },
         });
 
@@ -67,6 +71,15 @@ export class LifecycleCampaignTemplateService {
                 ...(dto.bodyTemplate !== undefined && { bodyTemplate: dto.bodyTemplate }),
                 ...(dto.delayDays !== undefined && { delayDays: dto.delayDays }),
                 ...(dto.cooldownDays !== undefined && { cooldownDays: dto.cooldownDays }),
+                // Dev Feedback Round 6, item #11: the frontend sends an
+                // explicit null (not undefined) when this field is
+                // cleared, so !== undefined here correctly distinguishes
+                // "field not included in this request" from "explicitly
+                // cleared back to no time restriction".
+                ...(dto.sendHour !== undefined && { sendHour: dto.sendHour }),
+                ...(dto.sendMinute !== undefined && { sendMinute: dto.sendMinute }),
+                ...(dto.targetValue !== undefined && { targetValue: dto.targetValue }),
+                ...(dto.audienceSource !== undefined && { audienceSource: dto.audienceSource }),
             },
         });
 
