@@ -78,6 +78,29 @@ export class CompanyDocumentService {
   }
 
   /**
+   * Dev Feedback Round 6, item #20. Only ever safe when nobody has
+   * acknowledged this specific version yet -- otherwise deleting it would
+   * destroy the historical record of what that staff member actually
+   * agreed to (see createDocument's own comment above). In practice this
+   * only ever fires for a just-uploaded, mistaken document: real,
+   * in-use versions accumulate acknowledgments almost immediately.
+   */
+  async remove(id: string) {
+    const doc = await this.prisma.companyDocument.findUnique({
+      where: { id },
+      include: { _count: { select: { acknowledgments: true } } },
+    });
+    if (!doc) throw new NotFoundException('Document not found');
+    if (doc._count.acknowledgments > 0) {
+      throw new ConflictException(
+        `${doc._count.acknowledgments} staff member(s) have already acknowledged this document -- it can't be deleted without destroying that historical record. Upload a new version instead.`,
+      );
+    }
+    await this.prisma.companyDocument.delete({ where: { id } });
+    return { id };
+  }
+
+  /**
    * For a given staff member: every active document, plus whether they've
    * acknowledged it and when. Used by both the staff's own dashboard and
    * the admin view of a specific staff member's compliance status.

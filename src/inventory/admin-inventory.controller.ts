@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { ReassignApprovalDto } from '../approval/dto/reassign-approval.dto';
@@ -7,12 +7,14 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { StaffService } from '../staff/staff.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { TransferStockBetweenTypesDto } from './dto/transfer-stock-between-types.dto';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { BulkCreateInventoryItemDto } from './dto/bulk-create-inventory-item.dto';
 import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
 import { QueryInventoryDto } from './dto/query-inventory.dto';
 import { RejectStockAdjustmentDto } from './dto/reject-stock-adjustment.dto';
 import { RejectTransferDto } from './dto/reject-transfer.dto';
+import { RequestTransferDto } from './dto/request-transfer.dto';
 import { InventoryService } from './inventory.service';
 
 @ApiTags('Admin - Inventory')
@@ -124,6 +126,20 @@ export class AdminInventoryController {
         return { success: true, message: 'Expiry alert resolved successfully', data };
     }
 
+    @Post('transfer-requests')
+    @ApiOperation({
+        summary: 'Request a stock transfer between branches — Dev Feedback Round 6, item #8',
+        description: 'Goes through the same approval workflow as a staff-submitted request (requestTransfer has no elevated/auto-approve path) — use the separate approve endpoint below to execute it.',
+    })
+    async requestTransfer(@Req() req: any, @Body() dto: RequestTransferDto) {
+        const staff = await this.staffService.findByUserIdOrNull(req.user.id);
+        if (!staff) {
+            throw new BadRequestException('Your account has no linked staff record, so a transfer cannot be attributed to a requester — ask a Super Admin with a linked staff record to submit this instead.');
+        }
+        const data = await this.inventoryService.requestTransfer(dto, staff.id);
+        return { success: true, message: 'Transfer request submitted successfully', data };
+    }
+
     @Get('transfer-requests')
     @ApiOperation({ summary: 'List all stock transfer requests, optionally filtered by branch' })
     async findTransfers(@Query('branchId') branchId?: string) {
@@ -168,6 +184,18 @@ export class AdminInventoryController {
         const staff = await this.staffService.findByUserIdOrNull(req.user.id);
         const data = await this.inventoryService.requestStockAdjustment(id, dto, staff?.id, true);
         return { success: true, message: 'Stock adjusted successfully', data };
+    }
+
+    @Post(':id/transfer-stock-type')
+    @ApiOperation({
+        summary: 'Move quantity between Store/Sales/Usage stock at the same item/branch — Dev Feedback Round 6, item #6',
+        description: 'Does not change the item\'s total stock, only how it is allocated across the three buckets. Applies immediately — no approval workflow, since nothing enters or leaves the branch.',
+    })
+    @ApiParam({ name: 'id' })
+    async transferStockType(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: TransferStockBetweenTypesDto) {
+        const staff = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.inventoryService.transferBetweenStockTypes(id, dto.fromStockType, dto.toStockType, dto.quantity, dto.reason, staff?.id);
+        return { success: true, message: 'Stock reallocated successfully', data };
     }
 
     @Get('movements/all')

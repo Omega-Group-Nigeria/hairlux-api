@@ -160,6 +160,46 @@ export async function getUserVisitStats(prisma: PrismaService, userIds: string[]
 }
 
 /**
+ * Dev Feedback Round 6, item #12: total spend for the Value dimension
+ * (see classifyCustomerValue), computed from the same completed-visit
+ * source getCustomerVisitStats already uses. A separate query rather
+ * than folding into getCustomerVisitStats's existing return shape,
+ * since most callers of visit stats don't need spend and shouldn't pay
+ * for summing totalAmount on every call.
+ */
+export async function getCustomerTotalSpend(prisma: PrismaService, customerIds: string[]): Promise<Map<string, number>> {
+    const spend = new Map<string, number>();
+    if (!customerIds.length) return spend;
+
+    const bookings = await prisma.salonBooking.findMany({
+        where: { customerId: { in: customerIds }, status: 'COMPLETED' },
+        select: { customerId: true, totalAmount: true },
+    });
+
+    for (const b of bookings) {
+        if (!b.customerId) continue;
+        spend.set(b.customerId, (spend.get(b.customerId) ?? 0) + Number(b.totalAmount));
+    }
+    return spend;
+}
+
+/** Same shape and purpose as getCustomerTotalSpend, but sources from Booking -- see getUserVisitStats's own note on why User/Customer stay separate queries. */
+export async function getUserTotalSpend(prisma: PrismaService, userIds: string[]): Promise<Map<string, number>> {
+    const spend = new Map<string, number>();
+    if (!userIds.length) return spend;
+
+    const bookings = await prisma.booking.findMany({
+        where: { userId: { in: userIds }, status: 'COMPLETED' },
+        select: { userId: true, totalAmount: true },
+    });
+
+    for (const b of bookings) {
+        spend.set(b.userId, (spend.get(b.userId) ?? 0) + Number(b.totalAmount));
+    }
+    return spend;
+}
+
+/**
  * Fetches both settings dimensions in a single query — the common case for
  * every call site that classifies customers, since Value and Lifecycle
  * always live on the same settings row.

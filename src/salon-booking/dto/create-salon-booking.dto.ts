@@ -51,6 +51,11 @@ export class CreateSalonBookingDto {
     @IsString()
     customerPhone?: string;
 
+    @ApiPropertyOptional({ description: 'Coupon code to redeem for this booking -- Dev Feedback Round 6, item #15.' })
+    @IsOptional()
+    @IsString()
+    discountCode?: string;
+
     @ApiPropertyOptional({ example: 'ngozi@example.com' })
     @IsOptional()
     @IsString()
@@ -65,7 +70,7 @@ export class CreateSalonBookingDto {
     @IsOptional()
     @IsBoolean()
     linkToVerifiedUser?: boolean;
-    
+
     @ApiPropertyOptional({ description: 'The Stylist/staff member providing the service — can be left unset and assigned later (e.g. at reservation verification).' })
     @IsOptional()
     @IsUUID()

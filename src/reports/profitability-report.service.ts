@@ -5,6 +5,9 @@ interface ProfitabilityFilters {
     branchId?: string;
     from?: Date;
     to?: Date;
+    // Dev Feedback Round 6, item #16.
+    productId?: string; // InventoryProduct id -- joined through item.productId since both line models link to the branch-level InventoryItem, not directly to the product master
+    source?: 'standalone' | 'booking'; // omit for both, matching the report's own combined-totals default
 }
 
 interface Totals {
@@ -34,7 +37,7 @@ export class ProfitabilityReportService {
 
     async getProfitability(filters: ProfitabilityFilters) {
         const [standaloneLines, bookingLines] = await Promise.all([
-            this.prisma.productSaleItem.findMany({
+            filters.source === 'booking' ? Promise.resolve([]) : this.prisma.productSaleItem.findMany({
                 where: {
                     sale: {
                         ...(filters.branchId && { branchId: filters.branchId }),
@@ -45,10 +48,11 @@ export class ProfitabilityReportService {
                             },
                         }),
                     },
+                    ...(filters.productId && { item: { productId: filters.productId } }),
                 },
                 select: { quantity: true, unitPrice: true, unitCost: true, item: { select: { name: true } } },
             }),
-            this.prisma.salonBookingInventoryItem.findMany({
+            filters.source === 'standalone' ? Promise.resolve([]) : this.prisma.salonBookingInventoryItem.findMany({
                 where: {
                     unitPrice: { not: null }, // CONSUMED-only lines (no unitPrice) were never billed -- not a sale
                     booking: {
@@ -61,6 +65,7 @@ export class ProfitabilityReportService {
                             },
                         }),
                     },
+                    ...(filters.productId && { item: { productId: filters.productId } }),
                 },
                 select: { quantity: true, unitPrice: true, unitCost: true, item: { select: { name: true } } },
             }),

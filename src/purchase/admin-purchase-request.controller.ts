@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { PurchaseRequestStatus } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -96,6 +96,15 @@ export class AdminPurchaseRequestController {
     async update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpsertPurchaseRequestDto) {
         const data = await this.purchaseRequestService.update(id, dto);
         return { success: true, message: 'Purchase request updated', data };
+    }
+
+    @Delete(':id')
+    @Permission(PERMISSIONS.PURCHASE_REQUESTS_DELETE)
+    @ApiOperation({ summary: 'Delete a purchase request -- Dev Feedback Round 6, item #9. Only a Draft, Rejected, or Cancelled request can be deleted.' })
+    @ApiParam({ name: 'id' })
+    async remove(@Param('id', ParseUUIDPipe) id: string) {
+        await this.purchaseRequestService.remove(id);
+        return { success: true, message: 'Purchase request deleted successfully' };
     }
 
     @Post(':id/submit')

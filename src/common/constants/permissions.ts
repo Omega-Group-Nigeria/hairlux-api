@@ -110,6 +110,7 @@ export const PERMISSIONS = {
   PURCHASE_REQUESTS_READ: 'purchase_requests:read',
   PURCHASE_REQUESTS_CREATE: 'purchase_requests:create',
   PURCHASE_REQUESTS_UPDATE: 'purchase_requests:update',
+  PURCHASE_REQUESTS_DELETE: 'purchase_requests:delete',
   PURCHASE_REQUESTS_APPROVE: 'purchase_requests:approve',
 
   // ── Purchases (Procurement Integration) ───────────────────────────────────
@@ -124,6 +125,9 @@ export const PERMISSIONS = {
   // kept as its own permission rather than folded into
   // financial_transactions:read.
   REPORTS_READ_PROFITABILITY: 'reports:read_profitability',
+  // Homepage "Trusted by Thousands" stats -- who can view the live counts
+  // and set marketing overrides on top of them.
+  SITE_STATS_MANAGE: 'site_stats:manage',
 
   // ── Main Admin Dashboard metrics (Dev Feedback Round 4, item #32) ─────────
   // Grouped by logical metric category, not one permission per literal
@@ -177,6 +181,7 @@ export const PERMISSIONS = {
   // ── Branch Finance (daily summary & cash reconciliation) ─────────────────────
   BRANCH_FINANCE_READ: 'branch_finance:read', // View the daily financial summary for a branch (bookings, sales, inventory movement)
   BRANCH_FINANCE_RECONCILE: 'branch_finance:reconcile', // Submit a branch's end-of-day cash count
+  BRANCH_FINANCE_MANAGE_SETTINGS: 'branch_finance:manage_settings', // Dev Feedback Round 6, item #17 -- configure the daily submission deadline that applies across every branch
 
   // ── Settings ─────────────────────────────────────────────────────────────────
   SETTINGS_READ: 'settings:read', // View system settings
@@ -461,6 +466,7 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.PURCHASE_REQUESTS_READ, label: 'View purchase requests' },
       { key: PERMISSIONS.PURCHASE_REQUESTS_CREATE, label: 'Create and submit purchase requests' },
       { key: PERMISSIONS.PURCHASE_REQUESTS_UPDATE, label: 'Edit a purchase request while still in Draft' },
+      { key: PERMISSIONS.PURCHASE_REQUESTS_DELETE, label: 'Delete a Draft, Rejected, or Cancelled purchase request' },
       { key: PERMISSIONS.PURCHASE_REQUESTS_APPROVE, label: 'Approve or reject purchase requests awaiting your action' },
     ],
   },
@@ -477,6 +483,7 @@ export const PERMISSION_GROUPS = [
     permissions: [
       { key: PERMISSIONS.FINANCIAL_TRANSACTIONS_READ, label: 'View the financial transaction ledger and dashboard' },
       { key: PERMISSIONS.REPORTS_READ_PROFITABILITY, label: 'View revenue, COGS, and gross profit reporting' },
+      { key: PERMISSIONS.SITE_STATS_MANAGE, label: 'View and configure the homepage "Trusted by Thousands" stats' },
     ],
   },
   {
@@ -521,6 +528,7 @@ export const PERMISSION_GROUPS = [
     permissions: [
       { key: PERMISSIONS.BRANCH_FINANCE_READ, label: "View a branch's daily financial summary — booking revenue, product sales, inventory received/transferred" },
       { key: PERMISSIONS.BRANCH_FINANCE_RECONCILE, label: "Submit a branch's end-of-day cash count" },
+      { key: PERMISSIONS.BRANCH_FINANCE_MANAGE_SETTINGS, label: "Configure the daily submission deadline that applies across every branch" },
     ],
   },
   {

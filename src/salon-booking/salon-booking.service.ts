@@ -8,6 +8,7 @@ import { watTodayDateStr } from '../common/utils/wat-time.util';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { FinancialTransactionService } from '../finance/financial-transaction.service';
+import { DiscountService } from '../discount/discount.service';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
@@ -81,7 +82,29 @@ export class SalonBookingService {
         private inventoryService: InventoryService,
         private bookingService: BookingService,
         private financialTransactionService: FinancialTransactionService,
+        private discountService: DiscountService,
     ) { }
+
+    /**
+     * Dev Feedback Round 6, item #15: a preview endpoint so an admin/
+     * staff member sees the discount amount and resulting total before
+     * committing to the booking (they need the final price to quote the
+     * walk-in customer) -- distinct from the customer-facing
+     * discounts/validate/:code endpoint, which validates for the
+     * logged-in user themselves rather than on someone else's behalf.
+     */
+    async previewDiscount(code: string, branchId: string, customerId: string | undefined, subtotal: number) {
+        const validated = await this.discountService.validate(code, undefined, branchId, customerId);
+        const discountAmount = Math.round(subtotal * (Number(validated.percentage) / 100) * 100) / 100;
+        return {
+            id: validated.id,
+            code: validated.code,
+            name: validated.name,
+            percentage: validated.percentage,
+            discountAmount,
+            newTotal: subtotal - discountAmount,
+        };
+    }
 
     async create(dto: CreateSalonBookingDto, createdById: string | undefined) {
         if (!dto.branchId) {
@@ -138,22 +161,50 @@ export class SalonBookingService {
             ? (await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail, dto.linkToVerifiedUser)).id
             : undefined;
 
-        const booking = await this.prisma.salonBooking.create({
-            data: {
-                branchId: dto.branchId,
-                customerId,
-                customerName: dto.customerName,
-                customerPhone: dto.customerPhone,
-                assignedStaffId: dto.assignedStaffId,
-                createdById,
-                bookingDate: new Date(dto.bookingDate),
-                bookingTime: dto.bookingTime,
-                notes: dto.notes,
-                totalAmount,
-                services: { create: serviceLines },
-                inventoryItems: inventoryLines.length ? { create: inventoryLines } : undefined,
-            },
-            include: INCLUDE_FULL,
+        // Dev Feedback Round 6, item #15: coupon redemption for walk-in
+        // customers. Validated the same way the marketplace booking flow
+        // validates one (discountService.validate) -- just passes
+        // customerId as the subject instead of userId, since a walk-in
+        // rarely has a linked account.
+        let discountCodeId: string | undefined;
+        let discountAmount: number | undefined;
+        let finalTotal = totalAmount;
+        if (dto.discountCode) {
+            const validated = await this.discountService.validate(dto.discountCode, undefined, dto.branchId, customerId);
+            discountCodeId = validated.id;
+            discountAmount = Math.round(totalAmount * (Number(validated.percentage) / 100) * 100) / 100;
+            finalTotal = totalAmount - discountAmount;
+        }
+
+        const booking = await this.prisma.$transaction(async (tx: any) => {
+            const created = await tx.salonBooking.create({
+                data: {
+                    branchId: dto.branchId,
+                    customerId,
+                    customerName: dto.customerName,
+                    customerPhone: dto.customerPhone,
+                    assignedStaffId: dto.assignedStaffId,
+                    createdById,
+                    bookingDate: new Date(dto.bookingDate),
+                    bookingTime: dto.bookingTime,
+                    notes: dto.notes,
+                    totalAmount: finalTotal,
+                    discountCodeId,
+                    discountAmount,
+                    services: { create: serviceLines },
+                    inventoryItems: inventoryLines.length ? { create: inventoryLines } : undefined,
+                },
+                include: INCLUDE_FULL,
+            });
+
+            if (discountCodeId) {
+                await tx.discountCode.update({
+                    where: { id: discountCodeId },
+                    data: { usedCount: { increment: 1 } },
+                });
+            }
+
+            return created;
         });
 
         return withBookingCode(booking);

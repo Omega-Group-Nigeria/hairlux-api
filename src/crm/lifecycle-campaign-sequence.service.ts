@@ -12,7 +12,7 @@ export class LifecycleCampaignSequenceService {
 
     async findAll() {
         return this.prisma.lifecycleCampaignSequence.findMany({
-            include: { steps: { orderBy: { stepOrder: 'asc' } } },
+            include: { steps: { orderBy: { stepOrder: 'asc' }, include: { template: true } } },
             orderBy: { targetLifecycle: 'asc' },
         });
     }
@@ -20,7 +20,7 @@ export class LifecycleCampaignSequenceService {
     async findOne(id: string) {
         const sequence = await this.prisma.lifecycleCampaignSequence.findUnique({
             where: { id },
-            include: { steps: { orderBy: { stepOrder: 'asc' } } },
+            include: { steps: { orderBy: { stepOrder: 'asc' }, include: { template: true } } },
         });
         if (!sequence) throw new NotFoundException('Campaign sequence not found');
         return sequence;
@@ -36,16 +36,14 @@ export class LifecycleCampaignSequenceService {
                 steps: {
                     create: dto.steps.map((step, index) => ({
                         stepOrder: index + 1,
-                        channel: step.channel,
-                        subject: step.subject,
-                        bodyTemplate: step.bodyTemplate,
+                        templateId: step.templateId,
                         delayAfterPreviousMinutes: step.delayAfterPreviousMinutes ?? 0,
                         sendHour: step.sendHour,
                         sendMinute: step.sendMinute,
                     })),
                 },
             },
-            include: { steps: { orderBy: { stepOrder: 'asc' } } },
+            include: { steps: { orderBy: { stepOrder: 'asc' }, include: { template: true } } },
         });
 
         await this.systemAuditService.log({
@@ -92,9 +90,7 @@ export class LifecycleCampaignSequenceService {
                     data: dto.steps.map((step, index) => ({
                         sequenceId: id,
                         stepOrder: index + 1,
-                        channel: step.channel,
-                        subject: step.subject,
-                        bodyTemplate: step.bodyTemplate,
+                        templateId: step.templateId,
                         delayAfterPreviousMinutes: step.delayAfterPreviousMinutes ?? 0,
                         sendHour: step.sendHour,
                         sendMinute: step.sendMinute,

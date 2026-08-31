@@ -22,15 +22,21 @@ export class AdminReportsController {
     @ApiQuery({ name: 'branchId', required: false })
     @ApiQuery({ name: 'from', required: false, description: 'ISO date string' })
     @ApiQuery({ name: 'to', required: false, description: 'ISO date string' })
+    @ApiQuery({ name: 'productId', required: false, description: 'InventoryProduct id -- Dev Feedback Round 6, item #16' })
+    @ApiQuery({ name: 'source', required: false, enum: ['standalone', 'booking'], description: 'Omit for both (Dev Feedback Round 6, item #16)' })
     async getProfitability(
         @Query('branchId') branchId?: string,
         @Query('from') from?: string,
         @Query('to') to?: string,
+        @Query('productId') productId?: string,
+        @Query('source') source?: 'standalone' | 'booking',
     ) {
         const data = await this.profitabilityReportService.getProfitability({
             branchId,
             from: from ? new Date(from) : undefined,
             to: to ? new Date(to) : undefined,
+            productId,
+            source,
         });
         return { success: true, message: 'Retrieved successfully', data };
     }

@@ -7,7 +7,7 @@ import { MailService } from '../mail/mail.service';
 import { AfricasTalkingService } from '../sms/africas-talking.service';
 import { PushNotificationService } from '../beautician/fcm/push-notification.service';
 import { CommunicationProfileService, CommunicationSubject } from './communication-profile.service';
-import { getCustomerVisitStats, getUserVisitStats } from '../common/utils/customer-status.util';
+import { getCustomerVisitStats, getUserVisitStats, getCustomerTotalSpend, getUserTotalSpend, getCustomerClassificationThresholds, classifyCustomerValue } from '../common/utils/customer-status.util';
 
 type ResolvedSubject = {
     type: 'customer' | 'user';
@@ -118,7 +118,7 @@ export class LifecycleCampaignSendService {
         });
         const sequence = await this.prisma.lifecycleCampaignSequence.findFirst({
             where: { targetLifecycle: transition.toLifecycle, isEnabled: true },
-            include: { steps: { orderBy: { stepOrder: 'asc' } } },
+            include: { steps: { orderBy: { stepOrder: 'asc' }, include: { template: true } } },
         });
 
         if (!templates.length && !sequence) {
@@ -138,7 +138,29 @@ export class LifecycleCampaignSendService {
         let anyStillWaiting = false;
         const now = new Date();
 
+        // Dev Feedback Round 6, item #12: audienceSource is a free
+        // comparison against the already-resolved subject -- checked
+        // first. targetValue needs the subject's total spend, which is
+        // only worth computing if at least one template in this batch
+        // actually uses that filter (most won't).
+        const needsValueTier = templates.some((t: any) => t.targetValue);
+        let subjectValueTier: string | null = null;
+        if (needsValueTier) {
+            const spendMap = subject.type === 'customer'
+                ? await getCustomerTotalSpend(this.prisma, [subject.id])
+                : await getUserTotalSpend(this.prisma, [subject.id]);
+            const thresholds = await getCustomerClassificationThresholds(this.prisma);
+            subjectValueTier = classifyCustomerValue(spendMap.get(subject.id) ?? 0, thresholds.value);
+        }
+
         for (const template of templates) {
+            if (template.audienceSource && template.audienceSource.toLowerCase() !== subject.type) {
+                continue; // this template doesn't target this subject's source at all -- not "waiting", just not applicable
+            }
+            if (template.targetValue && template.targetValue !== subjectValueTier) {
+                continue; // subject's Value tier doesn't match this template's filter
+            }
+
             const existing = await this.prisma.lifecycleCampaignSend.findUnique({
                 where: { transitionId_templateId: { transitionId: transition.id, templateId: template.id } },
             });
@@ -184,7 +206,7 @@ export class LifecycleCampaignSendService {
      */
     private async handleSequence(
         transition: PendingTransition,
-        sequence: { id: string; cooldownDays: number; steps: { id: string; stepOrder: number; channel: CommunicationChannel; subject: string | null; bodyTemplate: string; delayAfterPreviousMinutes: number; sendHour: number | null; sendMinute: number | null }[] },
+        sequence: { id: string; cooldownDays: number; steps: { id: string; stepOrder: number; template: { channel: CommunicationChannel; subject: string | null; bodyTemplate: string } | null; delayAfterPreviousMinutes: number; sendHour: number | null; sendMinute: number | null }[] },
         subject: ResolvedSubject,
         now: Date,
     ): Promise<'attempted' | 'waiting' | 'complete' | 'terminal'> {
@@ -203,6 +225,15 @@ export class LifecycleCampaignSendService {
             this.prisma.lifecycleCampaignSequenceSend.create({
                 data: { transitionId: transition.id, sequenceId: sequence.id, stepId: nextStep.id, status },
             });
+
+        // Dev Feedback Round 6, item #13: a step's content now comes from
+        // its linked template, which uses onDelete: SetNull -- a step
+        // whose template was later deleted has nothing to send. Skip and
+        // move on rather than crash; the sequence still completes.
+        if (!nextStep.template) {
+            await recordSkip('SKIPPED_NO_TEMPLATE');
+            return 'attempted';
+        }
 
         // Cooldown check only applies before STEP 1 -- once a sequence has
         // begun for this transition, it always runs to completion; cooldown
@@ -238,7 +269,12 @@ export class LifecycleCampaignSendService {
             return 'waiting';
         }
 
-        await this.attemptSequenceStep(transition, sequence.id, nextStep, subject);
+        await this.attemptSequenceStep(transition, sequence.id, {
+            id: nextStep.id, // the send record's stepId is the STEP's id, not the linked template's
+            channel: nextStep.template.channel,
+            subject: nextStep.template.subject,
+            bodyTemplate: nextStep.template.bodyTemplate,
+        }, subject);
         return 'attempted';
     }
 

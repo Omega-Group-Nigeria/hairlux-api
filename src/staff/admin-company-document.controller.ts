@@ -2,7 +2,10 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  ParseUUIDPipe,
   Post,
   UploadedFile,
   UseGuards,
@@ -39,7 +42,7 @@ export class AdminCompanyDocumentController {
   constructor(
     private readonly documentService: CompanyDocumentService,
     private readonly s3Service: S3Service,
-  ) {}
+  ) { }
 
   @Post('upload')
   @ApiOperation({
@@ -120,5 +123,19 @@ export class AdminCompanyDocumentController {
   async listActive() {
     const data = await this.documentService.listActiveDocuments();
     return { success: true, message: 'Active documents retrieved successfully', data };
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Delete a company document -- Dev Feedback Round 6, item #20',
+    description: "Only succeeds if nobody has acknowledged this specific version yet, since deleting an acknowledged document would destroy the historical record of what that staff member agreed to. Upload a new version instead of trying to delete an in-use one.",
+  })
+  @ApiResponse({ status: 200, description: 'Document deleted successfully' })
+  @ApiResponse({ status: 404, description: 'Document not found' })
+  @ApiResponse({ status: 409, description: 'One or more staff have already acknowledged this document' })
+  @Permission(PERMISSIONS.STAFF_MANAGE_DOCUMENTS)
+  async remove(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.documentService.remove(id);
+    return { success: true, message: 'Document deleted successfully', data };
   }
 }
