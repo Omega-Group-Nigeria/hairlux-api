@@ -3782,7 +3782,13 @@ model InventoryProduct {
   name                  String
   sku                   String?           @unique
   brand                 String?
-  category              InventoryCategory
+  // Dev Feedback Round 8: changed from a single InventoryCategory to an
+  // array -- a product (e.g. a shampoo) can genuinely belong to more
+  // than one category (FOR_SALE and INTERNAL_USE at once) rather than
+  // being forced into exactly one. Field name kept singular despite the
+  // type change, to minimize churn across the DTO/service/frontend that
+  // already reference `category`.
+  category              InventoryCategory[]
   productType           String?           @map("product_type") // free text -- spec doesn't define a fixed list
   unit                  String?
   costPrice             Decimal?          @map("cost_price") @db.Decimal(10, 2)

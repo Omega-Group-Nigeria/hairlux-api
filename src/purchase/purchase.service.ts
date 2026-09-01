@@ -192,7 +192,17 @@ export class PurchaseService {
                         item = await tx.inventoryItem.create({
                             data: {
                                 name: product.name,
-                                category: product.category,
+                                // Dev Feedback Round 8: InventoryProduct.category
+                                // is now an array (a product can belong to more
+                                // than one), but InventoryItem.category is still
+                                // single-value -- picks the first as a sensible
+                                // default for this auto-created branch item; the
+                                // admin can adjust the item's own category
+                                // afterward if a different one applies here.
+                                // Falls back to FOR_SALE only as a defensive
+                                // guard -- product.category should never actually
+                                // be empty, since the DTO enforces at least one.
+                                category: product.category[0] ?? 'FOR_SALE',
                                 branchId: purchase.branchId,
                                 productId: product.id,
                                 unit: product.unit,

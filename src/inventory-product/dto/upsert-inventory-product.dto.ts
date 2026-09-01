@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { InventoryCategory } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, ArrayMinSize, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class UpsertInventoryProductDto {
     @ApiProperty({ example: 'Moisturizing Shampoo 500ml' })
@@ -16,9 +16,9 @@ export class UpsertInventoryProductDto {
     @IsOptional() @IsString()
     brand?: string;
 
-    @ApiProperty({ enum: InventoryCategory })
-    @IsEnum(InventoryCategory)
-    category: InventoryCategory;
+    @ApiProperty({ enum: InventoryCategory, isArray: true, description: 'A product can belong to more than one category (e.g. sold to customers AND used internally)' })
+    @IsArray() @ArrayMinSize(1) @IsEnum(InventoryCategory, { each: true })
+    category: InventoryCategory[];
 
     @ApiPropertyOptional({ description: 'Free text -- the spec does not define a fixed list', example: 'Hair Care' })
     @IsOptional() @IsString()

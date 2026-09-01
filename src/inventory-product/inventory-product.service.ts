@@ -16,7 +16,11 @@ export class InventoryProductService {
                         { brand: { contains: filters.search, mode: 'insensitive' } },
                     ],
                 }),
-                ...(filters.category && { category: filters.category as any }),
+                // Dev Feedback Round 8: category is now InventoryCategory[]
+                // (a product can belong to more than one) -- `has` matches
+                // any product whose array includes this one category,
+                // same as the equality check did before the type change.
+                ...(filters.category && { category: { has: filters.category as any } }),
                 ...(filters.activeOnly && { isActive: true }),
             },
             include: {
