@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
@@ -218,17 +219,37 @@ export class PayrollEngineService {
      * latePenaltyAmount/absentFeeAmount fields payroll itself sums, so this
      * number is guaranteed to match what payroll eventually charges — never
      * a separate, potentially-drifting estimate.
+     *
+     * explicitRange lets the caller ask about a SPECIFIC past period
+     * instead (e.g. "what fines fed into my August payslip") -- without
+     * it, this always defaults to the live current/draft period, which
+     * previously was the only option and confusingly kept showing this
+     * month's fines even while a staff member was looking at an old,
+     * already-published payslip from a prior month.
      */
-    async getCurrentFinesForStaff(staffId: string) {
-        const draftPeriod = await this.prisma.payrollPeriod.findFirst({
-            where: { status: 'DRAFT' },
-            orderBy: { periodStart: 'desc' },
-        });
+    async getCurrentFinesForStaff(staffId: string, explicitRange?: { start: Date; end: Date }) {
+        let periodStart: Date;
+        let periodEnd: Date;
+        let periodLabel: string;
+        let isDraftPeriod: boolean;
 
-        const now = new Date();
-        const periodStart = draftPeriod ? draftPeriod.periodStart : new Date(now.getFullYear(), now.getMonth(), 1);
-        const periodEnd = draftPeriod ? draftPeriod.periodEnd : now;
-        const periodLabel = draftPeriod ? draftPeriod.label : now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+        if (explicitRange) {
+            periodStart = explicitRange.start;
+            periodEnd = explicitRange.end;
+            periodLabel = periodStart.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+            isDraftPeriod = false; // a specific, caller-chosen past period, not "live/in-progress" -- keeps the "(est.)" framing off since this isn't an estimate
+        } else {
+            const draftPeriod = await this.prisma.payrollPeriod.findFirst({
+                where: { status: 'DRAFT' },
+                orderBy: { periodStart: 'desc' },
+            });
+
+            const now = new Date();
+            periodStart = draftPeriod ? draftPeriod.periodStart : new Date(now.getFullYear(), now.getMonth(), 1);
+            periodEnd = draftPeriod ? draftPeriod.periodEnd : now;
+            periodLabel = draftPeriod ? draftPeriod.label : now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+            isDraftPeriod = !!draftPeriod;
+        }
 
         const [lateAgg, absentFeeAgg, records] = await Promise.all([
             this.prisma.attendanceRecord.aggregate({
@@ -266,7 +287,7 @@ export class PayrollEngineService {
             periodLabel,
             periodStart,
             periodEnd,
-            isDraftPeriod: !!draftPeriod,
+            isDraftPeriod,
             latePenaltyTotal,
             absentFeeTotal,
             total: latePenaltyTotal,
@@ -369,6 +390,19 @@ export class PayrollEngineService {
             // operation safely re-runnable rather than crashing, matching
             // the payslip logic's own re-run design intent.
             //
+            // The findUnique check above and the create below are two
+            // separate round-trips, not one atomic operation -- if
+            // generatePayroll is called twice for the same period close
+            // together (double-click, a retried request), both calls can
+            // pass the check before either create() lands, and the second
+            // create() then collides on the same deterministic reference.
+            // Catching that specific P2002 here (rather than only relying
+            // on the earlier check) makes crediting idempotent under real
+            // concurrency too, not just for a sequential re-run -- the
+            // colliding call simply treats it the same as "already
+            // credited" and moves on, instead of crashing generation for
+            // every other staff member still left in the loop.
+            //
             // Known limitation: if a correction changed this payslip's
             // netPay since the wallet was first credited, this skip does
             // NOT reconcile the wallet to the new amount -- it leaves the
@@ -386,22 +420,34 @@ export class PayrollEngineService {
                 update: {},
             });
 
-            await this.prisma.$transaction([
-                this.prisma.staffWallet.update({
-                    where: { id: wallet.id },
-                    data: { balance: { increment: payslip.netPay } },
-                }),
-                this.prisma.staffWalletTransaction.create({
-                    data: {
-                        walletId: wallet.id,
-                        type: 'PAYROLL_CREDIT',
-                        amount: payslip.netPay,
-                        status: 'COMPLETED',
-                        reference,
-                        description: `Net salary for this payroll period`,
-                    },
-                }),
-            ]);
+            try {
+                await this.prisma.$transaction([
+                    this.prisma.staffWallet.update({
+                        where: { id: wallet.id },
+                        data: { balance: { increment: payslip.netPay } },
+                    }),
+                    this.prisma.staffWalletTransaction.create({
+                        data: {
+                            walletId: wallet.id,
+                            type: 'PAYROLL_CREDIT',
+                            amount: payslip.netPay,
+                            status: 'COMPLETED',
+                            reference,
+                            description: `Net salary for this payroll period`,
+                        },
+                    }),
+                ]);
+            } catch (err) {
+                const isDuplicateReference =
+                    err instanceof Prisma.PrismaClientKnownRequestError &&
+                    err.code === 'P2002' &&
+                    (err.meta?.target as string[] | undefined)?.includes('reference');
+                if (!isDuplicateReference) throw err;
+                // A concurrent call already credited this exact reference
+                // between our findUnique check above and this create --
+                // nothing left to do for this staff member, continue with
+                // the rest of the loop rather than aborting the whole run.
+            }
         }
 
         const updatedPeriod = await this.prisma.payrollPeriod.update({
@@ -572,6 +618,9 @@ export class PayrollEngineService {
             approvedExtraWorkdaysCount: calc.approvedExtraWorkdaysCount,
             payableWorkdays: calc.payableWorkdays,
             dailyRate: calc.dailyRate,
+            confirmedWorkdays: calc.confirmedWorkdays,
+            commissionPeriodConfirmedWorkdays: calc.commissionPeriodConfirmedWorkdays,
+            effectiveDailyPay: calc.effectiveDailyPay,
             salaryEarned: calc.salaryEarned,
             staffHireDateSnapshot: calc.staffHireDateSnapshot,
             cutoffDayUsed: calc.cutoffDayUsed,

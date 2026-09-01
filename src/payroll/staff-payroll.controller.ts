@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, ParseUUIDPipe, Post, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, ParseUUIDPipe, Post, Query, Req, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -82,10 +82,11 @@ export class StaffPayrollController {
     }
 
     @Get('current-fines')
-    @ApiOperation({ summary: 'My running late-penalty and absent-fee total for the in-progress payroll period, visible before payroll actually runs' })
-    async getCurrentFines(@Req() req: any) {
+    @ApiOperation({ summary: 'My running late-penalty and absent-fee total for the in-progress payroll period (default), or for a specific past period when periodStart/periodEnd query params are given -- e.g. to see what fed into an already-published payslip from a prior month' })
+    async getCurrentFines(@Req() req: any, @Query('periodStart') periodStart?: string, @Query('periodEnd') periodEnd?: string) {
         const staffId = await this.myStaffId(req);
-        const data = await this.payrollEngineService.getCurrentFinesForStaff(staffId);
+        const explicitRange = periodStart && periodEnd ? { start: new Date(periodStart), end: new Date(periodEnd) } : undefined;
+        const data = await this.payrollEngineService.getCurrentFinesForStaff(staffId, explicitRange);
         return { success: true, message: 'Retrieved successfully', data };
     }
 

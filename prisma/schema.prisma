@@ -2636,6 +2636,21 @@ model Payslip {
   payableWorkdays             Decimal? @map("payable_workdays") @db.Decimal(5, 2)
   dailyRate                   Decimal? @map("daily_rate") @db.Decimal(10, 2)
   salaryEarned                Decimal? @map("salary_earned") @db.Decimal(10, 2)
+  /// "Confirmed Work Days" -- the actual worked/payable days for this
+  /// period (same figure as payableWorkdays, but also populated for
+  /// COMMISSION-only staff, who previously got no workday breakdown at
+  /// all). Denominator for effectiveDailyPay below.
+  confirmedWorkdays              Int?     @map("confirmed_workdays")
+  /// SALARY_TO_COMMISSION only -- confirmedWorkdays for the commission
+  /// sub-range specifically, kept separate from confirmedWorkdays (the
+  /// salary sub-range's count) so the two can be summed without
+  /// double-counting.
+  commissionPeriodConfirmedWorkdays Int? @map("commission_period_confirmed_workdays")
+  /// Informational per-day rate, computed AFTER salaryEarned/
+  /// commissionEarned are already determined -- never drives actual pay.
+  /// See PayrollSalaryCalculatorService.SalaryCalculationResult for the
+  /// per-compensation-type formula.
+  effectiveDailyPay              Decimal? @map("effective_daily_pay") @db.Decimal(10, 2)
 
   // ── "First applicable payroll month" fields — show only when relevant ──
   staffHireDateSnapshot DateTime? @map("staff_hire_date_snapshot") @db.Date
