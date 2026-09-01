@@ -27,6 +27,27 @@ export interface SalaryCalculationResult {
     // Commission (COMMISSION and SALARY_PLUS_COMMISSION, and the
     // commission-eligible portion of SALARY_TO_COMMISSION).
     commissionEarned: number;
+
+    // "Confirmed Work Days" -- the actual worked/payable days (scheduled -
+    // missed + approved extra), as opposed to the full-month scheduled
+    // denominator used above. Populated for every compensation type,
+    // including COMMISSION (which otherwise has no workday breakdown at
+    // all -- see calculateForStaff's COMMISSION branch).
+    confirmedWorkdays: number | null;
+    // Only set for SALARY_TO_COMMISSION when a commission sub-range
+    // exists this period -- confirmedWorkdays for that sub-range
+    // specifically, kept separate from the salary sub-range's count
+    // (which lives in payableWorkdays/confirmedWorkdays) so the two can
+    // be summed for effectiveDailyPay without double-counting.
+    commissionPeriodConfirmedWorkdays: number | null;
+    // Informational only -- per-day rate computed AFTER salaryEarned/
+    // commissionEarned are already determined by the existing (unchanged)
+    // proration logic above. Never used to derive actual pay:
+    //  - SALARY / SALARY_PLUS_COMMISSION: Basic Salary / confirmedWorkdays
+    //  - COMMISSION: Total Earned Commission / confirmedWorkdays
+    //  - SALARY_TO_COMMISSION: (salaryEarned + commissionEarned) /
+    //    (confirmedWorkdays + commissionPeriodConfirmedWorkdays)
+    effectiveDailyPay: number | null;
 }
 
 interface DateRange {
@@ -197,30 +218,49 @@ export class PayrollSalaryCalculatorService {
             commissionPeriodEnd: null,
             transitionDate: null,
             commissionEarned: 0,
+            confirmedWorkdays: null,
+            commissionPeriodConfirmedWorkdays: null,
+            effectiveDailyPay: null,
         };
 
-        // COMMISSION-only staff: no salary section applies at all (guide,
-        // section 11: "Salary, start-date, and cutoff fields do not apply
-        // to commission-only employees").
-        if (compType === 'COMMISSION') {
-            result.commissionEarned = await this.commissionEarnedInRange(staff.id, { start: periodStart, end: periodEnd });
-            return result;
-        }
-
         // Section 6: applicable range for THIS period, accounting for a
-        // mid-month hire date -- but the daily-rate DENOMINATOR is always
-        // the full month regardless (see fullMonthScheduledWorkdays doc comment).
-        const fullMonthWorkdays = await this.fullMonthScheduledWorkdays(staff.id, periodStart, periodEnd);
-        result.fullMonthScheduledWorkdays = fullMonthWorkdays;
-        result.dailyRate = fullMonthWorkdays > 0 ? baseSalary / fullMonthWorkdays : 0;
-        result.salaryEffectiveDate = periodStart; // frozen snapshot of "as of this period" -- the actual effective-date audit trail lives in StaffCompensationHistory
-
+        // mid-month hire date -- used by every compensation type
+        // (including COMMISSION, below) so a staff member hired mid-period
+        // never gets pre-hire days counted against or for them.
         const applicableStart = hireDate && hireDate > periodStart ? hireDate : periodStart;
         if (hireDate && hireDate > periodEnd) {
             // Hired after this period ends entirely -- nothing payable yet.
             return result;
         }
         const applicableRange: DateRange = { start: applicableStart, end: periodEnd };
+
+        // COMMISSION-only staff: no salary section applies (guide, section
+        // 11: "Salary, start-date, and cutoff fields do not apply to
+        // commission-only employees") -- fullMonthScheduledWorkdays,
+        // dailyRate, and salaryEffectiveDate stay null. But rule 4 ("Daily
+        // Pay = Total Earned Commission / Confirmed Work Days") still needs
+        // a workday breakdown, which previously wasn't computed at all here.
+        if (compType === 'COMMISSION') {
+            const { scheduledWorkdays, missedWorkdays, approvedExtraWorkdays } = await this.rangeWorkdayBreakdown(staff.id, applicableRange);
+            result.applicableScheduledWorkdays = scheduledWorkdays;
+            result.missedWorkdays = missedWorkdays;
+            result.approvedExtraWorkdaysCount = approvedExtraWorkdays;
+            const payableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
+            result.payableWorkdays = payableWorkdays;
+            result.confirmedWorkdays = payableWorkdays;
+
+            result.commissionEarned = await this.commissionEarnedInRange(staff.id, applicableRange);
+            result.effectiveDailyPay = payableWorkdays > 0 ? result.commissionEarned / payableWorkdays : 0;
+            return result;
+        }
+
+        // Section 6: the daily-rate DENOMINATOR (dailyRate, which actually
+        // drives salaryEarned) is always the full month regardless of hire
+        // date or attendance -- see fullMonthScheduledWorkdays doc comment.
+        const fullMonthWorkdays = await this.fullMonthScheduledWorkdays(staff.id, periodStart, periodEnd);
+        result.fullMonthScheduledWorkdays = fullMonthWorkdays;
+        result.dailyRate = fullMonthWorkdays > 0 ? baseSalary / fullMonthWorkdays : 0;
+        result.salaryEffectiveDate = periodStart; // frozen snapshot of "as of this period" -- the actual effective-date audit trail lives in StaffCompensationHistory
 
         if (compType === 'SALARY') {
             const { scheduledWorkdays, missedWorkdays, approvedExtraWorkdays } = await this.rangeWorkdayBreakdown(staff.id, applicableRange);
@@ -229,8 +269,15 @@ export class PayrollSalaryCalculatorService {
             result.approvedExtraWorkdaysCount = approvedExtraWorkdays;
             const payableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
             result.payableWorkdays = payableWorkdays;
+            result.confirmedWorkdays = payableWorkdays;
             result.salaryEarned = result.dailyRate * payableWorkdays;
             result.extraWorkDayEarnings = approvedExtraWorkdays * result.dailyRate;
+            // Rule 1: Daily Pay = Basic Salary / Confirmed Work Days --
+            // informational only, computed after salaryEarned above (which
+            // keeps using the full-month-scheduled rate that actually
+            // drives pay). Left at 0 when nothing was confirmed rather than
+            // dividing by zero.
+            result.effectiveDailyPay = payableWorkdays > 0 ? baseSalary / payableWorkdays : 0;
             return result;
         }
 
@@ -241,9 +288,15 @@ export class PayrollSalaryCalculatorService {
             result.approvedExtraWorkdaysCount = approvedExtraWorkdays;
             const payableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
             result.payableWorkdays = payableWorkdays;
+            result.confirmedWorkdays = payableWorkdays;
             result.salaryEarned = result.dailyRate * payableWorkdays;
             result.extraWorkDayEarnings = approvedExtraWorkdays * result.dailyRate;
             result.commissionEarned = await this.commissionEarnedInRange(staff.id, applicableRange);
+            // Rule 3: Daily Pay = Basic Salary / Confirmed Work Days, same
+            // as SALARY -- commission is added separately elsewhere
+            // (payroll-engine.service.ts's grossPay), not folded into this
+            // informational rate.
+            result.effectiveDailyPay = payableWorkdays > 0 ? baseSalary / payableWorkdays : 0;
             return result;
         }
 
@@ -260,8 +313,10 @@ export class PayrollSalaryCalculatorService {
                 result.approvedExtraWorkdaysCount = approvedExtraWorkdays;
                 const payableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
                 result.payableWorkdays = payableWorkdays;
+                result.confirmedWorkdays = payableWorkdays;
                 result.salaryEarned = result.dailyRate * payableWorkdays;
                 result.extraWorkDayEarnings = approvedExtraWorkdays * result.dailyRate;
+                result.effectiveDailyPay = payableWorkdays > 0 ? baseSalary / payableWorkdays : 0;
                 return result;
             }
 
@@ -279,6 +334,7 @@ export class PayrollSalaryCalculatorService {
                 result.approvedExtraWorkdaysCount = approvedExtraWorkdays;
                 const payableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
                 result.payableWorkdays = payableWorkdays;
+                result.confirmedWorkdays = payableWorkdays;
                 result.salaryEarned = result.dailyRate * payableWorkdays;
                 result.extraWorkDayEarnings = approvedExtraWorkdays * result.dailyRate;
             }
@@ -287,7 +343,22 @@ export class PayrollSalaryCalculatorService {
                 result.commissionPeriodStart = split.commissionRange.start;
                 result.commissionPeriodEnd = split.commissionRange.end;
                 result.commissionEarned = await this.commissionEarnedInRange(staff.id, split.commissionRange);
+                // Confirmed work days for the commission sub-range too --
+                // needed (alongside the salary sub-range's confirmedWorkdays
+                // above) as the denominator for rule 2's combined Daily Pay.
+                const { scheduledWorkdays, missedWorkdays, approvedExtraWorkdays } = await this.rangeWorkdayBreakdown(staff.id, split.commissionRange);
+                const commissionPayableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
+                result.commissionPeriodConfirmedWorkdays = commissionPayableWorkdays;
             }
+
+            // Rule 2: combine salary-period pay and commission-period pay
+            // as Total Pay, then divide by total confirmed work days across
+            // BOTH sub-ranges -- informational only, same as the other
+            // three rules; salaryEarned and commissionEarned above (already
+            // correct) are what actually gets paid.
+            const totalPay = result.salaryEarned + result.commissionEarned;
+            const totalConfirmedWorkdays = (result.confirmedWorkdays ?? 0) + (result.commissionPeriodConfirmedWorkdays ?? 0);
+            result.effectiveDailyPay = totalConfirmedWorkdays > 0 ? totalPay / totalConfirmedWorkdays : 0;
 
             return result;
         }
