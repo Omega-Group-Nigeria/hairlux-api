@@ -3,6 +3,7 @@ import {
   IsDateString,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   ValidateIf,
 } from 'class-validator';
@@ -15,6 +16,13 @@ export class CreateBusinessExceptionDto {
   })
   @IsDateString()
   date: string;
+
+  @ApiPropertyOptional({
+    description: 'Scopes this exception to a single branch. Omit for a company-wide exception (the original behavior).',
+  })
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 
   @ApiPropertyOptional({
     description: 'Whether the business is closed on this date',

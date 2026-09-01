@@ -6,9 +6,10 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { InfluencerModule } from '../influencer/influencer.module';
 import { FcmModule } from '../beautician/fcm/fcm.module';
 import { CommsModule } from '../comms/comms.module';
+import { SmsModule } from '../sms/sms.module';
 
 @Module({
-  imports: [PrismaModule, InfluencerModule, FcmModule, CommsModule],
+  imports: [PrismaModule, InfluencerModule, FcmModule, CommsModule, SmsModule],
   controllers: [UserController, AdminUserController],
   providers: [UserService],
   exports: [UserService],

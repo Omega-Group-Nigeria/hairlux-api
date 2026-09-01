@@ -59,6 +59,7 @@ export class AdminBookingController {
     summary: 'Active home service bookings for ops map',
     description: 'Up to 100 in-flight home service jobs with masked addresses.',
   })
+  @Permission(PERMISSIONS.BOOKINGS_READ)
   async listActiveHomeServices() {
     const data = await this.activeHomeServiceBookings.listActive();
     return {
@@ -136,6 +137,7 @@ export class AdminBookingController {
       },
     },
   })
+  @Permission(PERMISSIONS.BOOKINGS_READ)
   async getAllBookings(@Query() queryDto: AdminQueryBookingsDto) {
     return this.bookingService.findAllBookings(queryDto);
   }
@@ -208,6 +210,7 @@ export class AdminBookingController {
       },
     },
   })
+  @Permission(PERMISSIONS.BOOKINGS_READ)
   async getCalendar(@Query() calendarDto: GetCalendarDto) {
     return this.bookingService.getCalendar(calendarDto);
   }
@@ -260,6 +263,7 @@ export class AdminBookingController {
     status: 400,
     description: 'Only one of startDate/endDate provided',
   })
+  @Permission(PERMISSIONS.BOOKINGS_READ)
   async getStats(@Query() statsDto: GetStatsDto) {
     return this.bookingService.getStats(statsDto);
   }
@@ -333,6 +337,7 @@ export class AdminBookingController {
     },
   })
   @ApiResponse({ status: 404, description: 'Reservation code not found' })
+  @Permission(PERMISSIONS.BOOKINGS_READ)
   async adminFindByReservationCode(@Param('code') code: string) {
     const data = await this.bookingService.adminFindByReservationCode(code);
     return { success: true, message: 'Reservation found', data };
@@ -388,6 +393,7 @@ export class AdminBookingController {
     status: 409,
     description: 'Already used or booking is cancelled',
   })
+  @Permission(PERMISSIONS.BOOKINGS_VERIFY_RESERVATION)
   async useReservation(@Param('code') code: string) {
     const data = await this.bookingService.useReservation(code);
     return { success: true, message: 'Reservation marked as used', data };
@@ -475,6 +481,7 @@ export class AdminBookingController {
     status: 404,
     description: 'Booking not found',
   })
+  @Permission(PERMISSIONS.BOOKINGS_READ)
   async getBookingDetails(@Param('id') id: string) {
     const data = await this.bookingService.findOneAdmin(id);
     return {
@@ -541,6 +548,7 @@ export class AdminBookingController {
     status: 404,
     description: 'User, service, or address not found',
   })
+  @Permission(PERMISSIONS.BOOKINGS_CREATE)
   async createManualBooking(@Body() createDto: AdminCreateBookingDto) {
     return this.bookingService.createAdminBooking(createDto);
   }
@@ -638,6 +646,7 @@ export class AdminBookingController {
     status: 404,
     description: 'Booking not found',
   })
+  @Permission(PERMISSIONS.BOOKINGS_UPDATE_STATUS)
   async updateBookingStatus(
     @Param('id') id: string,
     @Body() updateDto: UpdateBookingStatusDto,
@@ -675,6 +684,7 @@ export class AdminBookingController {
     status: 400,
     description: 'Validation error (invalid time format)',
   })
+  @Permission(PERMISSIONS.BOOKINGS_MANAGE_SCHEDULE)
   async setBusinessHours(@Body() dto: SetBusinessHoursDto) {
     const data = await this.bookingService.setBusinessHours(dto);
     return {
@@ -697,6 +707,7 @@ export class AdminBookingController {
     description:
       'No hours configured for this day yet — use POST /business-hours first',
   })
+  @Permission(PERMISSIONS.BOOKINGS_MANAGE_SCHEDULE)
   async updateBusinessHoursDay(
     @Param('dayOfWeek') dayOfWeek: string,
     @Body() dto: BusinessHoursDayDto,
@@ -740,6 +751,7 @@ export class AdminBookingController {
     status: 409,
     description: 'Exception already exists for this date',
   })
+  @Permission(PERMISSIONS.BOOKINGS_MANAGE_SCHEDULE)
   async createBusinessException(@Body() dto: CreateBusinessExceptionDto) {
     const data = await this.bookingService.createBusinessException(dto);
     return {
@@ -758,6 +770,7 @@ export class AdminBookingController {
   })
   @ApiResponse({ status: 200, description: 'Exception deleted successfully' })
   @ApiResponse({ status: 404, description: 'Exception not found' })
+  @Permission(PERMISSIONS.BOOKINGS_MANAGE_SCHEDULE)
   async deleteBusinessException(@Param('id') id: string) {
     await this.bookingService.deleteBusinessException(id);
     return {

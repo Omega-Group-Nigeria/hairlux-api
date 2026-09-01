@@ -61,6 +61,15 @@ export class PinService {
       throw new BadRequestException('Current password is required to set your initial PIN');
     }
 
+    // A Google-signup account has no local password at all -- can't
+    // confirm via password for a PIN setup. They'd need to set a password
+    // first (via a separate flow) before PIN setup can use this method.
+    if (!user.password) {
+      throw new BadRequestException(
+        'This account has no password set (it uses Google sign-in). Set a password first before setting a PIN.',
+      );
+    }
+
     const isPasswordValid = await argon2.verify(user.password, password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Current password is incorrect');

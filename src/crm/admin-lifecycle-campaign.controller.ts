@@ -1,0 +1,114 @@
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { Permission } from '../auth/decorators/permission.decorator';
+import { PERMISSIONS } from '../common/constants/permissions';
+import { LifecycleCampaignTemplateService } from './lifecycle-campaign-template.service';
+import { LifecycleCampaignSequenceService } from './lifecycle-campaign-sequence.service';
+import { UpsertLifecycleCampaignTemplateDto } from './dto/upsert-lifecycle-campaign-template.dto';
+import { UpsertLifecycleCampaignSequenceDto } from './dto/upsert-lifecycle-campaign-sequence.dto';
+import { StaffService } from '../staff/staff.service';
+
+@ApiTags('Admin - Lifecycle Campaigns')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, PermissionGuard)
+@Controller('admin/lifecycle-campaigns')
+export class AdminLifecycleCampaignController {
+    constructor(
+        private readonly templateService: LifecycleCampaignTemplateService,
+        private readonly sequenceService: LifecycleCampaignSequenceService,
+        private readonly staffService: StaffService,
+    ) { }
+
+    @Get('templates')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_READ)
+    @ApiOperation({ summary: 'List every lifecycle campaign template' })
+    async findAll() {
+        const data = await this.templateService.findAll();
+        return { success: true, message: 'Templates retrieved successfully', data };
+    }
+
+    @Get('templates/:id')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_READ)
+    @ApiOperation({ summary: 'Get a single template' })
+    async findOne(@Param('id') id: string) {
+        const data = await this.templateService.findOne(id);
+        return { success: true, message: 'Template retrieved successfully', data };
+    }
+
+    @Post('templates')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_CREATE)
+    @ApiOperation({ summary: 'Create a template for a (targetLifecycle, channel) pair' })
+    async create(@Req() req: any, @Body() dto: UpsertLifecycleCampaignTemplateDto) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.templateService.create(dto, actor?.id);
+        return { success: true, message: 'Template created successfully', data };
+    }
+
+    @Patch('templates/:id')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_UPDATE)
+    @ApiOperation({ summary: 'Update a template' })
+    async update(@Req() req: any, @Param('id') id: string, @Body() dto: Partial<UpsertLifecycleCampaignTemplateDto>) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.templateService.update(id, dto, actor?.id);
+        return { success: true, message: 'Template updated successfully', data };
+    }
+
+    @Delete('templates/:id')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_DELETE)
+    @ApiOperation({ summary: 'Delete a template' })
+    async remove(@Req() req: any, @Param('id') id: string) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        await this.templateService.remove(id, actor?.id);
+        return { success: true, message: 'Template deleted successfully' };
+    }
+
+    // ── Dev Feedback Round 4, item #9: sequences (multi-step, Email -> SMS -> Push with delays) ──
+
+    @Get('sequences')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_READ)
+    @ApiOperation({ summary: 'List every lifecycle campaign sequence, with its ordered steps' })
+    async findAllSequences() {
+        const data = await this.sequenceService.findAll();
+        return { success: true, message: 'Sequences retrieved successfully', data };
+    }
+
+    @Get('sequences/:id')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_READ)
+    @ApiOperation({ summary: 'Get a single sequence, with its ordered steps' })
+    async findOneSequence(@Param('id') id: string) {
+        const data = await this.sequenceService.findOne(id);
+        return { success: true, message: 'Sequence retrieved successfully', data };
+    }
+
+    @Post('sequences')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_CREATE)
+    @ApiOperation({ summary: 'Create a sequence for a target lifecycle, with its ordered steps' })
+    async createSequence(@Req() req: any, @Body() dto: UpsertLifecycleCampaignSequenceDto) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.sequenceService.create(dto, actor?.id);
+        return { success: true, message: 'Sequence created successfully', data };
+    }
+
+    @Patch('sequences/:id')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_UPDATE)
+    @ApiOperation({
+        summary: 'Update a sequence',
+        description: 'Sending "steps" replaces the ENTIRE step list -- send every step that should remain, in order. Omit "steps" entirely to leave them untouched. Replacing steps clears send history for the old steps.',
+    })
+    async updateSequence(@Req() req: any, @Param('id') id: string, @Body() dto: Partial<UpsertLifecycleCampaignSequenceDto>) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.sequenceService.update(id, dto, actor?.id);
+        return { success: true, message: 'Sequence updated successfully', data };
+    }
+
+    @Delete('sequences/:id')
+    @Permission(PERMISSIONS.LIFECYCLE_CAMPAIGNS_DELETE)
+    @ApiOperation({ summary: 'Delete a sequence and all its steps/send history' })
+    async removeSequence(@Req() req: any, @Param('id') id: string) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        await this.sequenceService.remove(id, actor?.id);
+        return { success: true, message: 'Sequence deleted successfully' };
+    }
+}

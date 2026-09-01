@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { ArrayMinSize, IsArray, IsDateString, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, ValidateIf, ValidateNested } from 'class-validator';
 
 export class CreateDirectiveDto {
   @ApiProperty({ example: 'Submit updated price list' })
@@ -16,6 +16,11 @@ export class CreateDirectiveDto {
   @MaxLength(5000)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   body: string;
+
+  @ApiPropertyOptional({ description: 'Optional deadline for this task.' })
+  @IsOptional()
+  @IsDateString()
+  dueDate?: string;
 
   @ApiPropertyOptional({
     description:
@@ -34,4 +39,20 @@ export class CreateDirectiveDto {
   @ValidateIf((o) => !o.targetStaffId)
   @IsUUID()
   targetLocationId?: string;
+}
+
+/**
+ * Several distinct tasks (different title/body/recipient/due date each)
+ * defined and sent together in one action — NOT one task to many recipients,
+ * which CreateDirectiveDto's targetLocationId already covers on its own.
+ * Each entry independently follows the exact same individual-or-branch-fanout
+ * rule as a single CreateDirectiveDto.
+ */
+export class BulkCreateDirectivesDto {
+  @ApiProperty({ type: [CreateDirectiveDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CreateDirectiveDto)
+  tasks: CreateDirectiveDto[];
 }

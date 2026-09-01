@@ -1,20 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEnum, IsNotEmpty, IsString, MaxLength } from 'class-validator';
-
-export enum CompanyDocumentTypeDto {
-  EMPLOYMENT_CONTRACT = 'EMPLOYMENT_CONTRACT',
-  NDA = 'NDA',
-  IT_ACCEPTABLE_USE_POLICY = 'IT_ACCEPTABLE_USE_POLICY',
-  STAFF_HANDBOOK = 'STAFF_HANDBOOK',
-  CODE_OF_CONDUCT = 'CODE_OF_CONDUCT',
-  DATA_PROTECTION_POLICY = 'DATA_PROTECTION_POLICY',
-}
+import { IsNotEmpty, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class CreateCompanyDocumentDto {
-  @ApiProperty({ enum: CompanyDocumentTypeDto, example: CompanyDocumentTypeDto.NDA })
-  @IsEnum(CompanyDocumentTypeDto)
-  type: CompanyDocumentTypeDto;
+  @ApiProperty({ description: 'The DocumentType this version belongs to -- create it first via POST /admin/document-types if it does not already exist.' })
+  @IsUUID()
+  documentTypeId: string;
 
   @ApiProperty({ example: 'Hairlux Confidentiality Agreement (NDA)' })
   @IsString()

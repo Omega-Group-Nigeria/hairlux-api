@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   Res,
@@ -38,11 +39,13 @@ import { QueryStaffLocationsDto } from './dto/query-staff-locations.dto';
 import { QueryStaffDto } from './dto/query-staff.dto';
 import { QueryUpcomingBirthdaysDto } from './dto/query-upcoming-birthdays.dto';
 import { TransferBranchDto } from './dto/transfer-branch.dto';
+import { StaffAddressVerificationService } from './staff-address-verification.service';
 import { UpdateEmploymentHistoryDto } from './dto/update-employment-history.dto';
 import { UpdateOnboardingItemDto } from './dto/update-onboarding-item.dto';
 import { UpdateStaffLocationDto } from './dto/update-staff-location.dto';
 import { UpdateStaffStatusDto } from './dto/update-staff-status.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
+import { SetFinanceBranchesDto } from './dto/set-finance-branches.dto';
 import { StaffCommsService } from './staff-comms.service';
 import { StaffService } from './staff.service';
 
@@ -55,6 +58,7 @@ export class AdminStaffController {
   constructor(private readonly staffService: StaffService,
     private readonly documentService: CompanyDocumentService,
     private readonly commsService: StaffCommsService,
+    private readonly addressVerificationService: StaffAddressVerificationService,
 
   ) { }
 
@@ -447,6 +451,63 @@ export class AdminStaffController {
       message: 'Staff transferred to the new branch successfully',
       data,
     };
+  }
+
+  @Post(':id/address-verification/request')
+  @ApiOperation({
+    summary: "Request the staff member complete Physical Address Verification (QoreID)",
+    description: 'Notifies nothing on its own -- the staff member sees the pending request on their Staff Portal and fills in the form there. Physical verification then takes 24-48h via QoreID\'s field agent network.',
+  })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @ApiResponse({ status: 201, description: 'Address verification requested' })
+  @Permission(PERMISSIONS.STAFF_MANAGE_STATUS)
+  async requestAddressVerification(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const data = await this.addressVerificationService.requestVerification(id, req.user.id);
+    return { success: true, message: 'Address verification requested', data };
+  }
+
+  @Post(':id/address-verification/cancel')
+  @ApiOperation({
+    summary: 'Cancel a pending or in-progress Physical Address Verification request',
+    description: 'Only valid while the request is REQUESTED or SUBMITTED -- an already-VERIFIED/REJECTED/FAILED record has already reached a final outcome. Purely internal bookkeeping: does not stop a QoreID field visit already underway.',
+  })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Permission(PERMISSIONS.STAFF_MANAGE_STATUS)
+  async cancelAddressVerification(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const data = await this.addressVerificationService.cancelVerification(id, req.user.id);
+    return { success: true, message: 'Address verification cancelled', data };
+  }
+
+  // -- Dev Feedback Round 4, item #25: multi-branch Branch Finance access --
+
+  @Get(':id/finance-branches')
+  @ApiOperation({ summary: "A staff member's EXTRA Branch Finance-accessible branches, beyond their own primary one" })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Permission(PERMISSIONS.STAFF_MANAGE_STATUS)
+  async getFinanceBranches(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.staffService.getFinanceBranches(id);
+    return { success: true, message: 'Retrieved successfully', data };
+  }
+
+  @Put(':id/finance-branches')
+  @ApiOperation({
+    summary: "Set a staff member's EXTRA Branch Finance-accessible branches",
+    description: 'Full replacement -- send every branch that should remain accessible, not just what changed. Their own primary branch is always implicitly accessible and does not need to be included here.',
+  })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Permission(PERMISSIONS.STAFF_MANAGE_STATUS)
+  async setFinanceBranches(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetFinanceBranchesDto) {
+    const data = await this.staffService.setFinanceBranches(id, dto.branchIds);
+    return { success: true, message: 'Finance branches updated successfully', data };
+  }
+
+  @Get(':id/address-verification')
+  @ApiOperation({ summary: 'Get the current address verification status/details for a staff member' })
+  @ApiParam({ name: 'id', description: 'Staff ID' })
+  @Permission(PERMISSIONS.STAFF_READ)
+  async getAddressVerification(@Param('id', ParseUUIDPipe) id: string) {
+    const data = await this.addressVerificationService.getStatus(id);
+    return { success: true, message: 'Retrieved successfully', data };
   }
 
   @Get(':id/code-history')

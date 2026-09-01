@@ -392,6 +392,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.jobPostingBranch;
   }
 
+  get dailyCashReconciliation() {
+    return this.client.dailyCashReconciliation;
+  }
+
+  get staffWorkCalendar() {
+    return this.client.staffWorkCalendar;
+  }
+
+  get customerValueSettings() {
+    return this.client.customerValueSettings;
+  }
+
   get $transaction() {
     return this.client.$transaction.bind(this.client);
   }
@@ -412,6 +424,123 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.stockTransfer;
   }
 
+  get customerLifecycleTransition() {
+    return this.client.customerLifecycleTransition;
+  }
 
+  get customerCommunicationProfile() {
+    return this.client.customerCommunicationProfile;
+  }
 
+  get lifecycleCampaignTemplate() {
+    return this.client.lifecycleCampaignTemplate;
+  }
+
+  get lifecycleCampaignSend() {
+    return this.client.lifecycleCampaignSend;
+  }
+
+  get staffAddressVerification() {
+    return this.client.staffAddressVerification;
+  }
+
+  get inventoryProduct() {
+    return this.client.inventoryProduct;
+  }
+
+  get vendorProduct() {
+    return this.client.vendorProduct;
+  }
+
+  get financialTransaction() {
+    return this.client.financialTransaction;
+  }
+
+  get approvalChainStage() {
+    return this.client.approvalChainStage;
+  }
+
+  get purchaseRequest() {
+    return this.client.purchaseRequest;
+  }
+
+  get purchaseRequestLine() {
+    return this.client.purchaseRequestLine;
+  }
+
+  get purchase() {
+    return this.client.purchase;
+  }
+
+  get purchaseLine() {
+    return this.client.purchaseLine;
+  }
+
+  get purchasePayment() {
+    return this.client.purchasePayment;
+  }
+
+  get goodsReceipt() {
+    return this.client.goodsReceipt;
+  }
+
+  get goodsReceiptLine() {
+    return this.client.goodsReceiptLine;
+  }
+
+  get lmsCourse() {
+    return this.client.lmsCourse;
+  }
+
+  get lmsCourseRole() {
+    return this.client.lmsCourseRole;
+  }
+
+  get lifecycleCampaignSequence() {
+    return this.client.lifecycleCampaignSequence;
+  }
+
+  get lifecycleCampaignSequenceStep() {
+    return this.client.lifecycleCampaignSequenceStep;
+  }
+
+  get lifecycleCampaignSequenceSend() {
+    return this.client.lifecycleCampaignSequenceSend;
+  }
+
+  get payrollAuditLog() {
+    return this.client.payrollAuditLog;
+  }
+
+  get systemAuditLog() {
+    return this.client.systemAuditLog;
+  }
+
+  get vendorLedgerAdjustment() {
+    return this.client.vendorLedgerAdjustment;
+  }
+
+  get serviceProductConsumption() {
+    return this.client.serviceProductConsumption;
+  }
+
+  get commissionPlan() {
+    return this.client.commissionPlan;
+  }
+
+  get documentType() {
+    return this.client.documentType;
+  }
+
+  get siteStats() {
+    return this.client.siteStats;
+  }
+
+  get branchFinanceSettings() {
+    return this.client.branchFinanceSettings;
+  }
+
+  get staffManagedFinanceBranch() {
+    return this.client.staffManagedFinanceBranch;
+  }
 }

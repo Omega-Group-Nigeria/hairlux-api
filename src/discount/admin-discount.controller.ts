@@ -8,6 +8,7 @@ import {
   Body,
   Param,
   Query,
+  Req,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -20,6 +21,7 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { DiscountService } from './discount.service';
+import { StaffService } from '../staff/staff.service';
 import { CreateDiscountDto } from './dto/create-discount.dto';
 import { UpdateDiscountDto } from './dto/update-discount.dto';
 import { QueryDiscountsDto } from './dto/query-discounts.dto';
@@ -37,7 +39,10 @@ import { UserRole } from '@prisma/client';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminDiscountController {
-  constructor(private readonly discountService: DiscountService) {}
+  constructor(
+    private readonly discountService: DiscountService,
+    private readonly staffService: StaffService,
+  ) { }
 
   // ─── General Discount Codes ──────────────────────────────────────────────
 
@@ -67,8 +72,9 @@ export class AdminDiscountController {
     },
   })
   @ApiResponse({ status: 409, description: 'Discount code already exists' })
-  async create(@Body() dto: CreateDiscountDto) {
-    const data = await this.discountService.create(dto);
+  async create(@Req() req: any, @Body() dto: CreateDiscountDto) {
+    const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+    const data = await this.discountService.create(dto, actor?.id);
     return {
       success: true,
       message: 'Discount code created successfully',
@@ -511,8 +517,9 @@ export class AdminDiscountController {
     description: 'Discount code not found',
     example: { statusCode: 404, message: 'Discount code not found' },
   })
-  async update(@Param('id') id: string, @Body() dto: UpdateDiscountDto) {
-    const data = await this.discountService.update(id, dto);
+  async update(@Req() req: any, @Param('id') id: string, @Body() dto: UpdateDiscountDto) {
+    const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+    const data = await this.discountService.update(id, dto, actor?.id);
     return {
       success: true,
       message: 'Discount code updated successfully',
@@ -547,8 +554,9 @@ export class AdminDiscountController {
     description: 'Discount code not found',
     example: { statusCode: 404, message: 'Discount code not found' },
   })
-  async remove(@Param('id') id: string) {
-    await this.discountService.remove(id);
+  async remove(@Req() req: any, @Param('id') id: string) {
+    const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+    await this.discountService.remove(id, actor?.id);
     return { success: true, message: 'Discount code deleted successfully' };
   }
 }

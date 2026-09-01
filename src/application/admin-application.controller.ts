@@ -29,6 +29,7 @@ import { ApproveEmploymentDto } from './dto/approve-employment.dto';
 import { ConvertToStaffDto } from './dto/convert-to-staff.dto';
 import { GenerateOfferLetterDto } from './dto/generate-offer-letter.dto';
 import { QueryApplicationDto } from './dto/query-application.dto';
+import { QueryRecruitmentReportDto } from './dto/query-recruitment-report.dto';
 import { RecordInterviewOutcomeDto } from './dto/record-interview-outcome.dto';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto';
 import { UpdateApplicationStatusDto } from './dto/update-application-status.dto';
@@ -59,16 +60,24 @@ export class AdminApplicationController {
 
   @Get('report')
   @ApiOperation({
-    summary: 'Basic recruitment report',
-    description: 'Applicants per role, status breakdown, and average time-to-hire.',
+    summary: 'Basic recruitment report — filterable by date range, role, status, and branch',
+    description: 'Applicants per role, status breakdown, and average time-to-hire — every card computed over the same filtered set, so e.g. role + status together show the actual filtered hired count, not the global total.',
   })
   @ApiResponse({ status: 200, description: 'Recruitment report retrieved successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
   @ApiResponse({ status: 403, description: 'Forbidden - Missing application:read permission' })
   @Permission(PERMISSIONS.APPLICATION_READ)
-  async getRecruitmentReport() {
-    const data = await this.applicationService.getRecruitmentReport();
+  async getRecruitmentReport(@Query() filters: QueryRecruitmentReportDto) {
+    const data = await this.applicationService.getRecruitmentReport(filters);
     return { success: true, message: 'Recruitment report retrieved successfully', data };
+  }
+
+  @Get('report/roles')
+  @ApiOperation({ summary: 'Distinct appliedRole values across all applications — powers the Role filter dropdown' })
+  @Permission(PERMISSIONS.APPLICATION_READ)
+  async getDistinctAppliedRoles() {
+    const data = await this.applicationService.getDistinctAppliedRoles();
+    return { success: true, message: 'Roles retrieved successfully', data };
   }
 
   @Get(':id')
@@ -203,5 +212,29 @@ export class AdminApplicationController {
   ) {
     const data = await this.applicationService.convertToStaff(id, dto.locationId, req.user?.id);
     return { success: true, message: 'Applicant converted to staff successfully', data };
+  }
+
+  @Get('compensation-backfill/preview')
+  @ApiOperation({
+    summary: 'DRY RUN — preview which staff have a null currentBaseSalary despite an accepted offer letter on record',
+    description: 'Nothing is modified. Staff converted before compensation seeding existed at convertToStaff time would otherwise be silently calculated at ₦0 base salary in payroll.',
+  })
+  @ApiResponse({ status: 200, description: 'Preview retrieved successfully — nothing was changed' })
+  @Permission(PERMISSIONS.APPLICATION_CONVERT)
+  async previewCompensationBackfill() {
+    const data = await this.applicationService.previewCompensationBackfill();
+    return { success: true, message: 'Preview retrieved successfully — nothing was changed', data };
+  }
+
+  @Post('compensation-backfill/run')
+  @ApiOperation({
+    summary: 'REAL ACTION — applies the compensation backfill to every staff member matching the preview',
+    description: 'Re-checks each record at execution time and skips anyone whose currentBaseSalary is no longer null, so this never overwrites a real figure regardless of when it was set.',
+  })
+  @ApiResponse({ status: 201, description: 'Backfill run — see appliedCount/skippedCount/failedCount in the response' })
+  @Permission(PERMISSIONS.APPLICATION_CONVERT)
+  async runCompensationBackfill(@Req() req: any) {
+    const data = await this.applicationService.runCompensationBackfill(req.user?.id);
+    return { success: true, message: 'Backfill run', data };
   }
 }

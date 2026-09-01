@@ -23,7 +23,7 @@ export class JobsService {
     const cached = await this.redis.get(cacheKey);
     if (cached) return cached;
 
-    const { type, page = 1, limit = 10 } = queryDto;
+    const { type, page = 1, limit = 20 } = queryDto;
     const skip = (page - 1) * limit;
     const now = new Date();
 

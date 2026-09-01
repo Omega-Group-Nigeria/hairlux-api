@@ -17,9 +17,19 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- original migration (20260303121516_add_admin_roles_permissions), but the
 -- foreign keys below fail outright if it's missing for any reason on a
 -- given database — cheap to guarantee it's there rather than assume.
-DO $$ BEGIN
-  ALTER TABLE "admin_roles" ADD CONSTRAINT "admin_roles_pkey" PRIMARY KEY ("id");
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- Uses a real existence check rather than exception-catching: adding a
+-- second primary key to a table that already has one raises "multiple
+-- primary keys", not "duplicate_object", so a try/catch here never
+-- actually caught the case where the PK was already present.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'admin_roles' AND constraint_type = 'PRIMARY KEY'
+  ) THEN
+    ALTER TABLE "admin_roles" ADD CONSTRAINT "admin_roles_pkey" PRIMARY KEY ("id");
+  END IF;
+END $$;
 
 -- ── Secondary roles ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS "user_admin_roles" (

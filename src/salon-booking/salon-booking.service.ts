@@ -2,14 +2,21 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { SalonBookingStatus, StockMovementType } from '@prisma/client';
 import { randomInt } from 'crypto';
 import { BookingService } from '../booking/booking.service';
+import { resolveBusinessException } from '../common/utils/business-exception.util';
+import { classifyCustomerLifecycle, classifyCustomerValue, CustomerLifecycle, CustomerValue, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
+import { watTodayDateStr } from '../common/utils/wat-time.util';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { FinancialTransactionService } from '../finance/financial-transaction.service';
+import { DiscountService } from '../discount/discount.service';
 import { AddSalonBookingInventoryItemDto } from './dto/add-inventory-item.dto';
 import { CancelSalonBookingDto } from './dto/cancel-salon-booking.dto';
 import { CreateSalonBookingDto } from './dto/create-salon-booking.dto';
 import { QuerySalonBookingsDto } from './dto/query-salon-bookings.dto';
 import { ReserveSalonBookingDto } from './dto/reserve-salon-booking.dto';
 import { VerifyReservationDto } from './dto/verify-reservation.dto';
+import { UpdateCustomerClassificationSettingsDto } from './dto/update-customer-classification-settings.dto';
+import { EditSalonBookingDto, AddServiceToCompletedBookingDto } from './dto/edit-salon-booking.dto';
 
 /**
  * Nigeria (WAT) is a fixed UTC+1 offset year-round — no daylight saving —
@@ -20,6 +27,42 @@ import { VerifyReservationDto } from './dto/verify-reservation.dto';
 function watDateTimeFromParts(dateStr: string, hhmm: string): Date {
     const [hour, minute] = hhmm.split(':').map(Number);
     return new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+01:00`);
+}
+
+/** Display-only Booking ID — the real, unique, sequential value underneath is bookingNumber. */
+function formatBookingCode(bookingNumber: number): string {
+    return `HLB-${String(bookingNumber).padStart(6, '0')}`;
+}
+
+/** Every place a booking gets sent to the frontend should carry this display field. */
+function withBookingCode<T extends { bookingNumber: number }>(booking: T): T & { bookingCode: string } {
+    return { ...booking, bookingCode: formatBookingCode(booking.bookingNumber) };
+}
+
+interface CustomerContactsFilterParams {
+    query?: string;
+    branchIds?: string[];
+    dateFrom?: string;
+    dateTo?: string;
+    hasAccount?: boolean;
+    minVisits?: number;
+    maxVisits?: number;
+    minSpend?: number;
+    maxSpend?: number;
+    minAvgSpend?: number;
+    maxAvgSpend?: number;
+    firstVisitFrom?: string;
+    firstVisitTo?: string;
+    lastVisitFrom?: string;
+    lastVisitTo?: string;
+    daysSinceLastVisitMin?: number;
+    daysSinceLastVisitMax?: number;
+    lifecycle?: CustomerLifecycle;
+    value?: CustomerValue;
+    serviceCategoryIds?: string[];
+    serviceIds?: string[];
+    page?: number;
+    limit?: number;
 }
 
 const INCLUDE_FULL = {
@@ -38,7 +81,30 @@ export class SalonBookingService {
         private prisma: PrismaService,
         private inventoryService: InventoryService,
         private bookingService: BookingService,
+        private financialTransactionService: FinancialTransactionService,
+        private discountService: DiscountService,
     ) { }
+
+    /**
+     * Dev Feedback Round 6, item #15: a preview endpoint so an admin/
+     * staff member sees the discount amount and resulting total before
+     * committing to the booking (they need the final price to quote the
+     * walk-in customer) -- distinct from the customer-facing
+     * discounts/validate/:code endpoint, which validates for the
+     * logged-in user themselves rather than on someone else's behalf.
+     */
+    async previewDiscount(code: string, branchId: string, customerId: string | undefined, subtotal: number) {
+        const validated = await this.discountService.validate(code, undefined, branchId, customerId);
+        const discountAmount = Math.round(subtotal * (Number(validated.percentage) / 100) * 100) / 100;
+        return {
+            id: validated.id,
+            code: validated.code,
+            name: validated.name,
+            percentage: validated.percentage,
+            discountAmount,
+            newTotal: subtotal - discountAmount,
+        };
+    }
 
     async create(dto: CreateSalonBookingDto, createdById: string | undefined) {
         if (!dto.branchId) {
@@ -47,6 +113,21 @@ export class SalonBookingService {
 
         if (watDateTimeFromParts(dto.bookingDate, dto.bookingTime).getTime() < Date.now()) {
             throw new BadRequestException('Booking date/time cannot be in the past');
+        }
+
+        const exception = await resolveBusinessException(this.prisma, dto.branchId, dto.bookingDate);
+        if (exception?.isClosed) {
+            throw new BadRequestException(
+                `This branch is closed on ${dto.bookingDate}${exception.reason ? ` (${exception.reason})` : ''} — bookings cannot be made for this date.`,
+            );
+        }
+        if (exception && !exception.isClosed && exception.openTime && exception.closeTime) {
+            const requestedTime = dto.bookingTime;
+            if (requestedTime < exception.openTime || requestedTime > exception.closeTime) {
+                throw new BadRequestException(
+                    `On ${dto.bookingDate}, this branch's hours are ${exception.openTime}\u2013${exception.closeTime}${exception.reason ? ` (${exception.reason})` : ''} — the requested time falls outside that window.`,
+                );
+            }
         }
 
         if (dto.assignedStaffId) {
@@ -77,57 +158,67 @@ export class SalonBookingService {
         const totalAmount = this.computeTotal(serviceLines, inventoryLines);
 
         const customerId = dto.customerPhone
-            ? (await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail)).id
+            ? (await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail, dto.linkToVerifiedUser)).id
             : undefined;
 
-        const booking = await this.prisma.salonBooking.create({
-            data: {
-                branchId: dto.branchId,
-                customerId,
-                customerName: dto.customerName,
-                customerPhone: dto.customerPhone,
-                assignedStaffId: dto.assignedStaffId,
-                createdById,
-                bookingDate: new Date(dto.bookingDate),
-                bookingTime: dto.bookingTime,
-                notes: dto.notes,
-                totalAmount,
-                services: { create: serviceLines },
-                inventoryItems: inventoryLines.length ? { create: inventoryLines } : undefined,
-            },
-            include: INCLUDE_FULL,
+        // Dev Feedback Round 6, item #15: coupon redemption for walk-in
+        // customers. Validated the same way the marketplace booking flow
+        // validates one (discountService.validate) -- just passes
+        // customerId as the subject instead of userId, since a walk-in
+        // rarely has a linked account.
+        let discountCodeId: string | undefined;
+        let discountAmount: number | undefined;
+        let finalTotal = totalAmount;
+        if (dto.discountCode) {
+            const validated = await this.discountService.validate(dto.discountCode, undefined, dto.branchId, customerId);
+            discountCodeId = validated.id;
+            discountAmount = Math.round(totalAmount * (Number(validated.percentage) / 100) * 100) / 100;
+            finalTotal = totalAmount - discountAmount;
+        }
+
+        const booking = await this.prisma.$transaction(async (tx: any) => {
+            const created = await tx.salonBooking.create({
+                data: {
+                    branchId: dto.branchId,
+                    customerId,
+                    customerName: dto.customerName,
+                    customerPhone: dto.customerPhone,
+                    assignedStaffId: dto.assignedStaffId,
+                    createdById,
+                    bookingDate: new Date(dto.bookingDate),
+                    bookingTime: dto.bookingTime,
+                    notes: dto.notes,
+                    totalAmount: finalTotal,
+                    discountCodeId,
+                    discountAmount,
+                    services: { create: serviceLines },
+                    inventoryItems: inventoryLines.length ? { create: inventoryLines } : undefined,
+                },
+                include: INCLUDE_FULL,
+            });
+
+            if (discountCodeId) {
+                await tx.discountCode.update({
+                    where: { id: discountCodeId },
+                    data: { usedCount: { increment: 1 } },
+                });
+            }
+
+            return created;
         });
 
-        return booking;
+        return withBookingCode(booking);
     }
 
-    /** Matches by phone (the de-dup key) — repeat visits reuse the same Customer row. */
-    /**
-     * Looks up existing customers by name or phone, for the "look this
-     * person up instead of retyping their details" flow when starting a
-     * new booking. Searches both the lightweight Customer table (people
-     * who've had a walk-in before, may or may not have an app account) and
-     * real User accounts (role USER — people with an app account who may
-     * never have walked in before). A Customer already linked to a User is
-     * deduplicated so it doesn't show up twice.
-     */
-    /**
-     * Full paginated Customer Contacts list, for the Contacts module — distinct
-     * from searchCustomers, which is a lightweight capped lookup used only
-     * while creating a booking.
-     */
-    async findAllCustomers(params: {
-        query?: string;
-        branchId?: string;
-        dateFrom?: string;
-        dateTo?: string;
-        hasAccount?: boolean;
-        minBookings?: number;
-        minSpend?: number;
-        page?: number;
-        limit?: number;
-    }) {
-        const { query, branchId, dateFrom, dateTo, hasAccount, minBookings, minSpend, page = 1, limit = 20 } = params;
+    async findAllCustomers(params: CustomerContactsFilterParams) {
+        const {
+            query, branchIds, dateFrom, dateTo, hasAccount,
+            minVisits, maxVisits, minSpend, maxSpend, minAvgSpend, maxAvgSpend,
+            firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+            daysSinceLastVisitMin, daysSinceLastVisitMax,
+            lifecycle, value, serviceCategoryIds, serviceIds,
+            page = 1, limit = 20,
+        } = params;
 
         const where: any = query
             ? { OR: [{ name: { contains: query, mode: 'insensitive' as const } }, { phone: { contains: query } }] }
@@ -137,10 +228,10 @@ export class SalonBookingService {
             where.userId = hasAccount ? { not: null } : null;
         }
 
-        if (branchId || dateFrom || dateTo) {
+        if (branchIds?.length || dateFrom || dateTo) {
             where.salonBookings = {
                 some: {
-                    ...(branchId && { branchId }),
+                    ...(branchIds?.length && { branchId: { in: branchIds } }),
                     ...((dateFrom || dateTo) && {
                         bookingDate: {
                             ...(dateFrom && { gte: new Date(dateFrom) }),
@@ -151,14 +242,12 @@ export class SalonBookingService {
             };
         }
 
-        // minBookings/minSpend depend on each customer's FULL booking
-        // history (not expressible as a plain Prisma where clause without a
-        // raw aggregation query), so when either is set this fetches every
-        // DB-filterable match, computes stats, filters, and paginates in
-        // memory — applying pagination before that filtering would silently
-        // return short pages. Fine at Hairlux's actual customer volume; not
-        // something to do at a scale of hundreds of thousands of rows.
-        const needsValueFilter = minBookings !== undefined || minSpend !== undefined;
+        const needsValueFilter = [
+            minVisits, maxVisits, minSpend, maxSpend, minAvgSpend, maxAvgSpend,
+            firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+            daysSinceLastVisitMin, daysSinceLastVisitMax,
+            lifecycle, value, serviceCategoryIds?.length, serviceIds?.length,
+        ].some((v) => v !== undefined);
 
         const [allMatching, dbTotal] = await Promise.all([
             this.prisma.customer.findMany({
@@ -179,39 +268,193 @@ export class SalonBookingService {
                     totalAmount: true,
                     bookingDate: true,
                     branch: { select: { id: true, name: true } },
+                    services: { select: { service: { select: { id: true, name: true, categoryId: true, category: { select: { id: true, name: true } } } } } },
                 },
             })
             : [];
 
-        const statsByCustomer = new Map<string, { bookingCount: number; totalSpend: number; branches: Map<string, string>; lastBookingDate: Date | null }>();
+        const statsByCustomer = new Map<string, {
+            visitCount: number; totalSpend: number; branches: Map<string, string>;
+            firstVisitDate: Date | null; lastVisitDate: Date | null;
+            serviceIds: Set<string>; serviceCategoryIds: Set<string>; serviceNames: Set<string>;
+        }>();
         for (const b of bookings) {
             if (!b.customerId) continue;
-            const s = statsByCustomer.get(b.customerId) ?? { bookingCount: 0, totalSpend: 0, branches: new Map(), lastBookingDate: null };
-            s.bookingCount += 1;
-            if (b.status === 'COMPLETED') s.totalSpend += Number(b.totalAmount);
+            const s = statsByCustomer.get(b.customerId) ?? {
+                visitCount: 0, totalSpend: 0, branches: new Map(),
+                firstVisitDate: null, lastVisitDate: null,
+                serviceIds: new Set(), serviceCategoryIds: new Set(), serviceNames: new Set(),
+            };
             s.branches.set(b.branch.id, b.branch.name);
-            if (!s.lastBookingDate || b.bookingDate > s.lastBookingDate) s.lastBookingDate = b.bookingDate;
+            if (b.status === 'COMPLETED') {
+                s.visitCount += 1;
+                s.totalSpend += Number(b.totalAmount);
+                if (!s.firstVisitDate || b.bookingDate < s.firstVisitDate) s.firstVisitDate = b.bookingDate;
+                if (!s.lastVisitDate || b.bookingDate > s.lastVisitDate) s.lastVisitDate = b.bookingDate;
+                for (const line of b.services) {
+                    s.serviceIds.add(line.service.id);
+                    s.serviceNames.add(line.service.name);
+                    s.serviceCategoryIds.add(line.service.categoryId);
+                }
+            }
             statsByCustomer.set(b.customerId, s);
         }
 
+        const now = new Date();
+        const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
         let withStats = allMatching.map((c) => {
             const s = statsByCustomer.get(c.id);
+            const visitCount = s?.visitCount ?? 0;
+            const totalSpend = s?.totalSpend ?? 0;
+            const averageSpend = visitCount > 0 ? totalSpend / visitCount : 0;
+            const daysSinceLastVisit = s?.lastVisitDate ? Math.floor((now.getTime() - s.lastVisitDate.getTime()) / 86400000) : null;
+
             return {
                 ...c,
-                bookingCount: s?.bookingCount ?? 0,
-                totalSpend: s?.totalSpend ?? 0,
+                visitCount,
+                totalSpend,
+                averageSpend,
                 branches: s ? Array.from(s.branches.values()) : [],
-                lastBookingDate: s?.lastBookingDate ?? null,
+                firstVisitDate: s?.firstVisitDate ?? null,
+                lastVisitDate: s?.lastVisitDate ?? null,
+                daysSinceLastVisit,
+                servicesPurchased: s ? Array.from(s.serviceNames) : [],
+                serviceIds: s ? Array.from(s.serviceIds) : [],
+                serviceCategoryIds: s ? Array.from(s.serviceCategoryIds) : [],
+                lifecycle: classifyCustomerLifecycle({
+                    lastVisitDate: s?.lastVisitDate ?? null,
+                    completedVisitCount: visitCount,
+                    accountCreatedAt: c.createdAt,
+                    now,
+                    thresholds: lifecycleThresholds,
+                }),
+                value: classifyCustomerValue(totalSpend, valueThresholds),
             };
         });
 
-        if (minBookings !== undefined) withStats = withStats.filter((c) => c.bookingCount >= minBookings);
+        if (minVisits !== undefined) withStats = withStats.filter((c) => c.visitCount >= minVisits);
+        if (maxVisits !== undefined) withStats = withStats.filter((c) => c.visitCount <= maxVisits);
         if (minSpend !== undefined) withStats = withStats.filter((c) => c.totalSpend >= minSpend);
+        if (maxSpend !== undefined) withStats = withStats.filter((c) => c.totalSpend <= maxSpend);
+        if (minAvgSpend !== undefined) withStats = withStats.filter((c) => c.averageSpend >= minAvgSpend);
+        if (maxAvgSpend !== undefined) withStats = withStats.filter((c) => c.averageSpend <= maxAvgSpend);
+        if (firstVisitFrom) withStats = withStats.filter((c) => c.firstVisitDate && c.firstVisitDate >= new Date(firstVisitFrom));
+        if (firstVisitTo) withStats = withStats.filter((c) => c.firstVisitDate && c.firstVisitDate <= new Date(firstVisitTo));
+        if (lastVisitFrom) withStats = withStats.filter((c) => c.lastVisitDate && c.lastVisitDate >= new Date(lastVisitFrom));
+        if (lastVisitTo) withStats = withStats.filter((c) => c.lastVisitDate && c.lastVisitDate <= new Date(lastVisitTo));
+        if (daysSinceLastVisitMin !== undefined) withStats = withStats.filter((c) => c.daysSinceLastVisit !== null && c.daysSinceLastVisit >= daysSinceLastVisitMin);
+        if (daysSinceLastVisitMax !== undefined) withStats = withStats.filter((c) => c.daysSinceLastVisit !== null && c.daysSinceLastVisit <= daysSinceLastVisitMax);
+        if (lifecycle) withStats = withStats.filter((c) => c.lifecycle === lifecycle);
+        if (value) withStats = withStats.filter((c) => c.value === value);
+        if (serviceCategoryIds?.length) withStats = withStats.filter((c) => c.serviceCategoryIds.some((id) => serviceCategoryIds.includes(id)));
+        if (serviceIds?.length) withStats = withStats.filter((c) => c.serviceIds.some((id) => serviceIds.includes(id)));
 
         const total = needsValueFilter ? withStats.length : dbTotal;
         const data = needsValueFilter ? withStats.slice((page - 1) * limit, (page - 1) * limit + limit) : withStats;
 
         return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    }
+
+    async getCustomerContactsPerformance(params: Omit<CustomerContactsFilterParams, 'page' | 'limit'>) {
+        const { data } = await this.findAllCustomers({ ...params, page: 1, limit: Number.MAX_SAFE_INTEGER });
+
+        const lifecycleCounts: Record<CustomerLifecycle, number> = { NEVER_VISITED: 0, NEW: 0, ACTIVE: 0, AT_RISK: 0, DORMANT: 0, INACTIVE: 0 };
+        const valueCounts: Record<CustomerValue, number> = { STANDARD: 0, PREMIUM: 0, VIP: 0 };
+        let totalSpend = 0;
+        let totalVisits = 0;
+        for (const c of data) {
+            lifecycleCounts[c.lifecycle as CustomerLifecycle] += 1;
+            valueCounts[c.value as CustomerValue] += 1;
+            totalSpend += c.totalSpend;
+            totalVisits += c.visitCount;
+        }
+
+        return {
+            totalCustomers: data.length,
+            newCustomers: lifecycleCounts.NEW,
+            activeCustomers: lifecycleCounts.ACTIVE,
+            atRiskCustomers: lifecycleCounts.AT_RISK,
+            dormantCustomers: lifecycleCounts.DORMANT,
+            inactiveCustomers: lifecycleCounts.INACTIVE,
+            neverVisitedCustomers: lifecycleCounts.NEVER_VISITED,
+            standardValueCustomers: valueCounts.STANDARD,
+            premiumCustomers: valueCounts.PREMIUM,
+            vipCustomers: valueCounts.VIP,
+            totalSpend,
+            averageSpend: data.length > 0 ? totalSpend / data.length : 0,
+            totalVisits,
+        };
+    }
+
+    async getCustomerProfile(customerId: string) {
+        const customer = await this.prisma.customer.findUnique({ where: { id: customerId } });
+        if (!customer) throw new NotFoundException('Customer not found');
+
+        const bookings = await this.prisma.salonBooking.findMany({
+            where: { customerId },
+            orderBy: { bookingDate: 'desc' },
+            include: {
+                branch: { select: { id: true, name: true } },
+                services: { select: { price: true, quantity: true, service: { select: { id: true, name: true, category: { select: { id: true, name: true } } } } } },
+            },
+        });
+
+        const completed = bookings.filter((b) => b.status === 'COMPLETED');
+        const totalSpend = completed.reduce((sum, b) => sum + Number(b.totalAmount), 0);
+        const visitCount = completed.length;
+        const firstVisitDate = completed.length ? completed[completed.length - 1].bookingDate : null;
+        const lastVisitDate = completed.length ? completed[0].bookingDate : null;
+        const branchesVisited = Array.from(new Map(bookings.map((b) => [b.branch.id, b.branch.name])).entries()).map(([id, name]) => ({ id, name }));
+
+        const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
+
+        return {
+            customer,
+            firstVisitDate,
+            lastVisitDate,
+            visitCount,
+            totalSpend,
+            averageSpend: visitCount > 0 ? totalSpend / visitCount : 0,
+            branchesVisited,
+            lifecycle: classifyCustomerLifecycle({
+                lastVisitDate,
+                completedVisitCount: visitCount,
+                accountCreatedAt: customer.createdAt,
+                thresholds: lifecycleThresholds,
+            }),
+            value: classifyCustomerValue(totalSpend, valueThresholds),
+            bookingHistory: bookings.map((b) => ({
+                id: b.id,
+                bookingDate: b.bookingDate,
+                bookingTime: b.bookingTime,
+                status: b.status,
+                totalAmount: Number(b.totalAmount),
+                branch: b.branch,
+                services: b.services.map((s) => ({ name: s.service.name, category: s.service.category.name, price: Number(s.price), quantity: s.quantity })),
+            })),
+        };
+    }
+
+    async getCustomerClassificationSettings() {
+        const row = await this.prisma.customerValueSettings.findFirst();
+        return {
+            premiumSpendThreshold: row ? Number(row.premiumSpendThreshold) : 50_000,
+            vipSpendThreshold: row ? Number(row.vipSpendThreshold) : 200_000,
+            newAccountAgeDays: row ? row.newAccountAgeDays : 30,
+            newVisitCountThreshold: row ? row.newVisitCountThreshold : 3,
+            activeDaysThreshold: row ? row.activeDaysThreshold : 30,
+            atRiskDaysThreshold: row ? row.atRiskDaysThreshold : 90,
+            dormantDaysThreshold: row ? row.dormantDaysThreshold : 180,
+        };
+    }
+
+    async updateCustomerClassificationSettings(dto: UpdateCustomerClassificationSettingsDto, updatedById: string | undefined) {
+        const existing = await this.prisma.customerValueSettings.findFirst();
+        const data = { ...dto, updatedById: updatedById ?? null };
+
+        return existing
+            ? this.prisma.customerValueSettings.update({ where: { id: existing.id }, data })
+            : this.prisma.customerValueSettings.create({ data });
     }
 
     async searchCustomers(query: string) {
@@ -266,27 +509,38 @@ export class SalonBookingService {
         return [...fromCustomers, ...fromUsers].slice(0, 15);
     }
 
-    /**
-     * Combined Salon Bookings overview — merges SalonBooking rows with the
-     * legacy Booking table's WALK_IN entries (still the live customer
-     * self-service path), so admin sees one consistent picture of "what
-     * happened at the salon" regardless of which table a given booking
-     * actually lives in. HOME_SERVICE legacy bookings are deliberately
-     * excluded — those belong to the existing marketplace Booking
-     * Management dashboard, not this one.
-     */
-    async getOverview(filters: { dateFrom?: string; dateTo?: string; branchId?: string; source?: 'salon_booking' | 'booking' | 'all' }) {
+    async getOverview(filters: {
+        dateFrom?: string;
+        dateTo?: string;
+        branchId?: string;
+        source?: 'salon_booking' | 'booking' | 'all';
+        search?: string;
+        status?: 'completed' | 'pending' | 'cancelled';
+        serviceId?: string;
+        staffId?: string;
+        page?: number;
+        limit?: number;
+    }) {
         const dateFilter = (filters.dateFrom || filters.dateTo)
             ? { gte: filters.dateFrom ? new Date(filters.dateFrom) : undefined, lte: filters.dateTo ? new Date(filters.dateTo) : undefined }
             : undefined;
         const wantSalonBookings = !filters.source || filters.source === 'all' || filters.source === 'salon_booking';
         const wantLegacyBookings = !filters.source || filters.source === 'all' || filters.source === 'booking';
+        const searchTerm = filters.search?.trim();
 
         const salonBookings = wantSalonBookings
             ? await this.prisma.salonBooking.findMany({
                 where: {
                     ...(filters.branchId && { branchId: filters.branchId }),
                     ...(dateFilter && { bookingDate: dateFilter }),
+                    ...(filters.staffId && { assignedStaffId: filters.staffId }),
+                    ...(filters.serviceId && { services: { some: { serviceId: filters.serviceId } } }),
+                    ...(searchTerm && {
+                        OR: [
+                            { customerName: { contains: searchTerm, mode: 'insensitive' as const } },
+                            { customerPhone: { contains: searchTerm } },
+                        ],
+                    }),
                 },
                 include: {
                     branch: { select: { id: true, name: true } },
@@ -302,11 +556,12 @@ export class SalonBookingService {
                     bookingType: 'WALK_IN',
                     ...(filters.branchId && { branchId: filters.branchId }),
                     ...(dateFilter && { bookingDate: dateFilter }),
+                    ...(filters.staffId && { assignedInHouseStaffId: filters.staffId }),
                 },
                 include: {
                     branch: { select: { id: true, name: true } },
                     assignedInHouseStaff: { select: { id: true, name: true } },
-                    user: { select: { firstName: true, lastName: true } },
+                    user: { select: { firstName: true, lastName: true, phone: true } },
                 },
                 orderBy: { bookingDate: 'desc' },
             })
@@ -323,13 +578,14 @@ export class SalonBookingService {
             return 'pending';
         };
 
-        const rows = [
+        let rows = [
             ...salonBookings.map((b) => ({
                 id: b.id,
                 source: 'salon_booking' as const,
                 branchName: b.branch?.name ?? null,
                 staffName: b.assignedStaff?.name ?? null,
                 customerName: b.customerName,
+                customerPhone: b.customerPhone ?? null,
                 bookingDate: b.bookingDate,
                 totalAmount: Number(b.totalAmount),
                 status: b.status,
@@ -341,32 +597,49 @@ export class SalonBookingService {
                 branchName: b.branch?.name ?? null,
                 staffName: b.assignedInHouseStaff?.name ?? null,
                 customerName: b.guestName || (b.user ? `${b.user.firstName} ${b.user.lastName}`.trim() : null),
+                customerPhone: b.user?.phone ?? null,
                 bookingDate: b.bookingDate,
                 totalAmount: Number(b.totalAmount),
                 status: b.status,
                 bucket: normalizeLegacyStatus(b.status),
+                _rawServices: b.services as any,
             })),
         ].sort((a, z) => z.bookingDate.getTime() - a.bookingDate.getTime());
 
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            rows = rows.filter((r) => {
+                if (r.source === 'salon_booking') return true;
+                return (r.customerName ?? '').toLowerCase().includes(term) || (r.customerPhone ?? '').includes(searchTerm);
+            });
+        }
+        if (filters.serviceId) {
+            rows = rows.filter((r) => {
+                if (r.source === 'salon_booking') return true;
+                const services = Array.isArray((r as any)._rawServices) ? (r as any)._rawServices : [];
+                return services.some((s: any) => s?.serviceId === filters.serviceId);
+            });
+        }
+        if (filters.status) {
+            rows = rows.filter((r) => r.bucket === filters.status);
+        }
+
         const summary = {
             totalBookings: rows.length,
-            // Realized revenue — only what's actually been completed, not
-            // pending or cancelled bookings that never rendered service.
             totalRevenue: rows.filter((r) => r.bucket === 'completed').reduce((sum, r) => sum + r.totalAmount, 0),
             completed: rows.filter((r) => r.bucket === 'completed').length,
             pending: rows.filter((r) => r.bucket === 'pending').length,
             cancelled: rows.filter((r) => r.bucket === 'cancelled').length,
         };
 
-        return { summary, bookings: rows };
+        const page = filters.page ?? 1;
+        const limit = filters.limit ?? 20;
+        const total = rows.length;
+        const paginated = rows.slice((page - 1) * limit, (page - 1) * limit + limit).map(({ _rawServices, ...r }: any) => r);
+
+        return { summary, bookings: paginated, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
     }
 
-    /**
-     * Hard-deletes a SalonBooking — Super Admin only, and only for
-     * SalonBooking rows (never the legacy marketplace Booking table, which
-     * has its own separate lifecycle and no delete concept here). Cascades
-     * to its service lines, inventory lines, and commission record.
-     */
     async deleteBooking(id: string) {
         const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException('Booking not found');
@@ -374,14 +647,46 @@ export class SalonBookingService {
         return { deleted: true, id };
     }
 
-    private async findOrCreateCustomer(name: string, phone: string, email?: string) {
+    private async findOrCreateCustomer(name: string, phone: string, email?: string, linkToVerifiedUser?: boolean) {
         const existing = await this.prisma.customer.findUnique({ where: { phone } });
-        if (existing) return existing;
-        return this.prisma.customer.create({ data: { name, phone, email } });
+
+        let verifiedUserId: string | undefined;
+        if (linkToVerifiedUser) {
+            const verifiedUser = await this.prisma.user.findFirst({ where: { phone, phoneVerified: true } });
+            verifiedUserId = verifiedUser?.id;
+        }
+
+        if (existing) {
+            if (verifiedUserId && existing.userId !== verifiedUserId) {
+                return this.prisma.customer.update({ where: { id: existing.id }, data: { userId: verifiedUserId } });
+            }
+            return existing;
+        }
+        return this.prisma.customer.create({ data: { name, phone, email, userId: verifiedUserId } });
+    }
+
+    async checkPhoneMatch(phone: string) {
+        const verifiedUser = await this.prisma.user.findFirst({
+            where: { phone, phoneVerified: true },
+            select: { id: true, firstName: true, lastName: true },
+        });
+        if (!verifiedUser) {
+            return { hasMatch: false as const };
+        }
+
+        const existingCustomer = await this.prisma.customer.findUnique({ where: { phone } });
+        if (existingCustomer?.userId === verifiedUser.id) {
+            return { hasMatch: false as const };
+        }
+
+        return {
+            hasMatch: true as const,
+            accountName: `${verifiedUser.firstName} ${verifiedUser.lastName}`.trim(),
+        };
     }
 
     private generateReservationCode(): string {
-        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I ambiguity
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
         let code = 'HLS-';
         for (let i = 0; i < 6; i++) {
             code += chars[randomInt(chars.length)];
@@ -389,18 +694,27 @@ export class SalonBookingService {
         return code;
     }
 
-    /**
-     * Customer-facing — reserving a salon visit in advance from
-     * hairlux-user-interface. No Stylist assigned yet (that happens when the
-     * customer walks in and staff verifies the code) and no `createdById`
-     * (nobody on staff created this).
-     */
     async reserve(dto: ReserveSalonBookingDto) {
         const branch = await this.prisma.staffLocation.findUnique({ where: { id: dto.branchId } });
         if (!branch) throw new NotFoundException('Branch not found');
 
         if (watDateTimeFromParts(dto.bookingDate, dto.bookingTime).getTime() < Date.now()) {
             throw new BadRequestException('Booking date/time cannot be in the past');
+        }
+
+        const exception = await resolveBusinessException(this.prisma, dto.branchId, dto.bookingDate);
+        if (exception?.isClosed) {
+            throw new BadRequestException(
+                `This branch is closed on ${dto.bookingDate}${exception.reason ? ` (${exception.reason})` : ''} — bookings cannot be made for this date.`,
+            );
+        }
+        if (exception && !exception.isClosed && exception.openTime && exception.closeTime) {
+            const requestedTime = dto.bookingTime;
+            if (requestedTime < exception.openTime || requestedTime > exception.closeTime) {
+                throw new BadRequestException(
+                    `On ${dto.bookingDate}, this branch's hours are ${exception.openTime}\u2013${exception.closeTime}${exception.reason ? ` (${exception.reason})` : ''} — the requested time falls outside that window.`,
+                );
+            }
         }
 
         const serviceIds = dto.services.map((s) => s.serviceId);
@@ -418,8 +732,6 @@ export class SalonBookingService {
 
         const customer = await this.findOrCreateCustomer(dto.customerName, dto.customerPhone, dto.customerEmail);
 
-        // Reservation codes are unique — collisions are astronomically rare
-        // with 6 chars from a 32-symbol alphabet, but retry once just in case.
         let reservationCode = this.generateReservationCode();
         for (let attempt = 0; attempt < 3; attempt++) {
             const clash = await this.prisma.salonBooking.findUnique({ where: { reservationCode } });
@@ -427,7 +739,7 @@ export class SalonBookingService {
             reservationCode = this.generateReservationCode();
         }
 
-        return this.prisma.salonBooking.create({
+        const booking = await this.prisma.salonBooking.create({
             data: {
                 branchId: dto.branchId,
                 customerId: customer.id,
@@ -442,12 +754,9 @@ export class SalonBookingService {
             },
             include: INCLUDE_FULL,
         });
+        return withBookingCode(booking);
     }
 
-    /**
-     * Looks up a reservation by code. `restrictToBranchId` is passed for
-     * staff (their own branch only) and omitted for admin (any branch).
-     */
     async findByReservationCode(code: string, restrictToBranchId?: string) {
         const booking = await this.prisma.salonBooking.findUnique({
             where: { reservationCode: code },
@@ -455,12 +764,11 @@ export class SalonBookingService {
         });
         if (!booking) throw new NotFoundException('No reservation found with this code');
         if (restrictToBranchId && booking.branchId !== restrictToBranchId) {
-            throw new NotFoundException('No reservation found with this code'); // don't leak cross-branch existence
+            throw new NotFoundException('No reservation found with this code');
         }
-        return booking;
+        return withBookingCode(booking);
     }
 
-    /** Assigns the Stylist and marks the reservation redeemed — the moment the customer actually walks in. */
     async verifyReservation(id: string, dto: VerifyReservationDto, restrictToBranchId?: string) {
         const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException('Booking not found');
@@ -488,14 +796,6 @@ export class SalonBookingService {
         return this.findOne(id);
     }
 
-    /**
-     * Looks up a reservation code across both booking systems — SalonBooking
-     * (staff/admin-created walk-ins and advance reservations) and the older
-     * marketplace Booking table (still the live path for customer
-     * self-service bookings, including WALK_IN type, since it's the one
-     * with working wallet deduction). SalonBooking is checked first since
-     * that's the more common staff-facing case.
-     */
     async findReservationAnywhere(code: string, restrictToBranchId?: string) {
         const salonBooking = await this.prisma.salonBooking.findUnique({
             where: { reservationCode: code },
@@ -505,7 +805,7 @@ export class SalonBookingService {
             if (restrictToBranchId && salonBooking.branchId !== restrictToBranchId) {
                 throw new NotFoundException('No reservation found with this code');
             }
-            return { source: 'salon_booking' as const, booking: salonBooking };
+            return { source: 'salon_booking' as const, booking: withBookingCode(salonBooking) };
         }
 
         let legacyBooking: any;
@@ -521,13 +821,6 @@ export class SalonBookingService {
         return { source: 'booking' as const, booking: legacyBooking };
     }
 
-    /**
-     * Verifies a reservation code found in either table. Both paths now
-     * require picking which in-house Stylist is serving the customer — a
-     * self-service customer booking never has one assigned at booking time
-     * (unlike an admin/staff-created SalonBooking walk-in), so verification
-     * is the natural moment to record it, for either table.
-     */
     async verifyReservationAnywhere(code: string, assignedStaffId: string | undefined, restrictToBranchId?: string) {
         if (!assignedStaffId) {
             throw new BadRequestException('Select which staff member is serving this customer');
@@ -568,16 +861,11 @@ export class SalonBookingService {
         return { source: 'booking' as const, booking: updated };
     }
 
-    /**
-     * Real commission summary for the logged-in staff member — this month's
-     * total, all-time total, a monthly breakdown for the last 6 months, and
-     * the individual booking-level entries behind it. No bonus-target or
-     * payout-tracking concepts here — those don't exist as real backend
-     * features yet, so this only ever shows what SalonBookingCommission
-     * actually has recorded.
-     */
     async getMyCommissionSummary(staffId: string) {
-        const staff = await this.prisma.staff.findUnique({ where: { id: staffId } });
+        const staff = await this.prisma.staff.findUnique({
+            where: { id: staffId },
+            include: { commissionPlan: { select: { name: true, commissionRate: true } } },
+        });
         if (!staff) throw new NotFoundException('Staff record not found');
 
         const commissions = await this.prisma.salonBookingCommission.findMany({
@@ -639,7 +927,20 @@ export class SalonBookingService {
         }));
 
         return {
-            commissionRate: staff.commissionRate != null ? Number(staff.commissionRate) : null,
+            // Dev Feedback Round 7, item #7: hasCommissionSetup checks both a
+            // Commission Plan and the flat rate -- checking commissionRate
+            // alone used to wrongly gate out a staff member whose only setup
+            // is a plan (a valid, real setup -- see Staff.commissionRate's
+            // own schema comment: it's "the fallback... with no formal plan
+            // yet"). effectiveRate is the plan's rate when one's assigned
+            // (it always takes priority), otherwise the flat rate -- shown
+            // with its source so it's never presented as a number that
+            // isn't actually the one being applied.
+            hasCommissionSetup: staff.commissionRate != null || !!staff.commissionPlanId,
+            effectiveRate: staff.commissionPlan
+                ? Number(staff.commissionPlan.commissionRate)
+                : (staff.commissionRate != null ? Number(staff.commissionRate) : null),
+            effectiveRateSource: staff.commissionPlan ? staff.commissionPlan.name : (staff.commissionRate != null ? 'Flat rate' : null),
             thisMonthTotal,
             bookingsThisMonth,
             allTimeTotal,
@@ -648,14 +949,35 @@ export class SalonBookingService {
         };
     }
 
-    /**
-     * Resolves the effective walk-in price per service for a given branch —
-     * the branch's BranchService.walkInPrice override when one exists,
-     * otherwise the service's own base walkInPrice. This is the same
-     * override mechanism ServiceCatalogService applies for display; booking
-     * creation must use it too, or a branch's price override never actually
-     * gets charged.
-     */
+    async getTodayStylistPerformance(branchId: string) {
+        const todayStr = watTodayDateStr(new Date());
+
+        const bookings = await this.prisma.salonBooking.findMany({
+            where: {
+                branchId,
+                status: SalonBookingStatus.COMPLETED,
+                bookingDate: new Date(todayStr),
+            },
+            include: { assignedStaff: { select: { id: true, name: true } } },
+        });
+
+        const byStaff = new Map<string, { staffId: string; staffName: string; completedServices: number; totalGenerated: number }>();
+        for (const b of bookings) {
+            if (!b.assignedStaffId) continue;
+            const entry = byStaff.get(b.assignedStaffId) ?? {
+                staffId: b.assignedStaffId,
+                staffName: b.assignedStaff?.name ?? 'Unknown',
+                completedServices: 0,
+                totalGenerated: 0,
+            };
+            entry.completedServices += 1;
+            entry.totalGenerated += Number(b.totalAmount);
+            byStaff.set(b.assignedStaffId, entry);
+        }
+
+        return Array.from(byStaff.values()).sort((a, z) => z.totalGenerated - a.totalGenerated);
+    }
+
     private async resolveServicePrices(branchId: string, serviceIds: string[]): Promise<Map<string, number>> {
         const overrides = await this.prisma.branchService.findMany({
             where: { branchId, serviceId: { in: serviceIds } },
@@ -674,7 +996,13 @@ export class SalonBookingService {
 
     private async resolveInventoryLines(branchId: string, lines: { itemId: string; quantity: number }[]) {
         const itemIds = lines.map((l) => l.itemId);
-        const items = await this.prisma.inventoryItem.findMany({ where: { id: { in: itemIds } } });
+        const items = await this.prisma.inventoryItem.findMany({
+            where: { id: { in: itemIds } },
+            // Phase 8: resolved here so the cost snapshot below covers
+            // both callers of this helper (addInventoryItem's single-line
+            // path, and the bulk createMany path elsewhere in this file).
+            include: { product: { select: { costPrice: true } } },
+        });
 
         return lines.map((line) => {
             const item = items.find((i) => i.id === line.itemId);
@@ -686,6 +1014,7 @@ export class SalonBookingService {
                 itemId: item.id,
                 quantity: line.quantity,
                 unitPrice: item.category === 'FOR_SALE' ? Number(item.price ?? 0) : null,
+                unitCost: (item as any).product?.costPrice ?? null,
             };
         });
     }
@@ -700,7 +1029,7 @@ export class SalonBookingService {
     }
 
     async findAll(query: QuerySalonBookingsDto) {
-        const { branchId, assignedStaffId, status, date, page = 1, limit = 20 } = query;
+        const { branchId, assignedStaffId, status, date, search, page = 1, limit = 20 } = query;
         const skip = (page - 1) * limit;
 
         const where: any = {
@@ -709,6 +1038,18 @@ export class SalonBookingService {
             ...(status && { status }),
             ...(date && { bookingDate: new Date(date) }),
         };
+
+        if (search) {
+            const trimmed = search.trim();
+            const numericPart = trimmed.replace(/^HLB-?/i, '').replace(/^0+(?=\d)/, '');
+            const asBookingNumber = numericPart ? Number(numericPart) : NaN;
+
+            where.OR = [
+                { customerName: { contains: trimmed, mode: 'insensitive' as const } },
+                { customerPhone: { contains: trimmed } },
+                ...(Number.isFinite(asBookingNumber) && asBookingNumber > 0 ? [{ bookingNumber: asBookingNumber }] : []),
+            ];
+        }
 
         const [bookings, total] = await Promise.all([
             this.prisma.salonBooking.findMany({
@@ -721,13 +1062,13 @@ export class SalonBookingService {
             this.prisma.salonBooking.count({ where }),
         ]);
 
-        return { data: bookings, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+        return { data: bookings.map(withBookingCode), meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
     }
 
     async findOne(id: string) {
         const booking = await this.prisma.salonBooking.findUnique({ where: { id }, include: INCLUDE_FULL });
         if (!booking) throw new NotFoundException('Booking not found');
-        return booking;
+        return withBookingCode(booking);
     }
 
     async addInventoryItem(bookingId: string, dto: AddSalonBookingInventoryItemDto) {
@@ -737,7 +1078,7 @@ export class SalonBookingService {
         const [line] = await this.resolveInventoryLines(booking.branchId, [dto]);
 
         await this.prisma.salonBookingInventoryItem.create({
-            data: { bookingId, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice },
+            data: { bookingId, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice, unitCost: line.unitCost },
         });
 
         return this.recomputeTotal(bookingId);
@@ -765,21 +1106,31 @@ export class SalonBookingService {
         }
     }
 
+    private assertCancellable(status: SalonBookingStatus) {
+        if (status !== SalonBookingStatus.SCHEDULED) {
+            throw new BadRequestException(
+                status === SalonBookingStatus.IN_PROGRESS
+                    ? 'Cannot cancel a booking that is already In Progress — the Stylist has already started this service'
+                    : `Cannot cancel a booking that is already ${status}`,
+            );
+        }
+    }
+
     async start(id: string) {
         const booking = await this.findOne(id);
         this.assertModifiable(booking.status as SalonBookingStatus);
-        return this.prisma.salonBooking.update({ where: { id }, data: { status: SalonBookingStatus.IN_PROGRESS } });
+        const updated = await this.prisma.salonBooking.update({ where: { id }, data: { status: SalonBookingStatus.IN_PROGRESS } });
+        return withBookingCode(updated);
     }
 
-    /**
-     * The single trigger point for both inventory deduction and commission
-     * calculation — mirrors the SRS's "Completed is the one event both react
-     * to" rule for the marketplace Booking model.
-     */
     async complete(id: string, actorId: string | undefined) {
         const booking = await this.prisma.salonBooking.findUnique({
             where: { id },
-            include: { inventoryItems: { include: { item: true } }, services: true, assignedStaff: true },
+            include: {
+                inventoryItems: { include: { item: true } },
+                services: { include: { service: { include: { productConsumption: { include: { product: true } } } } } },
+                assignedStaff: { include: { commissionPlan: true } },
+            },
         });
         if (!booking) throw new NotFoundException('Booking not found');
         this.assertModifiable(booking.status as SalonBookingStatus);
@@ -787,11 +1138,49 @@ export class SalonBookingService {
             throw new BadRequestException('Cannot complete a booking with no Stylist assigned — verify the reservation or assign one first');
         }
 
-        // Re-validate stock availability at completion time, not just when items were added.
         for (const line of booking.inventoryItems) {
-            if (line.item.currentQuantity < line.quantity) {
+            const available = line.item.category === 'FOR_SALE' ? line.item.salesStock : line.item.usageStock;
+            if (available < line.quantity) {
                 throw new BadRequestException(
-                    `Insufficient stock for "${line.item.name}" — ${line.item.currentQuantity} available, ${line.quantity} needed`,
+                    `Insufficient ${line.item.category === 'FOR_SALE' ? 'sales' : 'usage'} stock for "${line.item.name}" — ${available} available, ${line.quantity} needed`,
+                );
+            }
+        }
+
+        // Procurement/Inventory/Finance Integration, Phase 6: each
+        // service's configured "recipe" (ServiceProductConsumption) is
+        // deducted automatically -- distinct from the manual
+        // booking.inventoryItems lines above (extra products sold/used
+        // beyond a service's standard materials). A product can appear
+        // in more than one service's recipe on the same booking, so
+        // quantities are aggregated by resolved InventoryItem BEFORE
+        // validating -- checking each service's need against the same
+        // not-yet-decremented stock figure independently could miss a
+        // genuine shortfall that only appears once combined.
+        const autoConsumptionByItemId = new Map<string, { item: any; qty: number; productName: string }>();
+        for (const bookingService of booking.services) {
+            for (const recipe of bookingService.service.productConsumption) {
+                const totalQty = recipe.quantity * bookingService.quantity;
+                const item = await this.prisma.inventoryItem.findFirst({
+                    where: { productId: recipe.productId, branchId: booking.branchId },
+                });
+                if (!item) {
+                    throw new BadRequestException(
+                        `"${recipe.product.name}" is required by ${bookingService.service.name} but isn't stocked at this branch`,
+                    );
+                }
+                const existing = autoConsumptionByItemId.get(item.id);
+                autoConsumptionByItemId.set(item.id, {
+                    item,
+                    qty: (existing?.qty ?? 0) + totalQty,
+                    productName: recipe.product.name,
+                });
+            }
+        }
+        for (const { item, qty, productName } of autoConsumptionByItemId.values()) {
+            if (item.usageStock < qty) {
+                throw new BadRequestException(
+                    `Insufficient usage stock for "${productName}" — ${item.usageStock} available, ${qty} needed for the configured service(s)`,
                 );
             }
         }
@@ -800,14 +1189,18 @@ export class SalonBookingService {
 
         await this.prisma.$transaction(async (tx) => {
             for (const line of booking.inventoryItems) {
+                const isForSale = line.item.category === 'FOR_SALE';
                 await tx.inventoryItem.update({
                     where: { id: line.itemId },
-                    data: { currentQuantity: { decrement: line.quantity } },
+                    data: isForSale
+                        ? { salesStock: { decrement: line.quantity } }
+                        : { usageStock: { decrement: line.quantity } },
                 });
                 await tx.stockMovement.create({
                     data: {
                         itemId: line.itemId,
-                        type: line.item.category === 'FOR_SALE' ? StockMovementType.SOLD : StockMovementType.CONSUMED,
+                        type: isForSale ? StockMovementType.SOLD : StockMovementType.CONSUMED,
+                        stockType: isForSale ? 'SALES' : 'USAGE',
                         quantityDelta: -line.quantity,
                         referenceId: booking.id,
                         performedById: actorId,
@@ -815,9 +1208,45 @@ export class SalonBookingService {
                 });
             }
 
-            const rate = booking.assignedStaff?.commissionRate ? Number(booking.assignedStaff.commissionRate) : 0;
-            const serviceTotal = booking.services.reduce((sum, s) => sum + Number(s.price) * s.quantity, 0);
-            const commissionAmount = Math.round(serviceTotal * rate * 100) / 100;
+            for (const { item, qty } of autoConsumptionByItemId.values()) {
+                await tx.inventoryItem.update({
+                    where: { id: item.id },
+                    data: { usageStock: { decrement: qty } },
+                });
+                await tx.stockMovement.create({
+                    data: {
+                        itemId: item.id,
+                        type: StockMovementType.CONSUMED,
+                        stockType: 'USAGE',
+                        quantityDelta: -qty,
+                        referenceId: booking.id,
+                        reason: 'Automatic service product consumption',
+                        performedById: actorId,
+                    },
+                });
+            }
+
+            const plan = booking.assignedStaff?.commissionPlan;
+            let rate: number;
+            let eligibleServiceTotal: number;
+            if (plan && plan.isActive) {
+                // Payroll Engine v2, Phase 4: an assigned Commission Plan
+                // takes priority over the staff member's own flat
+                // commissionRate. Only services in the plan's own
+                // eligibleServiceIds generate commission under it -- an
+                // empty list means every service is eligible (see the
+                // schema's own comment on CommissionPlan.eligibleServiceIds).
+                rate = Number(plan.commissionRate);
+                const eligibleIds = plan.eligibleServiceIds;
+                eligibleServiceTotal = booking.services.reduce((sum: number, s: any) => {
+                    const isEligible = eligibleIds.length === 0 || eligibleIds.includes(s.serviceId);
+                    return isEligible ? sum + Number(s.price) * s.quantity : sum;
+                }, 0);
+            } else {
+                rate = booking.assignedStaff?.commissionRate ? Number(booking.assignedStaff.commissionRate) : 0;
+                eligibleServiceTotal = booking.services.reduce((sum, s) => sum + Number(s.price) * s.quantity, 0);
+            }
+            const commissionAmount = Math.round(eligibleServiceTotal * rate * 100) / 100;
 
             await tx.salonBookingCommission.create({
                 data: {
@@ -825,6 +1254,14 @@ export class SalonBookingService {
                     staffId: booking.assignedStaffId!,
                     amount: commissionAmount,
                     rateApplied: rate,
+                    commissionPlanId: plan?.isActive ? plan.id : undefined,
+                    // Guide, section 11: "only approved eligible
+                    // transactions generate commission" -- a plan that
+                    // requires approval starts this record PENDING;
+                    // everything else (no plan, or a plan that doesn't
+                    // require it) is APPROVED immediately, matching the
+                    // schema's own default.
+                    approvalStatus: plan?.isActive && plan.requiresApproval ? 'PENDING' : 'APPROVED',
                 },
             });
 
@@ -832,6 +1269,20 @@ export class SalonBookingService {
                 where: { id },
                 data: { status: SalonBookingStatus.COMPLETED, completedAt: now },
             });
+
+            await this.financialTransactionService.record(
+                {
+                    direction: 'INFLOW',
+                    category: 'SALON_BOOKING_REVENUE',
+                    amount: Number(booking.totalAmount),
+                    branchId: booking.branchId,
+                    description: `Salon booking completed — ${booking.customerName}`,
+                    recordedById: actorId,
+                    sourceType: 'SalonBooking',
+                    sourceId: booking.id,
+                },
+                tx,
+            );
         });
 
         for (const line of booking.inventoryItems) {
@@ -843,21 +1294,135 @@ export class SalonBookingService {
 
     async cancel(id: string, dto: CancelSalonBookingDto) {
         const booking = await this.findOne(id);
-        this.assertModifiable(booking.status as SalonBookingStatus);
+        this.assertCancellable(booking.status as SalonBookingStatus);
 
-        return this.prisma.salonBooking.update({
+        const updated = await this.prisma.salonBooking.update({
             where: { id },
             data: { status: SalonBookingStatus.CANCELLED, cancelReason: dto.reason, cancelledAt: new Date() },
         });
+        return withBookingCode(updated);
     }
 
     async markNoShow(id: string, dto: CancelSalonBookingDto) {
         const booking = await this.findOne(id);
         this.assertModifiable(booking.status as SalonBookingStatus);
 
-        return this.prisma.salonBooking.update({
+        const updated = await this.prisma.salonBooking.update({
             where: { id },
             data: { status: SalonBookingStatus.NO_SHOW, cancelReason: dto.reason, cancelledAt: new Date() },
         });
+        return withBookingCode(updated);
+    }
+
+    async editBooking(id: string, dto: EditSalonBookingDto) {
+        const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
+        if (!booking) throw new NotFoundException('Booking not found');
+        this.assertModifiable(booking.status as SalonBookingStatus);
+
+        const newDate = dto.bookingDate ?? booking.bookingDate.toISOString().slice(0, 10);
+        const newTime = dto.bookingTime ?? booking.bookingTime;
+
+        if (dto.bookingDate || dto.bookingTime) {
+            if (watDateTimeFromParts(newDate, newTime).getTime() < Date.now()) {
+                throw new BadRequestException('Booking date/time cannot be in the past');
+            }
+            const exception = await resolveBusinessException(this.prisma, booking.branchId, newDate);
+            if (exception?.isClosed) {
+                throw new BadRequestException(
+                    `This branch is closed on ${newDate}${exception.reason ? ` (${exception.reason})` : ''} — bookings cannot be made for this date.`,
+                );
+            }
+            if (exception && !exception.isClosed && exception.openTime && exception.closeTime) {
+                if (newTime < exception.openTime || newTime > exception.closeTime) {
+                    throw new BadRequestException(
+                        `On ${newDate}, this branch's hours are ${exception.openTime}\u2013${exception.closeTime}${exception.reason ? ` (${exception.reason})` : ''} — the requested time falls outside that window.`,
+                    );
+                }
+            }
+        }
+
+        if (dto.assignedStaffId) {
+            const staff = await this.prisma.staff.findUnique({ where: { id: dto.assignedStaffId } });
+            if (!staff) throw new NotFoundException('Assigned staff member not found');
+            if (staff.locationId !== booking.branchId) {
+                throw new BadRequestException('The assigned staff member is not based at this branch');
+            }
+        }
+
+        if (dto.services) {
+            const serviceIds = dto.services.map((s) => s.serviceId);
+            const services = await this.prisma.service.findMany({ where: { id: { in: serviceIds } } });
+            if (services.length !== new Set(serviceIds).size) {
+                throw new BadRequestException('One or more services were not found');
+            }
+            const servicePrices = await this.resolveServicePrices(booking.branchId, serviceIds);
+            const serviceLines = dto.services.map((line) => {
+                const service = services.find((s) => s.id === line.serviceId)!;
+                return { serviceId: service.id, price: servicePrices.get(service.id) ?? Number(service.walkInPrice), quantity: line.quantity ?? 1, bookingId: id };
+            });
+
+            await this.prisma.$transaction([
+                this.prisma.salonBookingService.deleteMany({ where: { bookingId: id } }),
+                this.prisma.salonBookingService.createMany({ data: serviceLines }),
+            ]);
+        }
+
+        // Dev Feedback Round 4, item #3: same full-replace pattern as
+        // services above, but checked against undefined explicitly rather
+        // than truthiness -- a booking legitimately can have zero
+        // products, and "send an empty array to clear all products" needs
+        // to actually work, not be indistinguishable from "field omitted,
+        // leave untouched". resolveInventoryLines already validates every
+        // item belongs to this booking's branch and computes unit price,
+        // same helper create() and addInventoryItem() already use.
+        if (dto.inventoryItems !== undefined) {
+            const inventoryLines = dto.inventoryItems.length
+                ? await this.resolveInventoryLines(booking.branchId, dto.inventoryItems.map((l) => ({ itemId: l.itemId, quantity: l.quantity ?? 1 })))
+                : [];
+
+            await this.prisma.$transaction([
+                this.prisma.salonBookingInventoryItem.deleteMany({ where: { bookingId: id } }),
+                ...(inventoryLines.length
+                    ? [this.prisma.salonBookingInventoryItem.createMany({
+                        data: inventoryLines.map((line) => ({ bookingId: id, itemId: line.itemId, quantity: line.quantity, unitPrice: line.unitPrice, unitCost: line.unitCost })),
+                    })]
+                    : []),
+            ]);
+        }
+
+        await this.prisma.salonBooking.update({
+            where: { id },
+            data: {
+                ...(dto.customerName !== undefined && { customerName: dto.customerName }),
+                ...(dto.customerPhone !== undefined && { customerPhone: dto.customerPhone }),
+                ...(dto.assignedStaffId !== undefined && { assignedStaffId: dto.assignedStaffId }),
+                ...(dto.bookingDate !== undefined && { bookingDate: new Date(dto.bookingDate) }),
+                ...(dto.bookingTime !== undefined && { bookingTime: dto.bookingTime }),
+                ...(dto.notes !== undefined && { notes: dto.notes }),
+            },
+        });
+
+        return this.recomputeTotal(id);
+    }
+
+    async addServiceToCompletedBooking(id: string, dto: AddServiceToCompletedBookingDto) {
+        const booking = await this.prisma.salonBooking.findUnique({ where: { id } });
+        if (!booking) throw new NotFoundException('Booking not found');
+        if (booking.status !== SalonBookingStatus.COMPLETED) {
+            throw new BadRequestException('This endpoint only applies to Completed bookings — use the regular edit for Scheduled/In Progress bookings');
+        }
+
+        const service = await this.prisma.service.findUnique({ where: { id: dto.serviceId } });
+        if (!service) throw new NotFoundException('Service not found');
+
+        const priceMap = await this.resolveServicePrices(booking.branchId, [dto.serviceId]);
+        const price = priceMap.get(dto.serviceId) ?? Number(service.walkInPrice);
+        const quantity = dto.quantity ?? 1;
+
+        await this.prisma.salonBookingService.create({
+            data: { bookingId: id, serviceId: dto.serviceId, price, quantity },
+        });
+
+        return this.recomputeTotal(id);
     }
 }

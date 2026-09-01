@@ -61,7 +61,7 @@ export class BookingPaymentService {
     private bookingLinePricingService: BookingLinePricingService,
     private homeServiceBookingService: HomeServiceBookingService,
     private bookingPushNotifier: BookingPushNotifier,
-  ) {}
+  ) { }
 
   private resolveServiceMode(
     item: Pick<ServiceBookingItemDto, 'serviceMode' | 'serviceId'>,
@@ -151,10 +151,10 @@ export class BookingPaymentService {
 
     const discountApplied = booking.discountUsage
       ? {
-          code: booking.discountUsage.discountCode.code,
-          percentage: booking.discountUsage.discountCode.percentage,
-          amount: discountAmount,
-        }
+        code: booking.discountUsage.discountCode.code,
+        percentage: booking.discountUsage.discountCode.percentage,
+        amount: discountAmount,
+      }
       : undefined;
 
     const originalAmount = booking.discountUsage
@@ -432,6 +432,7 @@ export class BookingPaymentService {
       validatedDiscount = await this.discountService.validate(
         discountCode,
         userId,
+        branchId,
       );
       discountAmount =
         Math.round(((totalAmount * validatedDiscount.percentage) / 100) * 100) /
@@ -585,10 +586,10 @@ export class BookingPaymentService {
           originalAmount: validatedDiscount ? totalAmount : undefined,
           discountApplied: validatedDiscount
             ? {
-                code: validatedDiscount.code,
-                percentage: validatedDiscount.percentage,
-                amount: discountAmount,
-              }
+              code: validatedDiscount.code,
+              percentage: validatedDiscount.percentage,
+              amount: discountAmount,
+            }
             : undefined,
           paymentMethod: PaymentMethod.WALLET,
           message:
@@ -706,10 +707,10 @@ export class BookingPaymentService {
         originalAmount: validatedDiscount ? totalAmount : undefined,
         discountApplied: validatedDiscount
           ? {
-              code: validatedDiscount.code,
-              percentage: validatedDiscount.percentage,
-              amount: discountAmount,
-            }
+            code: validatedDiscount.code,
+            percentage: validatedDiscount.percentage,
+            amount: discountAmount,
+          }
           : undefined,
         paymentMethod: PaymentMethod.CASH,
         message: 'Booking reserved. Payment will be collected on delivery.',
@@ -973,6 +974,7 @@ export class BookingPaymentService {
       validatedDiscount = await this.discountService.validate(
         discountCode,
         userId,
+        branchId,
       );
       discountAmount =
         Math.round(((totalAmount * validatedDiscount.percentage) / 100) * 100) /
@@ -1092,10 +1094,10 @@ export class BookingPaymentService {
           amountToPay: requiredExternalAmount,
           discountApplied: context.validatedDiscount
             ? {
-                code: context.validatedDiscount.code,
-                percentage: context.validatedDiscount.percentage,
-                amount: context.discountAmount,
-              }
+              code: context.validatedDiscount.code,
+              percentage: context.validatedDiscount.percentage,
+              amount: context.discountAmount,
+            }
             : null,
           monnifyTransactionReference:
             monnifyData.responseBody.transactionReference,
@@ -1320,160 +1322,160 @@ export class BookingPaymentService {
     try {
       result = await this.withBookingFulfillmentRetry(async () =>
         this.withReservationCodeRetry(async () => {
-        const reservationCode =
-          await this.reservationService.generateReservationCode();
+          const reservationCode =
+            await this.reservationService.generateReservationCode();
 
-        return this.prisma.$transaction(async (tx) => {
-          await this.lockTransactionForUpdate(tx, paymentIntent.id);
+          return this.prisma.$transaction(async (tx) => {
+            await this.lockTransactionForUpdate(tx, paymentIntent.id);
 
-          const lockedIntent = await tx.transaction.findUnique({
-            where: { id: paymentIntent.id },
-          });
-          const lockedMetadata =
-            (lockedIntent?.metadata as Record<string, any> | null) ?? {};
-
-          const walletContributionToDebit = Number(
-            lockedMetadata.walletContribution ?? 0,
-          );
-
-          if (
-            lockedIntent?.status === TransactionStatus.COMPLETED &&
-            lockedMetadata.bookingId
-          ) {
-            const existingBooking = await tx.booking.findUnique({
-              where: { id: String(lockedMetadata.bookingId) },
-              include: { address: true },
+            const lockedIntent = await tx.transaction.findUnique({
+              where: { id: paymentIntent.id },
             });
+            const lockedMetadata =
+              (lockedIntent?.metadata as Record<string, any> | null) ?? {};
 
-            return {
-              booking: existingBooking,
-              reservationCode: String(
-                lockedMetadata.reservationCode ??
+            const walletContributionToDebit = Number(
+              lockedMetadata.walletContribution ?? 0,
+            );
+
+            if (
+              lockedIntent?.status === TransactionStatus.COMPLETED &&
+              lockedMetadata.bookingId
+            ) {
+              const existingBooking = await tx.booking.findUnique({
+                where: { id: String(lockedMetadata.bookingId) },
+                include: { address: true },
+              });
+
+              return {
+                booking: existingBooking,
+                reservationCode: String(
+                  lockedMetadata.reservationCode ??
                   existingBooking?.reservationCode,
-              ),
-              influencerRewardUserId: null as string | null,
-            };
-          }
+                ),
+                influencerRewardUserId: null as string | null,
+              };
+            }
 
-          if (lockedIntent?.status !== TransactionStatus.PENDING) {
-            throw new ConflictException('Booking payment is no longer pending');
-          }
+            if (lockedIntent?.status !== TransactionStatus.PENDING) {
+              throw new ConflictException('Booking payment is no longer pending');
+            }
 
-          if (walletContributionToDebit > 0) {
-            await this.walletDebitService.debitWalletAndRecordTx(tx, {
-              userId,
-              amount: walletContributionToDebit,
-              reference: walletDebitReference,
-              description: `Wallet contribution for booking payment ${dto.bookingPaymentReference}`,
-              metadata: {
-                purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
-                bookingPaymentReference: dto.bookingPaymentReference,
-              },
-              insufficientBalanceMessage:
-                `Wallet balance changed before verification. Needed ${walletContributionToDebit}`,
-            });
-          }
-
-          const booking = await tx.booking.create({
-            data: {
-              userId,
-              services: toBookingServicesJson(context.serviceRecords),
-              addressId: context.locationData.addressId,
-              tempLatitude: context.locationData.tempLatitude,
-              tempLongitude: context.locationData.tempLongitude,
-              tempFullAddress: context.locationData.tempFullAddress,
-              branchId: context.branchId,
-              bookingDate: context.bookingDate,
-              bookingTime: payload.time,
-              bookingType: context.bookingType,
-              reservationCode,
-              idempotencyKey: idempotencyKey ?? undefined,
-              guestName: payload.guestName ?? null,
-              guestPhone: payload.guestPhone ?? null,
-              guestEmail: payload.guestEmail ?? null,
-              totalAmount: context.finalAmount,
-              paymentMethod: PaymentMethod.MONNIFY,
-              status: initialStatus,
-              notes:
-                `Paid online via MONNIFY (${dto.bookingPaymentReference})` +
-                (addressLabel ? ` | ${addressLabel}` : ''),
-            },
-            include: bookingUserReadInclude,
-          });
-
-          let influencerRewardUserId: string | null = null;
-
-          if (walletContributionToDebit > 0) {
-            await tx.transaction.updateMany({
-              where: {
-                walletId: paymentIntent.walletId,
+            if (walletContributionToDebit > 0) {
+              await this.walletDebitService.debitWalletAndRecordTx(tx, {
+                userId,
+                amount: walletContributionToDebit,
                 reference: walletDebitReference,
-                type: TransactionType.DEBIT,
-              },
-              data: {
+                description: `Wallet contribution for booking payment ${dto.bookingPaymentReference}`,
                 metadata: {
                   purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
-                  bookingId: booking.id,
                   bookingPaymentReference: dto.bookingPaymentReference,
+                },
+                insufficientBalanceMessage:
+                  `Wallet balance changed before verification. Needed ${walletContributionToDebit}`,
+              });
+            }
+
+            const booking = await tx.booking.create({
+              data: {
+                userId,
+                services: toBookingServicesJson(context.serviceRecords),
+                addressId: context.locationData.addressId,
+                tempLatitude: context.locationData.tempLatitude,
+                tempLongitude: context.locationData.tempLongitude,
+                tempFullAddress: context.locationData.tempFullAddress,
+                branchId: context.branchId,
+                bookingDate: context.bookingDate,
+                bookingTime: payload.time,
+                bookingType: context.bookingType,
+                reservationCode,
+                idempotencyKey: idempotencyKey ?? undefined,
+                guestName: payload.guestName ?? null,
+                guestPhone: payload.guestPhone ?? null,
+                guestEmail: payload.guestEmail ?? null,
+                totalAmount: context.finalAmount,
+                paymentMethod: PaymentMethod.MONNIFY,
+                status: initialStatus,
+                notes:
+                  `Paid online via MONNIFY (${dto.bookingPaymentReference})` +
+                  (addressLabel ? ` | ${addressLabel}` : ''),
+              },
+              include: bookingUserReadInclude,
+            });
+
+            let influencerRewardUserId: string | null = null;
+
+            if (walletContributionToDebit > 0) {
+              await tx.transaction.updateMany({
+                where: {
+                  walletId: paymentIntent.walletId,
+                  reference: walletDebitReference,
+                  type: TransactionType.DEBIT,
+                },
+                data: {
+                  metadata: {
+                    purpose: 'BOOKING_PAYMENT_WALLET_CONTRIBUTION',
+                    bookingId: booking.id,
+                    bookingPaymentReference: dto.bookingPaymentReference,
+                  } as any,
+                },
+              });
+            }
+
+            if (context.validatedDiscount) {
+              const usage = await tx.discountUsage.create({
+                data: {
+                  discountCodeId: context.validatedDiscount.id,
+                  userId,
+                  bookingId: booking.id,
+                  discountAmount: context.discountAmount,
+                },
+              });
+
+              await tx.discountCode.update({
+                where: { id: context.validatedDiscount.id },
+                data: { usedCount: { increment: 1 } },
+              });
+
+              influencerRewardUserId =
+                await this.awardInfluencerRewardIfEligibleTx(
+                  tx,
+                  usage.id,
+                  context.finalAmount,
+                );
+            }
+
+            const finalized = await tx.transaction.updateMany({
+              where: {
+                id: paymentIntent.id,
+                status: TransactionStatus.PENDING,
+              },
+              data: {
+                status: TransactionStatus.COMPLETED,
+                metadata: {
+                  ...lockedMetadata,
+                  ...verification.responseBody,
+                  provider: 'monnify',
+                  purpose: 'BOOKING_PAYMENT',
+                  bookingId: booking.id,
+                  reservationCode,
+                  walletContributionUsed: walletContributionToDebit,
+                  verifiedAt: new Date().toISOString(),
                 } as any,
               },
             });
-          }
 
-          if (context.validatedDiscount) {
-            const usage = await tx.discountUsage.create({
-              data: {
-                discountCodeId: context.validatedDiscount.id,
-                userId,
-                bookingId: booking.id,
-                discountAmount: context.discountAmount,
-              },
-            });
+            if (finalized.count === 0) {
+              throw new ConflictException('Booking payment already processed');
+            }
 
-            await tx.discountCode.update({
-              where: { id: context.validatedDiscount.id },
-              data: { usedCount: { increment: 1 } },
-            });
-
-            influencerRewardUserId =
-              await this.awardInfluencerRewardIfEligibleTx(
-                tx,
-                usage.id,
-                context.finalAmount,
-              );
-          }
-
-          const finalized = await tx.transaction.updateMany({
-            where: {
-              id: paymentIntent.id,
-              status: TransactionStatus.PENDING,
-            },
-            data: {
-              status: TransactionStatus.COMPLETED,
-              metadata: {
-                ...lockedMetadata,
-                ...verification.responseBody,
-                provider: 'monnify',
-                purpose: 'BOOKING_PAYMENT',
-                bookingId: booking.id,
-                reservationCode,
-                walletContributionUsed: walletContributionToDebit,
-                verifiedAt: new Date().toISOString(),
-              } as any,
-            },
+            return {
+              booking,
+              reservationCode,
+              influencerRewardUserId,
+            };
           });
-
-          if (finalized.count === 0) {
-            throw new ConflictException('Booking payment already processed');
-          }
-
-          return {
-            booking,
-            reservationCode,
-            influencerRewardUserId,
-          };
-        });
-      }),
+        }),
       );
     } catch (err) {
       if (idempotencyKey && this.isUniqueConstraintError(err, 'idempotencyKey')) {
@@ -1647,16 +1649,16 @@ export class BookingPaymentService {
       typeof metadata.bookingId === 'string' ? metadata.bookingId : null;
     const linkedBooking = bookingId
       ? await this.prisma.booking.findFirst({
-          where: { id: bookingId, userId },
-          select: {
-            id: true,
-            reservationCode: true,
-            status: true,
-            totalAmount: true,
-            bookingDate: true,
-            bookingTime: true,
-          },
-        })
+        where: { id: bookingId, userId },
+        select: {
+          id: true,
+          reservationCode: true,
+          status: true,
+          totalAmount: true,
+          bookingDate: true,
+          bookingTime: true,
+        },
+      })
       : null;
 
     const gatewayPaymentConfirmed = this.isGatewayPaymentConfirmed(metadata);
@@ -1682,9 +1684,9 @@ export class BookingPaymentService {
           : null,
       booking: linkedBooking
         ? {
-            ...linkedBooking,
-            totalAmount: Number(linkedBooking.totalAmount),
-          }
+          ...linkedBooking,
+          totalAmount: Number(linkedBooking.totalAmount),
+        }
         : null,
     };
   }

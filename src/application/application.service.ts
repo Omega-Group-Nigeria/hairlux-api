@@ -20,6 +20,7 @@ import { ApproveEmploymentDto } from './dto/approve-employment.dto';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { GenerateOfferLetterDto } from './dto/generate-offer-letter.dto';
 import { QueryApplicationDto } from './dto/query-application.dto';
+import { QueryRecruitmentReportDto } from './dto/query-recruitment-report.dto';
 import { RecordInterviewOutcomeDto } from './dto/record-interview-outcome.dto';
 import { OfferResponseAction, RespondToOfferDto } from './dto/respond-to-offer.dto';
 import { ScheduleInterviewDto } from './dto/schedule-interview.dto';
@@ -467,6 +468,23 @@ export class ApplicationService {
     const applicationCode = draft ? draft.applicationCode : await this.generateApplicationCode();
     const { otp, otpHash, otpExpiresAt } = await this.generateOtp();
 
+    // Independently re-verified here rather than trusting the draft-reuse
+    // path alone: draft is only found when dto.applicationId both was
+    // supplied and matched, which the wizard frontend is responsible for
+    // tracking correctly through the flow. If that chain breaks for any
+    // reason, this submission previously fell through to a fresh .create()
+    // whose data object never included ninVerified/ninPhotoUrl/
+    // ninVerifiedAt at all — silently resetting them to their schema
+    // defaults (false/null/null) even though this exact NIN had already
+    // been verified. Looking this up directly, independent of the draft
+    // match, means the final Application is correct either way.
+    const verifiedNinRecord = draft
+      ? draft
+      : await this.applicationModel.findFirst({
+        where: { nin: dto.nin, ninVerified: true },
+        orderBy: { ninVerifiedAt: 'desc' },
+      });
+
     const data = {
       applicationCode,
       jobId: dto.jobId ?? null,
@@ -498,6 +516,9 @@ export class ApplicationService {
       status: ApplicationStatus.SUBMITTED,
       otpHash,
       otpExpiresAt,
+      ninVerified: verifiedNinRecord?.ninVerified ?? false,
+      ninVerifiedAt: verifiedNinRecord?.ninVerifiedAt ?? null,
+      ninPhotoUrl: verifiedNinRecord?.ninPhotoUrl ?? null,
     };
 
     const application = draft
@@ -732,8 +753,29 @@ export class ApplicationService {
      * that this is simpler than adding groupBy typing to the model delegate,
      * and keeps this consistent with the "basic" scope the brief asked for.
      */
-  async getRecruitmentReport() {
+  /**
+   * Every card and breakdown (Total Applicants, Hired, Avg Time to Hire,
+   * By Role, By Status) is computed from the SAME filtered set — never
+   * independently — so e.g. Role=Stylist + Status=Employed shows the
+   * actual Stylists-hired count, not the global hired total across every
+   * role. Admins never see DRAFT applications here either, matching
+   * findAllForAdmin's convention, regardless of which filters are applied.
+   */
+  async getRecruitmentReport(filters: QueryRecruitmentReportDto = {}) {
+    const where: Record<string, unknown> = { status: { not: ApplicationStatus.DRAFT } };
+
+    if (filters.status) where.status = filters.status;
+    if (filters.appliedRole) where.appliedRole = filters.appliedRole;
+    if (filters.preferredLocationId) where.preferredLocationId = filters.preferredLocationId;
+    if (filters.dateFrom || filters.dateTo) {
+      where.createdAt = {
+        ...(filters.dateFrom && { gte: new Date(filters.dateFrom) }),
+        ...(filters.dateTo && { lte: new Date(`${filters.dateTo}T23:59:59`) }),
+      };
+    }
+
     const applications = await this.applicationModel.findMany({
+      where,
       select: {
         appliedRole: true,
         status: true,
@@ -745,6 +787,7 @@ export class ApplicationService {
     const byRoleMap = new Map<string, number>();
     const byStatusMap = new Map<string, number>();
     const hireDurationsDays: number[] = [];
+    let hiredInSet = 0;
 
     for (const app of applications as unknown as Array<{
       appliedRole: string | null;
@@ -756,9 +799,12 @@ export class ApplicationService {
       byRoleMap.set(role, (byRoleMap.get(role) ?? 0) + 1);
       byStatusMap.set(app.status, (byStatusMap.get(app.status) ?? 0) + 1);
 
-      if (app.status === 'EMPLOYED' && app.employedAt) {
-        const days = (new Date(app.employedAt).getTime() - new Date(app.createdAt).getTime()) / 86400000;
-        if (days >= 0) hireDurationsDays.push(days);
+      if (app.status === 'EMPLOYED') {
+        hiredInSet += 1;
+        if (app.employedAt) {
+          const days = (new Date(app.employedAt).getTime() - new Date(app.createdAt).getTime()) / 86400000;
+          if (days >= 0) hireDurationsDays.push(days);
+        }
       }
     }
 
@@ -775,8 +821,24 @@ export class ApplicationService {
         .map(([status, count]) => ({ status, count }))
         .sort((a, b) => b.count - a.count),
       averageTimeToHireDays,
-      hiredCount: hireDurationsDays.length,
+      // Total EMPLOYED applications within the filtered set — not the
+      // "count of durations we could compute" (hireDurationsDays.length),
+      // which silently undercounts anyone missing a valid employedAt.
+      hiredCount: hiredInSet,
     };
+  }
+
+  /** Distinct appliedRole values across every non-draft application — powers the Role filter dropdown, unaffected by whatever filters are currently applied so the option list never shrinks based on the user's own selection. */
+  async getDistinctAppliedRoles(): Promise<string[]> {
+    const rows = await this.applicationModel.findMany({
+      where: { status: { not: ApplicationStatus.DRAFT }, appliedRole: { not: null } } as unknown as QueryArgs,
+      select: { appliedRole: true } as unknown as QueryArgs,
+      distinct: ['appliedRole'],
+    } as unknown as QueryArgs);
+    return (rows as unknown as Array<{ appliedRole: string | null }>)
+      .map((r) => r.appliedRole)
+      .filter((r): r is string => !!r)
+      .sort();
   }
 
   private async sanitize(application: ApplicationRecord) {
@@ -1321,6 +1383,48 @@ export class ApplicationService {
       userId: user.id,
     });
 
+    // Seed compensation from the accepted offer letter -- without this, a
+    // freshly-hired staff member's currentBaseSalary/currentAllowances stay
+    // null despite the exact figure already being known and accepted at
+    // hire time, and Payroll would silently treat them as earning ₦0 until
+    // someone manually re-entered it via the admin Compensation UI. Both
+    // the fast-read Staff snapshot AND the first StaffCompensationHistory
+    // entry are written, so the offer letter shows up as the first row in
+    // this person's compensation history, not a gap before manual entries.
+    const offerLetter = application.offerLetter as unknown as {
+      baseSalary: number | string;
+      allowances: number | string | null;
+      effectiveDate: Date | null;
+    } | null;
+
+    if (offerLetter) {
+
+      const actingStaff = actingAdminId
+        ? await this.staffService.findByUserIdOrNull(actingAdminId)
+        : null;
+      const changedById = (actingStaff as unknown as { id: string } | null)?.id;
+
+      await this.prisma.$transaction([
+        this.prisma.staffCompensationHistory.create({
+          data: {
+            staffId: staff.id,
+            baseSalary: offerLetter.baseSalary,
+            allowances: offerLetter.allowances ?? undefined,
+            note: `Initial compensation from accepted offer letter (${application.applicationCode})`,
+            effectiveDate: offerLetter.effectiveDate ?? new Date(),
+            changedById,
+          },
+        }),
+        this.prisma.staff.update({
+          where: { id: staff.id },
+          data: {
+            currentBaseSalary: offerLetter.baseSalary,
+            currentAllowances: offerLetter.allowances ?? undefined,
+          },
+        }),
+      ]);
+    }
+
     await this.applicationModel.update({
       where: { id },
       data: { status: ApplicationStatus.EMPLOYED, staffId: staff.id, employedAt: new Date() },
@@ -1330,5 +1434,130 @@ export class ApplicationService {
 
     await this.invalidateCache(id);
     return rehireWarning ? { ...staff, rehireWarning } : staff;
+  }
+
+  /**
+   * Finds every staff member converted BEFORE convertToStaff started
+   * seeding compensation from the accepted offer letter -- currentBaseSalary
+   * is still null despite the real, accepted figure sitting right there on
+   * their Application. Fully deterministic (just copies the number over,
+   * no judgment calls like the legacy-account email-linking backfill has to
+   * make), so this runs as one bulk action rather than one-at-a-time --
+   * but DRY RUN ONLY here, same convention as
+   * StaffService.previewLegacyAccountBackfill. Nothing is modified.
+   */
+  async previewCompensationBackfill() {
+    const candidates = await this.applicationModel.findMany({
+      where: {
+        staffId: { not: null },
+        offerLetter: { status: 'ACCEPTED' },
+      } as unknown as QueryArgs,
+      include: { offerLetter: true } as unknown as QueryArgs,
+    });
+
+    const plan: Array<{
+      staffId: string;
+      applicationCode: string;
+      proposedBaseSalary: number;
+      proposedAllowances: number | null;
+      proposedEffectiveDate: Date;
+    }> = [];
+
+    for (const app of candidates as unknown as Array<{
+      staffId: string;
+      applicationCode: string;
+      offerLetter: { baseSalary: number | string; allowances: number | string | null; effectiveDate: Date | null } | null;
+    }>) {
+      if (!app.offerLetter) continue;
+
+      const staff = await this.staffService.findOne(app.staffId).catch(() => null);
+      if (!staff) continue; // staffId points at a record that no longer exists -- skip rather than throw
+      if ((staff as unknown as { currentBaseSalary: number | null }).currentBaseSalary != null) {
+        continue; // already has a real figure -- either already backfilled, or set manually since. Never overwrite.
+      }
+
+      plan.push({
+        staffId: app.staffId,
+        applicationCode: app.applicationCode,
+        proposedBaseSalary: Number(app.offerLetter.baseSalary),
+        proposedAllowances: app.offerLetter.allowances != null ? Number(app.offerLetter.allowances) : null,
+        proposedEffectiveDate: app.offerLetter.effectiveDate ?? new Date(),
+      });
+    }
+
+    return { affectedCount: plan.length, plan };
+  }
+
+  /**
+   * REAL ACTION. Re-runs the same query as previewCompensationBackfill
+   * (never trusts a stale preview the caller might be holding) and applies
+   * it to every match, each in its own transaction so one bad record can't
+   * abort the whole batch. Skips anyone whose currentBaseSalary is no
+   * longer null by the time this runs -- never overwrites a real figure,
+   * whether set by this same backfill already or by a manual admin edit
+   * since the preview was shown.
+   */
+  async runCompensationBackfill(actingAdminId?: string) {
+    const { plan } = await this.previewCompensationBackfill();
+
+    // Resolved once, outside the loop -- the same acting admin applies to
+    // every row in this batch. changedById is a foreign key to Staff.id,
+    // NOT User.id (actingAdminId); a pure admin account with no linked
+    // Staff record correctly resolves to undefined here, which the schema
+    // treats as a valid, expected case, not an error.
+    const actingStaff = actingAdminId
+      ? await this.staffService.findByUserIdOrNull(actingAdminId)
+      : null;
+    const changedById = (actingStaff as unknown as { id: string } | null)?.id;
+
+    const results: Array<{ staffId: string; applicationCode: string; status: 'applied' | 'skipped' | 'failed'; reason?: string }> = [];
+
+    for (const item of plan) {
+      try {
+        const staff = await this.staffService.findOne(item.staffId).catch(() => null);
+        if (!staff || (staff as unknown as { currentBaseSalary: number | null }).currentBaseSalary != null) {
+          results.push({ staffId: item.staffId, applicationCode: item.applicationCode, status: 'skipped', reason: 'No longer null -- already has a compensation figure' });
+          continue;
+        }
+
+        await this.prisma.$transaction([
+          this.prisma.staffCompensationHistory.create({
+            data: {
+              staffId: item.staffId,
+              baseSalary: item.proposedBaseSalary,
+              allowances: item.proposedAllowances ?? undefined,
+              note: `Backfilled from accepted offer letter (${item.applicationCode}) -- staff was converted before automatic seeding existed`,
+              effectiveDate: item.proposedEffectiveDate,
+              changedById,
+            },
+          }),
+          this.prisma.staff.update({
+            where: { id: item.staffId },
+            data: {
+              currentBaseSalary: item.proposedBaseSalary,
+              currentAllowances: item.proposedAllowances ?? undefined,
+            },
+          }),
+        ]);
+
+        results.push({ staffId: item.staffId, applicationCode: item.applicationCode, status: 'applied' });
+      } catch (err) {
+        results.push({
+          staffId: item.staffId,
+          applicationCode: item.applicationCode,
+          status: 'failed',
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    await this.invalidateCache();
+
+    return {
+      appliedCount: results.filter((r) => r.status === 'applied').length,
+      skippedCount: results.filter((r) => r.status === 'skipped').length,
+      failedCount: results.filter((r) => r.status === 'failed').length,
+      results,
+    };
   }
 }

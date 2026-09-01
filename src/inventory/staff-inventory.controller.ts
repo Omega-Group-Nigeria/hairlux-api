@@ -10,6 +10,7 @@ import { ReceiveGoodsDto } from './dto/receive-goods.dto';
 import { RequestTransferDto } from './dto/request-transfer.dto';
 import { RejectTransferDto } from './dto/reject-transfer.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { TransferStockBetweenTypesDto } from './dto/transfer-stock-between-types.dto';
 import { RejectStockAdjustmentDto } from './dto/reject-stock-adjustment.dto';
 import { InventoryService } from './inventory.service';
 import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
@@ -67,6 +68,21 @@ export class StaffInventoryController {
         const staff = await this.staffService.findByUserId(req.user.id);
         const data = await this.inventoryService.requestStockAdjustment(itemId, dto, staff.id, false);
         return { success: true, message: 'Stock adjustment request submitted successfully', data };
+    }
+
+    @Post(':itemId/transfer-stock-type')
+    @ApiOperation({
+        summary: 'Move quantity between Store/Sales/Usage stock at your branch — Dev Feedback Round 6, item #6',
+        description: 'Applies immediately, no approval needed — the item\'s total stock is unchanged, only how it is allocated across the three buckets.',
+    })
+    async transferStockType(
+        @Req() req: any,
+        @Param('itemId', ParseUUIDPipe) itemId: string,
+        @Body() dto: TransferStockBetweenTypesDto,
+    ) {
+        const staff = await this.staffService.findByUserId(req.user.id);
+        const data = await this.inventoryService.transferBetweenStockTypes(itemId, dto.fromStockType, dto.toStockType, dto.quantity, dto.reason, staff.id);
+        return { success: true, message: 'Stock reallocated successfully', data };
     }
 
     @Get('adjustment-requests')

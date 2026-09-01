@@ -7,6 +7,7 @@ import { MailService } from '../mail/mail.service';
 import { RedisService } from '../redis/redis.service';
 import { ReferralService } from '../referral/referral.service';
 import { WalletPushNotifier } from '../notifications/wallet/wallet-push.notifier';
+import { FinancialTransactionService } from '../finance/financial-transaction.service';
 
 interface WebhookJobData {
   event: string;
@@ -32,7 +33,8 @@ export class PaystackWebhookProcessor {
     private redis: RedisService,
     private referralService: ReferralService,
     private walletPushNotifier: WalletPushNotifier,
-  ) {}
+    private financialTransactionService: FinancialTransactionService,
+  ) { }
 
   @Process('deposit-webhook')
   async handleDepositWebhook(job: Job<WebhookJobData>) {
@@ -122,6 +124,21 @@ export class PaystackWebhookProcessor {
       this.logger.log(
         `Webhook processed successfully: ${data.reference}, ₦${transaction.amount} credited`,
       );
+
+      // Deliberately non-atomic with the wallet credit above -- same
+      // reasoning as wallet.service.ts's direct-verify path: a customer's
+      // deposit succeeding matters more than the internal ledger record
+      // being perfectly atomic with it.
+      void this.financialTransactionService
+        .record({
+          direction: 'INFLOW',
+          category: 'WALLET_FUNDING',
+          amount: Number(transaction.amount),
+          description: `Wallet deposit via Paystack (webhook) — ref ${data.reference}`,
+          sourceType: 'Transaction',
+          sourceId: transaction.id,
+        })
+        .catch((err) => this.logger.error(`Failed to record financial transaction for deposit ${data.reference}: ${err instanceof Error ? err.message : String(err)}`));
 
       // Invalidate wallet balance + admin stats caches
       void Promise.all([

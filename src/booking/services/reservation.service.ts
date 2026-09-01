@@ -106,6 +106,12 @@ export class ReservationService {
           booking.bookingType === BookingType.WALK_IN
             ? BookingStatus.COMPLETED
             : BookingStatus.IN_PROGRESS,
+        // Only meaningful (and only set) for the WALK_IN->COMPLETED case above --
+        // this is what branch-finance and other revenue reporting bucket by, so
+        // it needs to be set the same moment the booking actually completes,
+        // not left null (previously the case here, unlike the home-service
+        // completion flow, which already sets this correctly).
+        ...(booking.bookingType === BookingType.WALK_IN && { serviceCompletedAt: new Date() }),
       },
       include: bookingAdminReadInclude,
     });

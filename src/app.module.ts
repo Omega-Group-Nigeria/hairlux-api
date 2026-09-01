@@ -1,6 +1,7 @@
 import { Module, ValidationPipe } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
+import { ScheduleModule } from '@nestjs/schedule';
 import { APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
@@ -9,6 +10,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { MailModule } from './mail/mail.module';
+import { SmsModule } from './sms/sms.module';
 import { ServiceCatalogModule } from './service-catalog/service-catalog.module';
 import { PaymentModule } from './payment/payment.module';
 import { BookingModule } from './booking/booking.module';
@@ -33,10 +35,19 @@ import { StorageModule } from './storage/storage.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { LeaveModule } from './leave/leave.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { BranchFinanceModule } from './branch-finance/branch-finance.module';
 import { SalonBookingModule } from './salon-booking/salon-booking.module';
 import { ProductSaleModule } from './product-sale/product-sale.module';
 import { SupplierModule } from './supplier/supplier.module';
 import { PayrollModule } from './payroll/payroll.module';
+import { CrmModule } from './crm/crm.module';
+import { LmsModule } from './lms/lms.module';
+import { InventoryProductModule } from './inventory-product/inventory-product.module';
+import { FinanceModule } from './finance/finance.module';
+import { PurchaseModule } from './purchase/purchase.module';
+import { ReportsModule } from './reports/reports.module';
+import { SiteStatsModule } from './site-stats/site-stats.module';
+import { AuditTrailModule } from './audit-trail/audit-trail.module';
 
 @Module({
   imports: [
@@ -44,6 +55,7 @@ import { PayrollModule } from './payroll/payroll.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     BullModule.forRootAsync({
       inject: [ConfigService],
@@ -80,6 +92,7 @@ import { PayrollModule } from './payroll/payroll.module';
     PrismaModule,
     RedisModule,
     MailModule,
+    SmsModule,
     AuthModule,
     UserModule,
     ServiceCatalogModule,
@@ -93,6 +106,7 @@ import { PayrollModule } from './payroll/payroll.module';
     JobsModule,
     RolesModule,
     StaffModule,
+    LmsModule,
     WaitlistModule,
     ShopModule,
     BranchModule,
@@ -103,14 +117,26 @@ import { PayrollModule } from './payroll/payroll.module';
     ApplicationModule,
     StorageModule,
     AttendanceModule,
+    CrmModule,
     LeaveModule,
     InventoryModule,
+    BranchFinanceModule,
     SalonBookingModule,
     ProductSaleModule,
     ProductSaleModule,
     SupplierModule,
     PayrollModule,
-    
+    BranchFinanceModule,
+    SmsModule,
+    CrmModule,
+    LmsModule,
+    InventoryProductModule,
+    FinanceModule,
+    PurchaseModule,
+    ReportsModule,
+    SiteStatsModule,
+    AuditTrailModule,
+
   ],
   controllers: [AppController],
   providers: [
@@ -132,4 +158,4 @@ import { PayrollModule } from './payroll/payroll.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule { }

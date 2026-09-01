@@ -7,14 +7,16 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   Res,
   StreamableFile,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import type { Response } from 'express';
@@ -23,6 +25,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CompanyDocumentService } from './company-document.service';
 import { CreateInventoryLogEntryDto } from './dto/create-inventory-log-entry.dto';
+import { SubmitAddressVerificationDto } from './dto/submit-address-verification.dto';
 import {
   SubmitAddressDto,
   SubmitEmergencyContactDto,
@@ -30,7 +33,8 @@ import {
   SubmitReferenceDto,
 } from './dto/submit-onboarding-info.dto';
 import { UpdateDirectiveStatusDto } from './dto/update-directive-status.dto';
-import { UpdateMyProfileDto } from './dto/update-my-profile.dto'; 
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
+import { StaffAddressVerificationService } from './staff-address-verification.service';
 import { StaffCommsService } from './staff-comms.service';
 import { StaffOperationsService } from './staff-operations.service';
 import { StaffService } from './staff.service';
@@ -48,7 +52,20 @@ export class StaffSelfController {
     private readonly documentService: CompanyDocumentService,
     private readonly commsService: StaffCommsService,
     private readonly operationsService: StaffOperationsService,
+    private readonly addressVerificationService: StaffAddressVerificationService,
   ) { }
+
+  @Get('options')
+  @Roles(UserRole.STAFF, UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Dev Feedback Round 7, item #10: minimal staff list (id/name/staffCode/locationId) for populating a dropdown -- ACTIVE + ON_LEAVE only by default, since both mean "still with the company"' })
+  @ApiResponse({ status: 200, description: 'Staff options retrieved successfully' })
+  async listOptions(
+    @Query('locationId') locationId?: string,
+    @Query('includeAllStatuses') includeAllStatuses?: string,
+  ) {
+    const data = await this.staffService.listDropdownOptions(locationId, includeAllStatuses === 'true');
+    return { success: true, message: 'Staff options retrieved successfully', data };
+  }
 
   @Get('me')
   @ApiOperation({ summary: "Get the logged-in staff member's own record" })
@@ -224,6 +241,51 @@ export class StaffSelfController {
     return { success: true, message: 'Directive status updated successfully', data };
   }
 
+  @Post('me/directives/:directiveId/evidence')
+  @ApiOperation({
+    summary: 'Submit optional proof of completion for a directive sent to you',
+    description: 'Typically submitted alongside (or right before) marking the directive COMPLETED. Stored privately, same pattern as passport photo/CV uploads.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 201, description: 'Evidence uploaded successfully' })
+  @ApiResponse({ status: 400, description: 'Missing file' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
+  @ApiResponse({ status: 403, description: 'Forbidden - this directive was not sent to you' })
+  @ApiResponse({ status: 404, description: 'Directive not found' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_PHOTO_SIZE_BYTES } }))
+  async submitDirectiveEvidence(
+    @Param('directiveId', ParseUUIDPipe) directiveId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded. Attach a file under the "file" field.');
+    }
+    const staff = await this.staffService.findByUserId(req.user.id);
+    const data = await this.commsService.submitDirectiveEvidence(
+      (staff as unknown as { id: string }).id,
+      directiveId,
+      file,
+    );
+    return { success: true, message: 'Evidence uploaded successfully', data };
+  }
+
+  @Get('me/directives/:directiveId/evidence')
+  @ApiOperation({ summary: 'Get a fresh view URL for your own submitted evidence on this directive' })
+  @ApiResponse({ status: 200, description: 'View URL retrieved successfully (null if no evidence submitted)' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - JWT missing or invalid' })
+  @ApiResponse({ status: 403, description: 'Forbidden - this directive was not sent to you' })
+  @ApiResponse({ status: 404, description: 'Directive not found' })
+  async getMyDirectiveEvidence(@Param('directiveId', ParseUUIDPipe) directiveId: string, @Req() req: any) {
+    const staff = await this.staffService.findByUserId(req.user.id);
+    const viewUrl = await this.commsService.getDirectiveEvidenceViewUrl(
+      directiveId,
+      (staff as unknown as { id: string }).id,
+    );
+    return { success: true, message: 'View URL retrieved successfully', data: { viewUrl } };
+  }
+
   @Post('me/inventory')
   @ApiOperation({
     summary: 'Log a product received or sold at your branch',
@@ -359,6 +421,38 @@ export class StaffSelfController {
     const staff = await this.staffService.findByUserId(req.user.id);
     const viewUrl = await this.staffService.getPassportPhotoViewUrl((staff as unknown as { id: string }).id);
     return { success: true, message: 'View URL retrieved successfully', data: { viewUrl } };
+  }
+
+  @Get('me/address-verification')
+  @ApiOperation({ summary: 'Get your own address verification status -- null if never requested' })
+  @ApiResponse({ status: 200, description: 'Retrieved successfully' })
+  async getMyAddressVerification(@Req() req: any) {
+    const staff = await this.staffService.findByUserId(req.user.id);
+    const data = await this.addressVerificationService.getStatus((staff as unknown as { id: string }).id);
+    return { success: true, message: 'Retrieved successfully', data };
+  }
+
+  @Post('me/address-verification/submit')
+  @ApiOperation({
+    summary: 'Submit your physical address for QoreID verification',
+    description: 'Only allowed after an admin has requested it. Physical verification (a real field-agent visit) takes 24-48h -- this call only ever acknowledges submission, never the final result.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiResponse({ status: 201, description: 'Submitted -- verification in progress' })
+  @ApiResponse({ status: 400, description: 'Not requested yet, already in progress, or already verified' })
+  @UseInterceptors(FileFieldsInterceptor([
+    { name: 'photo1', maxCount: 1 },
+    { name: 'photo2', maxCount: 1 },
+    { name: 'photo3', maxCount: 1 },
+  ], { limits: { fileSize: MAX_PHOTO_SIZE_BYTES } }))
+  async submitAddressVerification(
+    @UploadedFiles() files: { photo1?: Express.Multer.File[]; photo2?: Express.Multer.File[]; photo3?: Express.Multer.File[] },
+    @Body() dto: SubmitAddressVerificationDto,
+    @Req() req: any,
+  ) {
+    const staff = await this.staffService.findByUserId(req.user.id);
+    const data = await this.addressVerificationService.submit((staff as unknown as { id: string }).id, dto, files || {});
+    return { success: true, message: 'Address verification submitted -- results typically take 24-48 hours', data };
   }
 
   @Get('me/compensation')

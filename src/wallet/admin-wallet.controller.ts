@@ -8,20 +8,24 @@ import {
 import { WalletService } from './wallet.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { Permission } from '../auth/decorators/permission.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { AdminQueryTransactionsDto } from './dto/admin-query-transactions.dto';
 import { AdminWalletStatsDto } from './dto/admin-wallet-stats.dto';
 
 @ApiTags('Admin - Wallets')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/wallets')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminWalletController {
-  constructor(private readonly walletService: WalletService) {}
+  constructor(private readonly walletService: WalletService) { }
 
   @Get('stats')
+  @Permission(PERMISSIONS.PAYMENTS_READ)
   @ApiOperation({
     summary: 'Get wallet statistics',
     description:
@@ -65,6 +69,7 @@ export class AdminWalletController {
   }
 
   @Get('transactions')
+  @Permission(PERMISSIONS.PAYMENTS_READ)
   @ApiOperation({
     summary: 'List all transactions',
     description:

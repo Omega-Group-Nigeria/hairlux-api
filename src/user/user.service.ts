@@ -1,30 +1,61 @@
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
-  BadRequestException,
   UnauthorizedException,
-  ConflictException,
 } from '@nestjs/common';
-import * as argon2 from 'argon2';
-import { PrismaService } from '../prisma/prisma.service';
-import { UpdateProfileDto } from './dto/update-profile.dto';
-import { ChangePasswordDto } from './dto/change-password.dto';
-import { CreateAddressDto } from './dto/create-address.dto';
-import { UpdateAddressDto } from './dto/update-address.dto';
-import { ADMIN_USER_IDENTITY_SELECT } from '../common/constants/admin-user-select';
-import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
-import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import {
   Prisma,
+  TransactionStatus,
+  TransactionType,
   UserRole,
   UserStatus,
-  TransactionType,
-  TransactionStatus,
 } from '@prisma/client';
-import { GetTransactionsDto } from '../wallet/dto/get-transactions.dto';
+import * as argon2 from 'argon2';
+import { ADMIN_USER_IDENTITY_SELECT } from '../common/constants/admin-user-select';
 import { ErrorMessages } from '../common/constants/error-messages';
+import { classifyCustomerLifecycle, classifyCustomerValue, CustomerLifecycle, CustomerValue, getCustomerClassificationThresholds } from '../common/utils/customer-status.util';
+import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { AfricasTalkingService } from '../sms/africas-talking.service';
+import { GetTransactionsDto } from '../wallet/dto/get-transactions.dto';
+import { AdminQueryUsersDto } from './dto/admin-query-users.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { CreateAddressDto } from './dto/create-address.dto';
+import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import { AddressComponentsDto } from './dto/shared-address-components.dto';
+import { UpdateAddressDto } from './dto/update-address.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+
+
+interface CustomerUsersFilterParams {
+  query?: string;
+  branchIds?: string[];
+  dateFrom?: string;
+  dateTo?: string;
+  signupSource?: 'WEB' | 'APP';
+  accountStatus?: 'ACTIVE' | 'INACTIVE';
+  serviceMode?: 'HOME_SERVICE' | 'WALK_IN';
+  lifecycle?: CustomerLifecycle;
+  value?: CustomerValue;
+  minVisits?: number;
+  maxVisits?: number;
+  minSpend?: number;
+  maxSpend?: number;
+  minAvgSpend?: number;
+  maxAvgSpend?: number;
+  firstVisitFrom?: string;
+  firstVisitTo?: string;
+  lastVisitFrom?: string;
+  lastVisitTo?: string;
+  daysSinceLastVisitMin?: number;
+  daysSinceLastVisitMax?: number;
+  serviceCategoryIds?: string[];
+  serviceIds?: string[];
+  page?: number;
+  limit?: number;
+}
 
 interface AddressRecord {
   id: string;
@@ -49,6 +80,7 @@ export class UserService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
+    private smsService: AfricasTalkingService,
   ) { }
 
   async getProfile(userId: string) {
@@ -60,6 +92,8 @@ export class UserService {
         firstName: true,
         lastName: true,
         phone: true,
+        phoneVerified: true,
+        phoneVerifiedAt: true,
         role: true,
         status: true,
         emailVerified: true,
@@ -67,6 +101,7 @@ export class UserService {
         adminRole: { select: { id: true, name: true } },
         createdAt: true,
         updatedAt: true,
+        password: true,
       },
     });
 
@@ -74,7 +109,12 @@ export class UserService {
       throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
     }
 
-    return user;
+    // Never expose the hash itself -- same destructure-and-compute pattern
+    // AuthService.buildAuthenticatedResponse uses for hasPassword at login.
+    // Needed here too since a returning user with a still-valid token loads
+    // the dashboard via a profile fetch, not a fresh login response.
+    const { password, ...userWithoutPassword } = user;
+    return { ...userWithoutPassword, hasPassword: !!password };
   }
 
   async updateProfile(userId: string, updateProfileDto: UpdateProfileDto) {
@@ -99,6 +139,72 @@ export class UserService {
     return user;
   }
 
+  /**
+   * Stores the phone unverified and sends an OTP. Uniqueness is checked
+   * against phone alone (the column itself is @unique) -- but only a
+   * DIFFERENT account already having this exact phone blocks the request;
+   * re-requesting for your own already-set-but-unverified phone is fine
+   * (e.g. retrying after the first SMS didn't arrive).
+   */
+  async requestPhoneVerification(userId: string, phone: string) {
+    const existing = await this.prisma.user.findUnique({ where: { phone } });
+    if (existing && existing.id !== userId) {
+      throw new ConflictException('This phone number is already associated with another account.');
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes, matching the email-OTP convention
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        phone,
+        phoneVerified: false,
+        phoneVerifiedAt: null,
+        phoneOtpCode: otpCode,
+        phoneOtpExpiry: otpExpiry,
+      },
+    });
+
+    const sent = await this.smsService.sendOtpSms(phone, otpCode);
+    if (!sent) {
+      throw new BadRequestException('Could not send the verification code. Please check the number and try again.');
+    }
+
+    return { message: 'Verification code sent.' };
+  }
+
+  async verifyPhoneOtp(userId: string, otpCode: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (!user.phoneOtpCode || !user.phoneOtpExpiry) {
+      throw new BadRequestException('No verification code was requested for this account. Please request one first.');
+    }
+    if (user.phoneOtpExpiry < new Date()) {
+      throw new BadRequestException('This code has expired. Please request a new one.');
+    }
+    if (user.phoneOtpCode !== otpCode) {
+      throw new BadRequestException('Invalid verification code.');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        phoneVerified: true,
+        phoneVerifiedAt: new Date(),
+        phoneOtpCode: null,
+        phoneOtpExpiry: null,
+      },
+      select: { id: true, phone: true, phoneVerified: true, phoneVerifiedAt: true },
+    });
+
+    void this.redis.del(`user:profile:${userId}`);
+
+    return updated;
+  }
+
   async changePassword(userId: string, changePasswordDto: ChangePasswordDto) {
     const { currentPassword, newPassword } = changePasswordDto;
 
@@ -109,6 +215,14 @@ export class UserService {
 
     if (!user) {
       throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    }
+
+    // A Google-signup account has no local password to change -- there is
+    // nothing for this endpoint to verify against.
+    if (!user.password) {
+      throw new BadRequestException(
+        'This account has no password set (it uses Google sign-in). There is no password to change.',
+      );
     }
 
     // Verify current password
@@ -133,6 +247,40 @@ export class UserService {
     });
 
     return { message: 'Password changed successfully' };
+  }
+
+  /**
+   * For an account that currently has NO password (Google-signup only) --
+   * sets one for the first time. Deliberately rejects if a password
+   * already exists, since that case must go through changePassword
+   * instead (which correctly requires the current password) -- this
+   * method has no way to verify identity beyond the JWT itself, which is
+   * appropriate only for the "nothing to confirm against yet" case.
+   */
+  async setPassword(userId: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+    }
+    if (user.password) {
+      throw new BadRequestException(
+        'This account already has a password set. Use the change-password flow instead.',
+      );
+    }
+
+    const hashedPassword = await argon2.hash(newPassword, {
+      type: argon2.argon2id,
+      memoryCost: 65536,
+      timeCost: 4,
+      parallelism: 1,
+    });
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+
+    return { message: 'Password set successfully' };
   }
 
   // Address Management (soft delete via deletedAt)
@@ -536,6 +684,8 @@ export class UserService {
         firstName: true,
         lastName: true,
         phone: true,
+        phoneVerified: true,
+        phoneVerifiedAt: true,
         role: true,
         status: true,
         emailVerified: true,
@@ -687,6 +837,292 @@ export class UserService {
         limit,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  /**
+   * The Users page (Website/App customers) — role is always hardcoded to
+   * USER; this never surfaces staff/admin/beautician accounts. Mirrors
+   * SalonBookingService.findAllCustomers's shape (lifecycle, value, visit/
+   * spend stats, service filtering) but sourced from Booking + its JSON
+   * `services` field, since customer-side bookings have no relational
+   * service link the way SalonBooking does.
+   */
+  async findAllCustomerUsers(params: CustomerUsersFilterParams) {
+    const {
+      query, branchIds, dateFrom, dateTo, signupSource, serviceMode, accountStatus,
+      lifecycle, value,
+      minVisits, maxVisits, minSpend, maxSpend, minAvgSpend, maxAvgSpend,
+      firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+      daysSinceLastVisitMin, daysSinceLastVisitMax,
+      serviceCategoryIds, serviceIds,
+      page = 1, limit = 20,
+    } = params;
+
+    const where: any = { role: UserRole.USER };
+    if (query) {
+      where.OR = [
+        { firstName: { contains: query, mode: 'insensitive' } },
+        { lastName: { contains: query, mode: 'insensitive' } },
+        { email: { contains: query, mode: 'insensitive' } },
+        { phone: { contains: query } },
+      ];
+    }
+    if (signupSource) where.signupSource = signupSource;
+    if (accountStatus) where.status = accountStatus;
+
+    if (branchIds?.length || dateFrom || dateTo || serviceMode) {
+      where.bookings = {
+        some: {
+          ...(branchIds?.length && { branchId: { in: branchIds } }),
+          ...(serviceMode && { bookingType: serviceMode }),
+          ...((dateFrom || dateTo) && {
+            bookingDate: {
+              ...(dateFrom && { gte: new Date(dateFrom) }),
+              ...(dateTo && { lte: new Date(dateTo) }),
+            },
+          }),
+        },
+      };
+    }
+
+    const needsValueFilter = [
+      minVisits, maxVisits, minSpend, maxSpend, minAvgSpend, maxAvgSpend,
+      firstVisitFrom, firstVisitTo, lastVisitFrom, lastVisitTo,
+      daysSinceLastVisitMin, daysSinceLastVisitMax,
+      lifecycle, value, serviceCategoryIds?.length, serviceIds?.length,
+    ].some((v) => v !== undefined);
+
+    const [allMatching, dbTotal] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        ...(needsValueFilter ? {} : { skip: (page - 1) * limit, take: limit }),
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, firstName: true, lastName: true, email: true, phone: true, signupSource: true, status: true, createdAt: true },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    const userIds = allMatching.map((u) => u.id);
+    const bookings = userIds.length
+      ? await this.prisma.booking.findMany({
+        where: { userId: { in: userIds } },
+        select: {
+          userId: true, status: true, totalAmount: true, bookingDate: true, services: true,
+          branch: { select: { id: true, name: true } },
+        },
+      })
+      : [];
+
+    // Booking.services is a JSON array (no relational service link), so
+    // category info has to be batch-resolved separately — not an `include`.
+    const allServiceIds = new Set<string>();
+    for (const b of bookings) {
+      const lines = Array.isArray(b.services) ? (b.services as any[]) : [];
+      for (const line of lines) if (line?.serviceId) allServiceIds.add(line.serviceId);
+    }
+    const serviceRecords = allServiceIds.size
+      ? await this.prisma.service.findMany({
+        where: { id: { in: Array.from(allServiceIds) } },
+        select: { id: true, name: true, categoryId: true },
+      })
+      : [];
+    const serviceById = new Map(serviceRecords.map((s) => [s.id, s]));
+
+    const statsByUser = new Map<string, {
+      visitCount: number; totalSpend: number; branches: Map<string, string>;
+      firstVisitDate: Date | null; lastVisitDate: Date | null;
+      serviceIds: Set<string>; serviceCategoryIds: Set<string>; serviceNames: Set<string>;
+    }>();
+    for (const b of bookings) {
+      const s = statsByUser.get(b.userId) ?? {
+        visitCount: 0, totalSpend: 0, branches: new Map(),
+        firstVisitDate: null, lastVisitDate: null,
+        serviceIds: new Set(), serviceCategoryIds: new Set(), serviceNames: new Set(),
+      };
+      if (b.branch) s.branches.set(b.branch.id, b.branch.name);
+      if (b.status === 'COMPLETED') {
+        s.visitCount += 1;
+        s.totalSpend += Number(b.totalAmount);
+        if (!s.firstVisitDate || b.bookingDate < s.firstVisitDate) s.firstVisitDate = b.bookingDate;
+        if (!s.lastVisitDate || b.bookingDate > s.lastVisitDate) s.lastVisitDate = b.bookingDate;
+        const lines = Array.isArray(b.services) ? (b.services as any[]) : [];
+        for (const line of lines) {
+          if (!line?.serviceId) continue;
+          const svc = serviceById.get(line.serviceId);
+          s.serviceIds.add(line.serviceId);
+          s.serviceNames.add(svc?.name ?? line.name ?? 'Unknown service');
+          if (svc?.categoryId) s.serviceCategoryIds.add(svc.categoryId);
+        }
+      }
+      statsByUser.set(b.userId, s);
+    }
+
+    const now = new Date();
+    const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
+    let withStats = allMatching.map((u) => {
+      const s = statsByUser.get(u.id);
+      const visitCount = s?.visitCount ?? 0;
+      const totalSpend = s?.totalSpend ?? 0;
+      const averageSpend = visitCount > 0 ? totalSpend / visitCount : 0;
+      const daysSinceLastVisit = s?.lastVisitDate ? Math.floor((now.getTime() - s.lastVisitDate.getTime()) / 86400000) : null;
+
+      return {
+        id: u.id,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        name: [u.firstName, u.lastName].filter(Boolean).join(' '),
+        email: u.email,
+        phone: u.phone,
+        signupSource: u.signupSource,
+        status: u.status,
+        role: 'USER',
+        createdAt: u.createdAt,
+        visitCount,
+        totalSpend,
+        averageSpend,
+        branches: s ? Array.from(s.branches.values()) : [],
+        firstVisitDate: s?.firstVisitDate ?? null,
+        lastVisitDate: s?.lastVisitDate ?? null,
+        daysSinceLastVisit,
+        servicesPurchased: s ? Array.from(s.serviceNames) : [],
+        serviceIds: s ? Array.from(s.serviceIds) : [],
+        serviceCategoryIds: s ? Array.from(s.serviceCategoryIds) : [],
+        lifecycle: classifyCustomerLifecycle({
+          lastVisitDate: s?.lastVisitDate ?? null,
+          completedVisitCount: visitCount,
+          accountCreatedAt: u.createdAt,
+          now,
+          thresholds: lifecycleThresholds,
+        }),
+        value: classifyCustomerValue(totalSpend, valueThresholds),
+      };
+    });
+
+    if (minVisits !== undefined) withStats = withStats.filter((c) => c.visitCount >= minVisits);
+    if (maxVisits !== undefined) withStats = withStats.filter((c) => c.visitCount <= maxVisits);
+    if (minSpend !== undefined) withStats = withStats.filter((c) => c.totalSpend >= minSpend);
+    if (maxSpend !== undefined) withStats = withStats.filter((c) => c.totalSpend <= maxSpend);
+    if (minAvgSpend !== undefined) withStats = withStats.filter((c) => c.averageSpend >= minAvgSpend);
+    if (maxAvgSpend !== undefined) withStats = withStats.filter((c) => c.averageSpend <= maxAvgSpend);
+    if (firstVisitFrom) withStats = withStats.filter((c) => c.firstVisitDate && c.firstVisitDate >= new Date(firstVisitFrom));
+    if (firstVisitTo) withStats = withStats.filter((c) => c.firstVisitDate && c.firstVisitDate <= new Date(firstVisitTo));
+    if (lastVisitFrom) withStats = withStats.filter((c) => c.lastVisitDate && c.lastVisitDate >= new Date(lastVisitFrom));
+    if (lastVisitTo) withStats = withStats.filter((c) => c.lastVisitDate && c.lastVisitDate <= new Date(lastVisitTo));
+    if (daysSinceLastVisitMin !== undefined) withStats = withStats.filter((c) => c.daysSinceLastVisit !== null && c.daysSinceLastVisit >= daysSinceLastVisitMin);
+    if (daysSinceLastVisitMax !== undefined) withStats = withStats.filter((c) => c.daysSinceLastVisit !== null && c.daysSinceLastVisit <= daysSinceLastVisitMax);
+    if (lifecycle) withStats = withStats.filter((c) => c.lifecycle === lifecycle);
+    if (value) withStats = withStats.filter((c) => c.value === value);
+    if (serviceCategoryIds?.length) withStats = withStats.filter((c) => c.serviceCategoryIds.some((id) => serviceCategoryIds.includes(id)));
+    if (serviceIds?.length) withStats = withStats.filter((c) => c.serviceIds.some((id) => serviceIds.includes(id)));
+
+    const total = needsValueFilter ? withStats.length : dbTotal;
+    const data = needsValueFilter ? withStats.slice((page - 1) * limit, (page - 1) * limit + limit) : withStats;
+
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  /** Performance cards for the Users page — computed over the same filtered set findAllCustomerUsers would return, so cards and table always agree. */
+  async getCustomerUsersPerformance(params: Omit<CustomerUsersFilterParams, 'page' | 'limit'>) {
+    const { data } = await this.findAllCustomerUsers({ ...params, page: 1, limit: Number.MAX_SAFE_INTEGER });
+
+    const lifecycleCounts: Record<CustomerLifecycle, number> = { NEVER_VISITED: 0, NEW: 0, ACTIVE: 0, AT_RISK: 0, DORMANT: 0, INACTIVE: 0 };
+    const valueCounts: Record<CustomerValue, number> = { STANDARD: 0, PREMIUM: 0, VIP: 0 };
+    let totalSpend = 0;
+    let totalVisits = 0;
+    for (const c of data) {
+      lifecycleCounts[c.lifecycle as CustomerLifecycle] += 1;
+      valueCounts[c.value as CustomerValue] += 1;
+      totalSpend += c.totalSpend;
+      totalVisits += c.visitCount;
+    }
+
+    return {
+      totalUsers: data.length,
+      newUsers: lifecycleCounts.NEW,
+      activeUsers: lifecycleCounts.ACTIVE,
+      atRiskUsers: lifecycleCounts.AT_RISK,
+      dormantUsers: lifecycleCounts.DORMANT,
+      inactiveUsers: lifecycleCounts.INACTIVE,
+      neverVisitedUsers: lifecycleCounts.NEVER_VISITED,
+      standardValueUsers: valueCounts.STANDARD,
+      premiumUsers: valueCounts.PREMIUM,
+      vipUsers: valueCounts.VIP,
+      totalSpend,
+      averageSpend: data.length > 0 ? totalSpend / data.length : 0,
+      totalVisits,
+    };
+  }
+
+  /** Full profile/history for a single customer User — the drill-down view when an admin clicks a row on the Users page. */
+  async getCustomerUserProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, firstName: true, lastName: true, email: true, phone: true, signupSource: true, createdAt: true },
+    });
+    if (!user) throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
+
+    const bookings = await this.prisma.booking.findMany({
+      where: { userId },
+      orderBy: { bookingDate: 'desc' },
+      include: { branch: { select: { id: true, name: true } } },
+    });
+
+    const allServiceIds = new Set<string>();
+    for (const b of bookings) {
+      const lines = Array.isArray(b.services) ? (b.services as any[]) : [];
+      for (const line of lines) if (line?.serviceId) allServiceIds.add(line.serviceId);
+    }
+    const serviceRecords = allServiceIds.size
+      ? await this.prisma.service.findMany({
+        where: { id: { in: Array.from(allServiceIds) } },
+        select: { id: true, name: true, category: { select: { id: true, name: true } } },
+      })
+      : [];
+    const serviceById = new Map(serviceRecords.map((s) => [s.id, s]));
+
+    const completed = bookings.filter((b) => b.status === 'COMPLETED');
+    const totalSpend = completed.reduce((sum, b) => sum + Number(b.totalAmount), 0);
+    const visitCount = completed.length;
+    const firstVisitDate = completed.length ? completed[completed.length - 1].bookingDate : null;
+    const lastVisitDate = completed.length ? completed[0].bookingDate : null;
+    const branchesVisited = Array.from(
+      new Map(bookings.filter((b) => b.branch).map((b) => [b.branch!.id, b.branch!.name])).entries(),
+    ).map(([id, name]) => ({ id, name }));
+
+    const { value: valueThresholds, lifecycle: lifecycleThresholds } = await getCustomerClassificationThresholds(this.prisma);
+
+    return {
+      customer: user,
+      firstVisitDate,
+      lastVisitDate,
+      visitCount,
+      totalSpend,
+      averageSpend: visitCount > 0 ? totalSpend / visitCount : 0,
+      branchesVisited,
+      lifecycle: classifyCustomerLifecycle({
+        lastVisitDate,
+        completedVisitCount: visitCount,
+        accountCreatedAt: user.createdAt,
+        thresholds: lifecycleThresholds,
+      }),
+      value: classifyCustomerValue(totalSpend, valueThresholds),
+      bookingHistory: bookings.map((b) => {
+        const lines = Array.isArray(b.services) ? (b.services as any[]) : [];
+        return {
+          id: b.id,
+          bookingDate: b.bookingDate,
+          bookingTime: b.bookingTime,
+          bookingType: b.bookingType,
+          status: b.status,
+          totalAmount: Number(b.totalAmount),
+          branch: b.branch,
+          services: lines.map((line) => {
+            const svc = line?.serviceId ? serviceById.get(line.serviceId) : undefined;
+            return { name: svc?.name ?? line?.name ?? 'Unknown service', category: svc?.category?.name ?? null, price: Number(line?.price ?? 0), quantity: line?.quantity ?? 1 };
+          }),
+        };
+      }),
     };
   }
 

@@ -21,8 +21,11 @@ import {
 } from '@nestjs/swagger';
 import { JobPostingStatus, UserRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Permission } from '../auth/decorators/permission.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { CloseJobPostingDto } from './dto/close-job-posting.dto';
 import { CreateJobDto } from './dto/create-job.dto';
 import { QueryJobsDto } from './dto/query-jobs.dto';
@@ -32,7 +35,7 @@ import { JobsService } from './jobs.service';
 @ApiTags('Admin - Jobs')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/jobs')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminJobsController {
   constructor(private readonly jobsService: JobsService) { }
@@ -41,7 +44,7 @@ export class AdminJobsController {
   @ApiOperation({
     summary: 'Create a job posting',
     description:
-        'Creates a new job posting. keep as-is if`status` stays the DTO\'s external input name(recommended, per the earlier note — don\'t break existing callers), since the description is describing the DTO field, not the DB field',
+      'Creates a new job posting. keep as-is if`status` stays the DTO\'s external input name(recommended, per the earlier note — don\'t break existing callers), since the description is describing the DTO field, not the DB field',
   })
   @ApiResponse({
     status: 201,
@@ -68,6 +71,7 @@ export class AdminJobsController {
       },
     },
   })
+  @Permission(PERMISSIONS.JOBS_CREATE)
   async create(@Body() dto: CreateJobDto) {
     const data = await this.jobsService.create(dto);
     return {
@@ -103,6 +107,7 @@ export class AdminJobsController {
       },
     },
   })
+  @Permission(PERMISSIONS.JOBS_READ)
   async findAll(@Query() query: QueryJobsDto) {
     const data = await this.jobsService.findAllAdmin(query);
     return {
@@ -120,6 +125,7 @@ export class AdminJobsController {
     description: 'Job posting retrieved successfully',
   })
   @ApiResponse({ status: 404, description: 'Job posting not found' })
+  @Permission(PERMISSIONS.JOBS_READ)
   async findOne(@Param('id') id: string) {
     const data = await this.jobsService.findOneAdmin(id);
     return {
@@ -137,6 +143,7 @@ export class AdminJobsController {
   @ApiParam({ name: 'id', description: 'Job posting ID' })
   @ApiResponse({ status: 200, description: 'Job posting updated successfully' })
   @ApiResponse({ status: 404, description: 'Job posting not found' })
+  @Permission(PERMISSIONS.JOBS_UPDATE)
   async update(@Param('id') id: string, @Body() dto: UpdateJobDto) {
     const data = await this.jobsService.update(id, dto);
     return {
@@ -156,6 +163,7 @@ export class AdminJobsController {
   @ApiResponse({ status: 200, description: 'Job posting closed successfully' })
   @ApiResponse({ status: 400, description: 'Active candidates remain and override was not set, or already closed/archived' })
   @ApiResponse({ status: 404, description: 'Job posting not found' })
+  @Permission(PERMISSIONS.JOBS_TOGGLE)
   async close(@Param('id') id: string, @Body() dto: CloseJobPostingDto) {
     const data = await this.jobsService.close(id, dto);
     return {
@@ -188,6 +196,7 @@ export class AdminJobsController {
   })
   @ApiResponse({ status: 404, description: 'Job posting not found' })
   // in AdminJobsController.toggle()
+  @Permission(PERMISSIONS.JOBS_TOGGLE)
   async toggle(@Param('id') id: string) {
     const data = await this.jobsService.toggle(id);
     return {
@@ -205,6 +214,7 @@ export class AdminJobsController {
   @ApiParam({ name: 'id', description: 'Job posting ID' })
   @ApiResponse({ status: 200, description: 'Job posting deleted successfully' })
   @ApiResponse({ status: 404, description: 'Job posting not found' })
+  @Permission(PERMISSIONS.JOBS_DELETE)
   async remove(@Param('id') id: string) {
     await this.jobsService.remove(id);
     return {
