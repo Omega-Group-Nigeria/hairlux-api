@@ -38,6 +38,15 @@ export class PayrollReleaseService {
         });
     }
 
+    /** Dev Feedback Round 8: flat, admin-configurable rate replacing the old progressive PAYE-band calculation -- see PayrollSettings.taxRate's own schema comment. */
+    async setTaxRate(rate: number) {
+        const settings = await this.getSettings();
+        return this.prisma.payrollSettings.update({
+            where: { id: settings.id },
+            data: { taxRate: rate },
+        });
+    }
+
     /**
      * A formal admin sign-off on an already-generated period — a review
      * checkpoint distinct from the wallet crediting, which already happened

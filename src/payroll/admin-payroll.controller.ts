@@ -268,6 +268,14 @@ export class AdminPayrollController {
         return { success: true, message: 'Pension rate updated successfully', data };
     }
 
+    @Patch('settings/tax-rate')
+    @Permission(PERMISSIONS.PAYROLL_MANAGE_SETTINGS)
+    @ApiOperation({ summary: 'Update the flat tax rate used by the payroll engine -- Dev Feedback Round 8, replacing the old progressive PAYE-band calculation' })
+    async setTaxRate(@Body('rate') rate: number) {
+        const data = await this.releaseService.setTaxRate(rate);
+        return { success: true, message: 'Tax rate updated successfully', data };
+    }
+
     // -- Withdrawals --------------------------------------------------------
 
     @Get('withdrawals')
