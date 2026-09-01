@@ -2,7 +2,6 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
-import { calculateMonthlyPaye } from './utils/paye-calculator';
 import { PayrollAuditService } from './payroll-audit.service';
 import { PayrollSalaryCalculatorService } from './payroll-salary-calculator.service';
 import { SystemAuditService } from '../common/services/system-audit.service';
@@ -252,6 +251,15 @@ export class PayrollEngineService {
         ]);
 
         const latePenaltyTotal = Number(lateAgg._sum.latePenaltyAmount ?? 0);
+        // Dev Feedback Round 8: absentFeeAmount no longer affects payroll
+        // at all (see computePayslipFigures's own comment on why) -- kept
+        // as its own, separately-labeled field rather than folded into
+        // "total" alongside latePenaltyTotal, so a staff member browsing
+        // this "current fines" screen isn't shown a number that overstates
+        // what will actually be deducted from their next payslip. The
+        // individual absent-status records themselves stay in the list
+        // below for transparency (still real, still worth knowing about),
+        // just without a misleading combined total attached.
         const absentFeeTotal = Number(absentFeeAgg._sum.absentFeeAmount ?? 0);
 
         return {
@@ -261,7 +269,7 @@ export class PayrollEngineService {
             isDraftPeriod: !!draftPeriod,
             latePenaltyTotal,
             absentFeeTotal,
-            total: latePenaltyTotal + absentFeeTotal,
+            total: latePenaltyTotal,
             records,
         };
     }
@@ -292,11 +300,12 @@ export class PayrollEngineService {
 
         const settings = await this.prisma.payrollSettings.findFirst();
         const pensionRate = settings ? Number(settings.pensionRate) : 0.08;
+        const taxRate = settings ? Number(settings.taxRate) : 0;
         const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
         const createdPayslips = [];
 
         for (const staff of activeStaff) {
-            const { payslipData, adjustments } = await this.computePayslipFigures(staff, period, periodId, pensionRate, cutoffDay);
+            const { payslipData, adjustments } = await this.computePayslipFigures(staff, period, periodId, pensionRate, taxRate, cutoffDay);
 
             // Human-readable, unique reference -- assigned once, at
             // creation, never regenerated on a later re-run of the same
@@ -427,6 +436,7 @@ export class PayrollEngineService {
         period: { id: string; label: string; periodStart: Date; periodEnd: Date },
         periodId: string,
         pensionRate: number,
+        taxRate: number,
         cutoffDay: number,
     ) {
         const baseSalary = Number(staff.currentBaseSalary ?? 0);
@@ -471,7 +481,18 @@ export class PayrollEngineService {
         ]);
 
         const latePenaltyDeduction = Number(lateAgg._sum.latePenaltyAmount ?? 0);
-        const attendanceDeduction = Number(absentFeeAgg._sum.absentFeeAmount ?? 0);
+        // Dev Feedback Round 8: absentFeeAmount is calculated per-minute
+        // (AttendanceService.calculateAbsentFee multiplies the entire
+        // expected shift duration in minutes by the per-minute late-
+        // penalty rate), which is the right mechanism for lateness while
+        // still present, but wildly wrong applied to a full absent day --
+        // it was also double-counting regardless, since an absence is
+        // already fully priced into calc.salaryEarned below via fewer
+        // payableWorkdays. No longer subtracted from pay; the field
+        // itself is left in place (still shown informationally on the
+        // staff portal's attendance history) rather than touching that
+        // separate, correctly-scoped display.
+        const attendanceDeduction = 0;
         const commissionEarned = calc.commissionEarned;
         // No more "withheld in the first month" concept -- under the
         // new model, a period that falls entirely within the salary
@@ -500,10 +521,26 @@ export class PayrollEngineService {
 
         const overtimeAmount = 0; // no overtime-rate tracking exists yet — always 0 until that's built
 
-        const grossPay = baseSalary + allowances + overtimeAmount + commissionPaid + bonusTotal + calc.extraWorkDayEarnings;
-        const pensionDeduction = (baseSalary + allowances) * pensionRate;
+        // Dev Feedback Round 8: this used to add the raw, un-prorated
+        // baseSalary regardless of attendance -- calc.salaryEarned
+        // (dailyRate * payableWorkdays) is the actual, correctly-prorated
+        // figure the whole PayrollSalaryCalculatorService exists to
+        // compute, but it was never wired in here at all, only stored on
+        // the payslip afterward for display. calc.extraWorkDayEarnings
+        // is NOT added separately -- it's already included inside
+        // salaryEarned (payableWorkdays itself adds approvedExtraWorkdays
+        // before multiplying by dailyRate), so adding it again here would
+        // double-count that portion, the same mistake as attendanceDeduction
+        // above just for the opposite (extra, not absent) direction.
+        const grossPay = calc.salaryEarned + allowances + overtimeAmount + commissionPaid + bonusTotal;
+        const pensionDeduction = (calc.salaryEarned + allowances) * pensionRate;
         const taxableIncome = grossPay - pensionDeduction;
-        const taxDeduction = calculateMonthlyPaye(taxableIncome);
+        // Dev Feedback Round 8: replaced the progressive PAYE-band
+        // calculation with a flat, admin-configurable rate on the same
+        // taxableIncome base (gross pay minus pension) -- see
+        // PayrollSettings.taxRate's own schema comment for why it
+        // defaults to 0 rather than a guessed percentage.
+        const taxDeduction = Math.max(0, taxableIncome) * taxRate;
 
         const totalDeductions =
             attendanceDeduction + latePenaltyDeduction + fineTotal + loanRepayment + taxDeduction + pensionDeduction + otherDeductionTotal;
@@ -577,10 +614,11 @@ export class PayrollEngineService {
 
         const settings = await this.prisma.payrollSettings.findFirst();
         const pensionRate = settings ? Number(settings.pensionRate) : 0.08;
+        const taxRate = settings ? Number(settings.taxRate) : 0;
         const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
 
         const { payslipData, adjustments } = await this.computePayslipFigures(
-            original.staff, original.payrollPeriod, original.payrollPeriodId, pensionRate, cutoffDay,
+            original.staff, original.payrollPeriod, original.payrollPeriodId, pensionRate, taxRate, cutoffDay,
         );
 
         // How many times has this (period, staff) pair already been

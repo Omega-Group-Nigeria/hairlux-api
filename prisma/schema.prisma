@@ -2859,6 +2859,13 @@ model PayrollSettings {
   // the Nigeria Tax Act 2025 (effective Jan 2026) — configurable here in
   // case Hairlux's accountant determines a different treatment applies.
   pensionRate   Decimal  @default(0.08) @map("pension_rate") @db.Decimal(5, 4)
+  // Dev Feedback Round 8: replaces the progressive Nigeria PAYE band
+  // calculation (src/payroll/utils/paye-calculator.ts) with a single,
+  // admin-configurable flat rate -- percentage as decimal, e.g. 0.075 =
+  // 7.5%. Defaults to 0 (no tax deducted) rather than a guessed
+  // percentage, since this is a real financial calculation and Hairlux's
+  // accountant should be the one setting it deliberately.
+  taxRate       Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4)
   // Payroll Developer Implementation Guide, section 9: "Apply the
   // configured 15th cutoff rule" -- the guide's own wording implies this
   // is a setting, not a hardcoded constant, even though every example in
