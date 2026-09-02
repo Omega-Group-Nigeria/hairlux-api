@@ -609,21 +609,42 @@ export class PayrollEngineService {
         const overtimeAmount = 0; // no overtime-rate tracking exists yet — always 0 until that's built
 
    
-        const entitledSalary = (calc.dailyRate !== null && calc.applicableScheduledWorkdays !== null)
-            ? calc.dailyRate * calc.applicableScheduledWorkdays
+        // Dev Feedback Round 9: reverted -- entitled salary is now
+        // dailyRate * payableWorkdays (payableWorkdays already reflects
+        // the absence reduction: scheduledWorkdays - missedWorkdays +
+        // approvedExtraWorkdays), which is the exact same formula
+        // calc.salaryEarned itself uses. Gross pay, tax, and pension are
+        // therefore back to being computed on what was actually worked,
+        // not on the full scheduled-workday entitlement -- "we only want
+        // to pay for days worked." calc.dailyRate/payableWorkdays are
+        // both null for COMMISSION-only staff, so entitledSalary
+        // correctly resolves to 0 there -- commission has no separate
+        // "entitled vs earned" distinction, since it's transaction-based
+        // rather than day-based; whatever was earned is what's entitled.
+        const entitledSalary = (calc.dailyRate !== null && calc.payableWorkdays !== null)
+            ? calc.dailyRate * calc.payableWorkdays
             : 0;
-      
+        // entitledSalary and calc.salaryEarned are now the same formula,
+        // so this is always exactly 0 -- kept as a real, computed field
+        // (rather than deleted) so a future re-divergence of the two
+        // formulas doesn't silently stop being tracked here; the payslip
+        // PDF and frontend correction-comparison table already only
+        // display a deduction line when its value is > 0, so a
+        // permanent 0 here doesn't show up anywhere on its own.
         const attendanceDeduction = entitledSalary - calc.salaryEarned;
 
         const grossPay = entitledSalary + allowances + overtimeAmount + commissionPaid + bonusTotal;
+        // Dev Feedback Round 9: tax is now computed first, directly on
+        // the full gross pay -- previously pension was deducted first to
+        // arrive at a reduced "taxable income" base, with tax computed
+        // on THAT smaller amount (the common "pension is tax-deductible"
+        // pattern). Reversed on request: tax no longer gets a pension-
+        // sized discount before it's calculated. Pension's own base
+        // (entitledSalary + allowances) is unchanged -- it was never
+        // computed from a post-tax figure either way, so reordering
+        // which one is "first" only actually changes tax's base here.
+        const taxDeduction = Math.max(0, grossPay) * taxRate;
         const pensionDeduction = (entitledSalary + allowances) * pensionRate;
-        const taxableIncome = grossPay - pensionDeduction;
-        // Dev Feedback Round 8: replaced the progressive PAYE-band
-        // calculation with a flat, admin-configurable rate on the same
-        // taxableIncome base (gross pay minus pension) -- see
-        // PayrollSettings.taxRate's own schema comment for why it
-        // defaults to 0 rather than a guessed percentage.
-        const taxDeduction = Math.max(0, taxableIncome) * taxRate;
 
         const totalDeductions =
             attendanceDeduction + latePenaltyDeduction + fineTotal + loanRepayment + taxDeduction + pensionDeduction + otherDeductionTotal;
