@@ -3,15 +3,13 @@ import { PayoutRequestStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 interface PaystackTransferApprovalPayload {
+  event?: string;
   reference?: string;
-  amount?: number;
-  recipient?: string;
-  source?: string;
-  reason?: string;
+  amount?: number | string;
   data?: {
     reference?: string;
-    amount?: number;
-    recipient?: string;
+    amount?: number | string;
+    recipient?: any;
   };
 }
 
@@ -19,16 +17,24 @@ interface PaystackTransferApprovalPayload {
 export class PaystackTransferApprovalService {
   private readonly logger = new Logger(PaystackTransferApprovalService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async validateTransferApproval(
     payload: PaystackTransferApprovalPayload,
   ): Promise<boolean> {
-    const reference = payload.reference ?? payload.data?.reference;
-    const amountKobo = payload.amount ?? payload.data?.amount;
+    // 1. Extract reference and amount from either root or nested data
+    const rawData = payload.data ?? payload;
+    const reference = rawData.reference ?? payload.reference;
+    const rawAmount = rawData.amount ?? payload.amount;
 
-    if (!reference || amountKobo == null) {
-      this.logger.warn('Paystack transfer approval missing reference or amount');
+    const amountKobo = rawAmount != null ? Number(rawAmount) : null;
+
+    if (!reference || amountKobo == null || isNaN(amountKobo)) {
+      this.logger.warn(
+        `Paystack transfer approval missing reference or amount. Received: ${JSON.stringify(
+          payload,
+        )}`,
+      );
       return false;
     }
 

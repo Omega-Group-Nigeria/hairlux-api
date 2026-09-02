@@ -26,6 +26,14 @@ import { FinanceModule } from '../finance/finance.module';
     BullModule.registerQueue(
       { name: 'paystack-webhooks' },
       { name: 'monnify-webhooks' },
+      // Dev Feedback Round 9: Paystack only supports ONE general Webhook
+      // URL per mode -- registered in a different module (the Beautician
+      // payout module) for its own transfer-webhook processor, but the
+      // SAME underlying Redis-backed queue can be injected here too, so
+      // this controller can forward transfer.* events there instead of
+      // silently dropping them if this deposit endpoint happens to be
+      // the one URL actually configured on the dashboard.
+      { name: 'paystack-transfer-webhooks' },
     ),
   ],
   providers: [

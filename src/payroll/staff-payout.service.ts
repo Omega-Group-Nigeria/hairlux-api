@@ -53,7 +53,7 @@ export class StaffPayoutService {
             throw new BadRequestException('No bank account on file — add one before requesting a withdrawal');
         }
 
-        const transferReference = `STAFF-PAYOUT-${randomBytes(8).toString('hex')}`;
+        const transferReference = `staff-payout-${randomBytes(8).toString('hex')}`;
 
         const payoutRequest = await this.prisma.$transaction(async (tx) => {
             // Locks this staff member's wallet row for the rest of this
@@ -99,27 +99,62 @@ export class StaffPayoutService {
         // concurrent request's pendingAmount read -- everything from here
         // is a normal, unlocked external call.
         try {
-            const recipient = await this.paystackService.createTransferRecipient({
-                name: bankAccount.accountName,
-                accountNumber: bankAccount.accountNumber,
-                bankCode: bankAccount.bankCode,
-            });
+            // Dev Feedback Round 9: reuse the recipient created once at
+            // bank-account setup/approval time instead of creating a new
+            // one on every withdrawal (the old behavior) -- matching the
+            // pattern already proven in the Beautician payout module.
+            // Falls back to creating one on demand for a legacy account
+            // (or one where creation failed non-fatally at setup time),
+            // and persists it back onto the account so this is the LAST
+            // time that particular account ever needs the fallback.
+            let recipientCode = bankAccount.paystackRecipientCode;
+            if (!recipientCode) {
+                const recipient = await this.paystackService.createTransferRecipient({
+                    name: bankAccount.accountName,
+                    accountNumber: bankAccount.accountNumber,
+                    bankCode: bankAccount.bankCode,
+                });
+                recipientCode = recipient.recipient_code;
+                await this.prisma.staffBankAccount.update({
+                    where: { staffId },
+                    data: { paystackRecipientCode: recipientCode },
+                });
+            }
 
             const transfer = await this.paystackService.initiateTransfer({
                 amount,
-                recipientCode: recipient.recipient_code,
+                recipientCode,
                 reference: transferReference,
                 reason: `Hairlux staff salary withdrawal ${payoutRequest.id}`,
             });
 
             return this.handleTransferOutcome(payoutRequest.id, transferReference, transfer);
         } catch (error) {
+            // Dev Feedback Round 9: this used to store/log the real
+            // Paystack error (error.message, since PaystackService's own
+            // methods already throw BadRequestException carrying
+            // Paystack's actual message -- confirmed correct as of the
+            // "requires an account" fix) but then discarded it in favor
+            // of a hardcoded generic string on the exception actually
+            // thrown back to the caller -- so the specific reason a
+            // transfer was rejected was captured in rejectionReason and
+            // the log, but never reached whoever was watching the
+            // request. error?.response?.data?.message is also checked in
+            // case a raw axios error somehow reaches here un-wrapped by
+            // PaystackService's own handling.
+            const paystackErrorMessage =
+                (error as { response?: { data?: { message?: string } } })?.response?.data?.message
+                ?? (error instanceof Error ? error.message : 'Unknown Paystack error');
+
             await this.prisma.staffPayoutRequest.update({
                 where: { id: payoutRequest.id },
-                data: { status: 'FAILED', rejectionReason: error instanceof Error ? error.message : 'Transfer initiation failed' },
+                data: { status: 'FAILED', rejectionReason: paystackErrorMessage },
             });
-            this.logger.error(`Staff payout failed for ${payoutRequest.id}: ${error instanceof Error ? error.message : String(error)}`);
-            throw new BadRequestException('Unable to initiate withdrawal transfer. Please try again later.');
+            this.logger.error(
+                `Staff payout failed for ${payoutRequest.id}: ${paystackErrorMessage}`,
+                error instanceof Error ? error.stack : undefined,
+            );
+            throw new BadRequestException(`Payout initiation failed: ${paystackErrorMessage}`);
         }
     }
 
@@ -297,12 +332,36 @@ export class StaffPayoutService {
  * status) against staffPayoutRequest instead of the Beautician
  * payoutRequest table.
  */
-    async validateTransferApproval(payload: { reference?: string; amount?: number; data?: { reference?: string; amount?: number } }): Promise<boolean> {
-        const reference = payload.reference ?? payload.data?.reference;
-        const amountKobo = payload.amount ?? payload.data?.amount;
+    /**
+ * Payload shape corrected against an actual live payload (confirmed
+ * via logging the raw body): neither payload.reference nor
+ * payload.data.reference exist -- Paystack wraps the approval request
+ * as { event, data: { details: { body: {...the original /transfer
+ * request... } }, transfers: [{...the transfer object, including its
+ * reference/amount/status...}] } }. transfers[0] is used here rather
+ * than details.body, since it's the more canonical "the transfer
+ * actually being approved" representation and still works if this
+ * ever needs to generalize to a multi-transfer approval later;
+ * details.body.reference/amount would work equally well for the
+ * single-transfer case this handles today.
+ */
+    async validateTransferApproval(payload: {
+        reference?: string;
+        amount?: number;
+        data?: {
+            reference?: string;
+            amount?: number;
+            transfers?: { reference?: string; amount?: number }[];
+            details?: { body?: { reference?: string; amount?: number } };
+        };
+    }): Promise<boolean> {
+        const fromTransfer = payload.data?.transfers?.[0];
+        const fromBody = payload.data?.details?.body;
+        const reference = payload.reference ?? payload.data?.reference ?? fromTransfer?.reference ?? fromBody?.reference;
+        const amountKobo = payload.amount ?? payload.data?.amount ?? fromTransfer?.amount ?? fromBody?.amount;
 
         if (!reference || amountKobo == null) {
-            this.logger.warn('Paystack transfer approval missing reference or amount');
+            this.logger.warn(`Paystack transfer approval missing reference or amount. Received: ${JSON.stringify(payload)}`);
             return false;
         }
 

@@ -130,6 +130,14 @@ export class CreateStaffDto {
   @IsDateString()
   employmentStartDate?: string;
 
+  @ApiPropertyOptional({
+    example: '2026-03-01',
+    description: 'The date this person actually became staff -- required for the SALARY_TO_COMMISSION 15th-cutoff rule and mid-period-hire proration elsewhere in payroll. Distinct from employmentStartDate above, which only feeds StaffEmploymentHistory.',
+  })
+  @IsOptional()
+  @IsDateString()
+  hireDate?: string;
+
   @ApiPropertyOptional({ example: 'Hired as branch launch lead' })
   @IsOptional()
   @IsString()

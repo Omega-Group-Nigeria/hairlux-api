@@ -1,3 +1,5 @@
+import { InjectQueue } from '@nestjs/bull';
+import type { RawBodyRequest } from '@nestjs/common';
 import {
   Controller,
   Headers,
@@ -8,14 +10,13 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Queue } from 'bull';
 import type { Request, Response } from 'express';
-import type { RawBodyRequest } from '@nestjs/common';
 import { Public } from '../../auth/decorators/public.decorator';
 import { PaystackService } from '../../payment/paystack.service';
+import { StaffPayoutService } from '../../payroll/staff-payout.service';
 import { PaystackTransferApprovalService } from './services/paystack-transfer-approval.service';
 import { StaffPayoutService } from '../../payroll/staff-payout.service';
 
@@ -30,6 +31,11 @@ export class PaystackTransferWebhookController {
     private readonly staffPayoutService: StaffPayoutService,
     @InjectQueue('paystack-transfer-webhooks')
     private readonly transferWebhookQueue: Queue,
+    // Dev Feedback Round 9: same underlying Redis-backed queue already
+    // registered in WalletModule -- injectable here too, for the
+    // symmetric charge.* forwarding above.
+    @InjectQueue('paystack-webhooks')
+    private readonly depositWebhookQueue: Queue,
   ) { }
 
   @Public()
@@ -52,16 +58,30 @@ export class PaystackTransferWebhookController {
       return res.status(HttpStatus.BAD_REQUEST).json({});
     }
 
-    const body = req.body as { reference?: string; data?: { reference?: string } };
-    const reference = body.reference ?? body.data?.reference;
+    const body = req.body as {
+      reference?: string;
+      data?: {
+        reference?: string;
+        transfers?: { reference?: string }[];
+        details?: { body?: { reference?: string } };
+      };
+    };
+    // Dev Feedback Round 9: confirmed against a real, logged approval
+    // payload that neither body.reference nor body.data.reference exist
+    // -- the reference is nested three levels deep, at either
+    // data.details.body.reference (the original /transfer request, as
+    // echoed back) or data.transfers[0].reference (the transfer object
+    // itself). Same fix applied to StaffPayoutService.validateTransferApproval's
+    // own extraction. Before this fix, reference always came back
+    // undefined here, so EVERY approval request -- staff or beautician --
+    // silently fell through to the Beautician validator by default,
+    // which is why a staff-payout-... reference was showing up in that
+    // service's own "missing reference" warning.
+    const reference = body.reference ?? body.data?.reference ?? body.data?.transfers?.[0]?.reference ?? body.data?.details?.body?.reference;
 
     // Dev Feedback Round 9: Paystack only supports ONE Transfer Approval
-    // URL per mode, so Staff Payout has to share this endpoint with
-    // Beautician payouts -- routed by reference prefix (Staff Payout's
-    // own STAFF-PAYOUT-... series) so each system's approval rules stay
-    // entirely self-contained; Beautician's own validateTransferApproval
-    // is untouched and still owns everything else.
-    const approved = reference?.startsWith('STAFF-PAYOUT-')
+
+    const approved = reference?.startsWith('staff-payout-')
       ? await this.staffPayoutService.validateTransferApproval(req.body)
       : await this.transferApprovalService.validateTransferApproval(req.body);
 
@@ -96,6 +116,28 @@ export class PaystackTransferWebhookController {
 
     const body = req.body as { event?: string; data?: Record<string, unknown> };
     const event = body?.event ?? '';
+
+    // Dev Feedback Round 9: symmetric to the same fix on the deposit
+    // webhook endpoint (WalletController.handleWebhook) -- Paystack only
+    // supports ONE general Webhook URL per mode, so whichever single URL
+    // ends up registered on the dashboard needs to correctly route BOTH
+    // event families rather than silently dropping whichever one it
+    // wasn't originally built for.
+    if (event.startsWith('charge.')) {
+      try {
+        await this.depositWebhookQueue.add('deposit-webhook', body, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        });
+        return { status: 'queued' };
+      } catch (error) {
+        this.logger.error(
+          'Failed to queue Paystack deposit webhook (forwarded from the transfer endpoint)',
+          error instanceof Error ? error.stack : String(error),
+        );
+        return { status: 'queued_with_error' };
+      }
+    }
 
     if (!event.startsWith('transfer.')) {
       return { status: 'ignored', event };
