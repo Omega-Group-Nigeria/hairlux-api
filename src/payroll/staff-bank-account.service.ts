@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { PaystackService } from '../payment/paystack.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { SubmitBankAccountDto } from './dto/submit-bank-account.dto';
 import { accountNameMatchesProfile } from './utils/account-name-match.util';
 
@@ -59,6 +59,18 @@ export class StaffBankAccountService {
         const existing = await this.prisma.staffBankAccount.findUnique({ where: { staffId } });
 
         if (!existing) {
+            let paystackRecipientCode: string | null = null;
+            try {
+                const recipient = await this.paystackService.createTransferRecipient({
+                    name: resolved.account_name,
+                    accountNumber: dto.accountNumber,
+                    bankCode: dto.bankCode,
+                });
+                paystackRecipientCode = recipient.recipient_code;
+            } catch {
+                // Non-fatal -- see comment above.
+            }
+
             return this.prisma.staffBankAccount.create({
                 data: {
                     staffId,
@@ -68,6 +80,7 @@ export class StaffBankAccountService {
                     accountName: resolved.account_name,
                     verified: true,
                     verifiedAt: new Date(),
+                    paystackRecipientCode,
                 },
             });
         }
@@ -100,15 +113,35 @@ export class StaffBankAccountService {
     }
 
     /**
-     * Admin sign-off on a pending change. The account itself was already
-     * verified via Paystack at submission time (that's where
-     * pendingAccountName came from) — this step is purely the "not
-     * editable without admin consent" gate, not a re-verification.
-     */
+ * Admin sign-off on a pending change. The account itself was already
+ * verified via Paystack at submission time (that's where
+ * pendingAccountName came from) — this step is purely the "not
+ * editable without admin consent" gate, not a re-verification.
+ */
     async approveChange(staffId: string) {
         const account = await this.prisma.staffBankAccount.findUnique({ where: { staffId } });
         if (!account) throw new NotFoundException('Bank account not found');
         if (!account.pendingRequestedAt) throw new BadRequestException('No pending change to approve');
+
+        // Dev Feedback Round 9: the account number is changing, so the
+        // OLD paystackRecipientCode is for the wrong destination account
+        // and can't be reused -- a fresh recipient has to be created for
+        // the newly-approved details, same non-fatal-on-failure handling
+        // as first-time setup (the old code is simply left in place if
+        // this fails, so a Paystack hiccup here can't block the approval
+        // itself; requestWithdrawal's own fallback recovers from a stale
+        // code the same way it recovers from a missing one).
+        let paystackRecipientCode = account.paystackRecipientCode;
+        try {
+            const recipient = await this.paystackService.createTransferRecipient({
+                name: account.pendingAccountName!,
+                accountNumber: account.pendingAccountNumber!,
+                bankCode: account.pendingBankCode!,
+            });
+            paystackRecipientCode = recipient.recipient_code;
+        } catch {
+            // Non-fatal -- see comment above.
+        }
 
         return this.prisma.staffBankAccount.update({
             where: { staffId },
@@ -119,6 +152,7 @@ export class StaffBankAccountService {
                 accountName: account.pendingAccountName!,
                 verified: true,
                 verifiedAt: new Date(),
+                paystackRecipientCode,
                 pendingBankCode: null,
                 pendingBankName: null,
                 pendingAccountNumber: null,
