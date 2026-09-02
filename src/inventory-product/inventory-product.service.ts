@@ -6,7 +6,16 @@ import { UpsertInventoryProductDto } from './dto/upsert-inventory-product.dto';
 export class InventoryProductService {
     constructor(private readonly prisma: PrismaService) { }
 
-    async findAll(filters: { search?: string; category?: string; activeOnly?: boolean }) {
+    /**
+ * Dev Feedback Round 9, item #10: added vendorId and noVendor on top
+ * of the existing search/category/activeOnly -- noVendor in
+ * particular surfaces exactly the products the vendor-auto-pick
+ * feature (Round 8) can't help with, since it only fires when a
+ * product has exactly one vendor attached; this makes "which
+ * products need a vendor attached" a filterable, findable list
+ * instead of something only noticed one edit-form-open at a time.
+ */
+    async findAll(filters: { search?: string; category?: string; activeOnly?: boolean; vendorId?: string; noVendor?: boolean }) {
         return this.prisma.inventoryProduct.findMany({
             where: {
                 ...(filters.search && {
@@ -22,6 +31,8 @@ export class InventoryProductService {
                 // same as the equality check did before the type change.
                 ...(filters.category && { category: { has: filters.category as any } }),
                 ...(filters.activeOnly && { isActive: true }),
+                ...(filters.vendorId && { suppliers: { some: { vendorId: filters.vendorId } } }),
+                ...(filters.noVendor && { suppliers: { none: {} } }),
             },
             include: {
                 suppliers: { include: { vendor: { select: { id: true, name: true, type: true } } } },

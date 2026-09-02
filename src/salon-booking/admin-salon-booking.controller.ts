@@ -47,8 +47,9 @@ export class AdminSalonBookingController {
         @Query('branchId') branchId: string,
         @Query('subtotal') subtotal: string,
         @Query('customerId') customerId?: string,
+        @Query('customerPhone') customerPhone?: string,
     ) {
-        const data = await this.salonBookingService.previewDiscount(code, branchId, customerId, Number(subtotal));
+        const data = await this.salonBookingService.previewDiscount(code, branchId, customerId, Number(subtotal), customerPhone);
         return { success: true, message: 'Discount is valid', data };
     }
     @Get()

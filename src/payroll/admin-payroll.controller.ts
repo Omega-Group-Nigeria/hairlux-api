@@ -12,6 +12,7 @@ import { CreatePayrollAdjustmentDto } from './dto/create-payroll-adjustment.dto'
 import { CorrectPayrollAdjustmentDto } from './dto/correct-payroll-adjustment.dto';
 import { RequestCorrectionDto } from './dto/request-correction.dto';
 import { CorrectPayslipDto } from './dto/correct-payslip.dto';
+import { RecalculateStaffPayslipDto } from './dto/recalculate-staff-payslip.dto';
 import { PayrollAuditService } from './payroll-audit.service';
 import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
 import { SetCompensationDto } from './dto/set-compensation.dto';
@@ -176,6 +177,50 @@ export class AdminPayrollController {
         return { success: true, message: 'Payroll period sent back for correction', data };
     }
 
+    @Get('periods/:id/staff/:staffId/recalculate-preview')
+    @Permission(PERMISSIONS.PAYROLL_CORRECT)
+    @ApiOperation({
+        summary: 'Preview a staff member\u2019s recalculation without saving anything',
+        description: 'Dev Feedback Round 9: returns current vs. recalculated figures side by side, so the admin can compare before deciding what (if anything) to override on the real recalculate call.',
+    })
+    @ApiParam({ name: 'id' })
+    @ApiParam({ name: 'staffId' })
+    async previewRecalculateStaffPayslip(@Param('id', ParseUUIDPipe) id: string, @Param('staffId', ParseUUIDPipe) staffId: string) {
+        const data = await this.engineService.previewRecalculationForStaff(id, staffId);
+        return { success: true, message: 'Retrieved successfully', data };
+    }
+
+    @Patch('periods/:id/staff/:staffId/recalculate')
+    @Permission(PERMISSIONS.PAYROLL_CORRECT)
+    @ApiOperation({
+        summary: 'Recalculate one staff member\u2019s payslip within an AWAITING_RELEASE period, without reopening the whole period',
+        description: 'Dev Feedback Round 8/9: the individual counterpart to request-correction above -- fixes just this one staff member\u2019s still-DRAFT payslip in place, leaving every other payslip and the period\u2019s own status untouched. Reconciles the wallet credit for the difference, same as a post-release correction does.',
+    })
+    @ApiParam({ name: 'id' })
+    @ApiParam({ name: 'staffId' })
+    async recalculateStaffPayslip(
+        @Req() req: any,
+        @Param('id', ParseUUIDPipe) id: string,
+        @Param('staffId', ParseUUIDPipe) staffId: string,
+        @Body() dto: RecalculateStaffPayslipDto,
+    ) {
+        const actor = await this.staffService.findByUserIdOrNull(req.user.id);
+        const data = await this.engineService.regeneratePayslipForStaff(id, staffId, actor?.id, dto.note, dto.overrides);
+        return { success: true, message: 'Staff member\u2019s payslip recalculated successfully', data };
+    }
+
+    @Get('payslips/:id/correction-preview')
+    @Permission(PERMISSIONS.PAYROLL_CORRECT)
+    @ApiOperation({
+        summary: 'Preview a payslip correction without saving anything',
+        description: 'Dev Feedback Round 9: returns current vs. recalculated figures side by side, so the admin can compare before deciding what (if anything) to override on the real correct call.',
+    })
+    @ApiParam({ name: 'id' })
+    async previewCorrectPayslip(@Param('id', ParseUUIDPipe) id: string) {
+        const data = await this.engineService.previewCorrection(id);
+        return { success: true, message: 'Retrieved successfully', data };
+    }
+
     @Patch('payslips/:id/correct')
     @Permission(PERMISSIONS.PAYROLL_CORRECT)
     @ApiOperation({
@@ -185,7 +230,7 @@ export class AdminPayrollController {
     @ApiParam({ name: 'id' })
     async correctPayslip(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CorrectPayslipDto) {
         const actor = await this.staffService.findByUserIdOrNull(req.user.id);
-        const data = await this.engineService.correctPayslip(id, dto.reason, actor?.id);
+        const data = await this.engineService.correctPayslip(id, dto.reason, actor?.id, dto.overrides);
         return { success: true, message: 'Payslip corrected successfully', data };
     }
 
@@ -296,6 +341,15 @@ export class AdminPayrollController {
             limit: limit ? Number(limit) : undefined,
         });
         return { success: true, message: 'Retrieved successfully', data };
+    }
+
+    @Post('withdrawals/:id/resync')
+    @Permission(PERMISSIONS.PAYROLL_RESYNC_WITHDRAWAL)
+    @ApiOperation({ summary: 'Manually resync a withdrawal stuck in PROCESSING against Paystack\u2019s own transfer status -- fallback for when the transfer webhook never arrived' })
+    @ApiParam({ name: 'id' })
+    async resyncWithdrawal(@Param('id', ParseUUIDPipe) id: string) {
+        const data = await this.payoutService.adminResyncWithdrawal(id);
+        return { success: true, message: 'Withdrawal resynced', data };
     }
 
     // -- Audit log ------------------------------------------------------------

@@ -68,7 +68,7 @@ interface CustomerContactsFilterParams {
 const INCLUDE_FULL = {
     branch: { select: { id: true, name: true } },
     customer: { select: { id: true, name: true, phone: true, email: true } },
-    assignedStaff: { select: { id: true, name: true, staffCode: true, commissionRate: true } },
+    assignedStaff: { select: { id: true, name: true, staffCode: true } },
     createdBy: { select: { id: true, name: true, staffCode: true } },
     services: { include: { service: { select: { id: true, name: true } } } },
     inventoryItems: { include: { item: { select: { id: true, name: true, category: true } } } },
@@ -93,8 +93,27 @@ export class SalonBookingService {
      * discounts/validate/:code endpoint, which validates for the
      * logged-in user themselves rather than on someone else's behalf.
      */
-    async previewDiscount(code: string, branchId: string, customerId: string | undefined, subtotal: number) {
-        const validated = await this.discountService.validate(code, undefined, branchId, customerId);
+    /**
+ * Dev Feedback Round 9, item #9: a coupon with lifecycle/value/campaign
+ * targeting needs a subject to check eligibility against
+ * (DiscountService.validate's needsSubjectCheck), but at PREVIEW time
+ * for a walk-in the Customer record doesn't exist yet -- it's only
+ * created in create() via findOrCreateCustomer, once the booking is
+ * actually submitted. Neither admin's nor staff portal's coupon-apply
+ * button was passing a customerId at all, so any gated coupon always
+ * failed here regardless of who was actually booking. Since callers
+ * generally only have a phone number at this point (not yet a
+ * Customer id), fall back to a phone lookup -- deliberately find-only,
+ * never create, so merely previewing a coupon can't itself create a
+ * customer record for someone who ends up not booking.
+ */
+    async previewDiscount(code: string, branchId: string, customerId: string | undefined, subtotal: number, customerPhone?: string) {
+        let resolvedCustomerId = customerId;
+        if (!resolvedCustomerId && customerPhone) {
+            const existing = await this.prisma.customer.findUnique({ where: { phone: customerPhone }, select: { id: true } });
+            resolvedCustomerId = existing?.id;
+        }
+        const validated = await this.discountService.validate(code, undefined, branchId, resolvedCustomerId);
         const discountAmount = Math.round(subtotal * (Number(validated.percentage) / 100) * 100) / 100;
         return {
             id: validated.id,
@@ -936,11 +955,9 @@ export class SalonBookingService {
             // (it always takes priority), otherwise the flat rate -- shown
             // with its source so it's never presented as a number that
             // isn't actually the one being applied.
-            hasCommissionSetup: staff.commissionRate != null || !!staff.commissionPlanId,
-            effectiveRate: staff.commissionPlan
-                ? Number(staff.commissionPlan.commissionRate)
-                : (staff.commissionRate != null ? Number(staff.commissionRate) : null),
-            effectiveRateSource: staff.commissionPlan ? staff.commissionPlan.name : (staff.commissionRate != null ? 'Flat rate' : null),
+            hasCommissionSetup: !!staff.commissionPlanId,
+            effectiveRate: staff.commissionPlan ? Number(staff.commissionPlan.commissionRate) : null,
+            effectiveRateSource: staff.commissionPlan ? staff.commissionPlan.name : null,
             thisMonthTotal,
             bookingsThisMonth,
             allTimeTotal,
@@ -1243,7 +1260,7 @@ export class SalonBookingService {
                     return isEligible ? sum + Number(s.price) * s.quantity : sum;
                 }, 0);
             } else {
-                rate = booking.assignedStaff?.commissionRate ? Number(booking.assignedStaff.commissionRate) : 0;
+                rate = 0;
                 eligibleServiceTotal = booking.services.reduce((sum, s) => sum + Number(s.price) * s.quantity, 0);
             }
             const commissionAmount = Math.round(eligibleServiceTotal * rate * 100) / 100;

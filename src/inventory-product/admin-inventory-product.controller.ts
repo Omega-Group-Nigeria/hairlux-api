@@ -21,12 +21,18 @@ export class AdminInventoryProductController {
     @ApiQuery({ name: 'search', required: false })
     @ApiQuery({ name: 'category', required: false })
     @ApiQuery({ name: 'activeOnly', required: false, type: Boolean })
+    @ApiQuery({ name: 'vendorId', required: false, description: 'Only products supplied by this vendor' })
+    @ApiQuery({ name: 'noVendor', required: false, type: Boolean, description: 'Only products with zero vendors attached' })
     async findAll(
         @Query('search') search?: string,
         @Query('category') category?: string,
         @Query('activeOnly') activeOnly?: string,
+        @Query('vendorId') vendorId?: string,
+        @Query('noVendor') noVendor?: string,
     ) {
-        const data = await this.inventoryProductService.findAll({ search, category, activeOnly: activeOnly === 'true' });
+        const data = await this.inventoryProductService.findAll({
+            search, category, activeOnly: activeOnly === 'true', vendorId, noVendor: noVendor === 'true',
+        });
         return { success: true, message: 'Retrieved successfully', data };
     }
 

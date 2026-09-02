@@ -989,9 +989,6 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         ...(dto.reportingToId !== undefined && {
           reportingToId: dto.reportingToId,
         }),
-        ...(dto.commissionRate !== undefined && {
-          commissionRate: dto.commissionRate,
-        }),
         ...(dto.hireDate !== undefined && {
           hireDate: dto.hireDate ? new Date(dto.hireDate) : null,
         }),

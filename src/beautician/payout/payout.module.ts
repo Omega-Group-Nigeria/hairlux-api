@@ -5,6 +5,7 @@ import { RedisModule } from '../../redis/redis.module';
 import { PaymentModule } from '../../payment/payment.module';
 import { HomeServiceSharedModule } from '../home-service-booking/home-service-shared.module';
 import { WalletNotificationsModule } from '../../notifications/wallet/wallet-notifications.module';
+import { PayrollModule } from '../../payroll/payroll.module';
 import { EarningsCalculatorService } from './services/earnings-calculator.service';
 import { ServiceCommissionRateService } from './services/service-commission-rate.service';
 import { BeauticianStatsService } from './services/beautician-stats.service';
@@ -29,6 +30,7 @@ import { DailyPayoutLimitService } from './services/daily-payout-limit.service';
     PaymentModule,
     HomeServiceSharedModule,
     WalletNotificationsModule,
+    PayrollModule,
     BullModule.registerQueue({ name: 'paystack-transfer-webhooks' }),
   ],
   controllers: [AdminPayoutController, PaystackTransferWebhookController],
