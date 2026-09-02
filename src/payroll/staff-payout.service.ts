@@ -99,27 +99,62 @@ export class StaffPayoutService {
         // concurrent request's pendingAmount read -- everything from here
         // is a normal, unlocked external call.
         try {
-            const recipient = await this.paystackService.createTransferRecipient({
-                name: bankAccount.accountName,
-                accountNumber: bankAccount.accountNumber,
-                bankCode: bankAccount.bankCode,
-            });
+            // Dev Feedback Round 9: reuse the recipient created once at
+            // bank-account setup/approval time instead of creating a new
+            // one on every withdrawal (the old behavior) -- matching the
+            // pattern already proven in the Beautician payout module.
+            // Falls back to creating one on demand for a legacy account
+            // (or one where creation failed non-fatally at setup time),
+            // and persists it back onto the account so this is the LAST
+            // time that particular account ever needs the fallback.
+            let recipientCode = bankAccount.paystackRecipientCode;
+            if (!recipientCode) {
+                const recipient = await this.paystackService.createTransferRecipient({
+                    name: bankAccount.accountName,
+                    accountNumber: bankAccount.accountNumber,
+                    bankCode: bankAccount.bankCode,
+                });
+                recipientCode = recipient.recipient_code;
+                await this.prisma.staffBankAccount.update({
+                    where: { staffId },
+                    data: { paystackRecipientCode: recipientCode },
+                });
+            }
 
             const transfer = await this.paystackService.initiateTransfer({
                 amount,
-                recipientCode: recipient.recipient_code,
+                recipientCode,
                 reference: transferReference,
                 reason: `Hairlux staff salary withdrawal ${payoutRequest.id}`,
             });
 
             return this.handleTransferOutcome(payoutRequest.id, transferReference, transfer);
         } catch (error) {
+            // Dev Feedback Round 9: this used to store/log the real
+            // Paystack error (error.message, since PaystackService's own
+            // methods already throw BadRequestException carrying
+            // Paystack's actual message -- confirmed correct as of the
+            // "requires an account" fix) but then discarded it in favor
+            // of a hardcoded generic string on the exception actually
+            // thrown back to the caller -- so the specific reason a
+            // transfer was rejected was captured in rejectionReason and
+            // the log, but never reached whoever was watching the
+            // request. error?.response?.data?.message is also checked in
+            // case a raw axios error somehow reaches here un-wrapped by
+            // PaystackService's own handling.
+            const paystackErrorMessage =
+                (error as { response?: { data?: { message?: string } } })?.response?.data?.message
+                ?? (error instanceof Error ? error.message : 'Unknown Paystack error');
+
             await this.prisma.staffPayoutRequest.update({
                 where: { id: payoutRequest.id },
-                data: { status: 'FAILED', rejectionReason: error instanceof Error ? error.message : 'Transfer initiation failed' },
+                data: { status: 'FAILED', rejectionReason: paystackErrorMessage },
             });
-            this.logger.error(`Staff payout failed for ${payoutRequest.id}: ${error instanceof Error ? error.message : String(error)}`);
-            throw new BadRequestException('Unable to initiate withdrawal transfer. Please try again later.');
+            this.logger.error(
+                `Staff payout failed for ${payoutRequest.id}: ${paystackErrorMessage}`,
+                error instanceof Error ? error.stack : undefined,
+            );
+            throw new BadRequestException(`Payout initiation failed: ${paystackErrorMessage}`);
         }
     }
 

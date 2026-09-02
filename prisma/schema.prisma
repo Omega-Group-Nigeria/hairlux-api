@@ -2520,6 +2520,7 @@ model StaffBankAccount {
   bankName      String @map("bank_name")
   accountNumber String @map("account_number")
   accountName   String @map("account_name")
+  paystackRecipientCode String? @map("paystack_recipient_code")
 
   verified        Boolean   @default(false)
   verifiedAt      DateTime? @map("verified_at")
