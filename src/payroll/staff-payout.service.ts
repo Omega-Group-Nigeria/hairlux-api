@@ -332,12 +332,36 @@ export class StaffPayoutService {
  * status) against staffPayoutRequest instead of the Beautician
  * payoutRequest table.
  */
-    async validateTransferApproval(payload: { reference?: string; amount?: number; data?: { reference?: string; amount?: number } }): Promise<boolean> {
-        const reference = payload.reference ?? payload.data?.reference;
-        const amountKobo = payload.amount ?? payload.data?.amount;
+    /**
+ * Payload shape corrected against an actual live payload (confirmed
+ * via logging the raw body): neither payload.reference nor
+ * payload.data.reference exist -- Paystack wraps the approval request
+ * as { event, data: { details: { body: {...the original /transfer
+ * request... } }, transfers: [{...the transfer object, including its
+ * reference/amount/status...}] } }. transfers[0] is used here rather
+ * than details.body, since it's the more canonical "the transfer
+ * actually being approved" representation and still works if this
+ * ever needs to generalize to a multi-transfer approval later;
+ * details.body.reference/amount would work equally well for the
+ * single-transfer case this handles today.
+ */
+    async validateTransferApproval(payload: {
+        reference?: string;
+        amount?: number;
+        data?: {
+            reference?: string;
+            amount?: number;
+            transfers?: { reference?: string; amount?: number }[];
+            details?: { body?: { reference?: string; amount?: number } };
+        };
+    }): Promise<boolean> {
+        const fromTransfer = payload.data?.transfers?.[0];
+        const fromBody = payload.data?.details?.body;
+        const reference = payload.reference ?? payload.data?.reference ?? fromTransfer?.reference ?? fromBody?.reference;
+        const amountKobo = payload.amount ?? payload.data?.amount ?? fromTransfer?.amount ?? fromBody?.amount;
 
         if (!reference || amountKobo == null) {
-            this.logger.warn('Paystack transfer approval missing reference or amount');
+            this.logger.warn(`Paystack transfer approval missing reference or amount. Received: ${JSON.stringify(payload)}`);
             return false;
         }
 
