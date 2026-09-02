@@ -213,7 +213,14 @@ export class PaystackService {
 
       return response.data.data;
     } catch (error) {
-
+      // Dev Feedback Round 9: this used to throw a plain Error, which
+      // NestJS's default exception filter turns into an opaque 500
+      // "Internal Server Error" with none of the actual reason attached
+      // -- the single most common real-world trigger being a genuinely
+      // wrong/non-existent account number, which is a normal user-input
+      // situation, not a server fault. BadRequestException surfaces
+      // Paystack's own message (e.g. "Could not resolve account name")
+      // as a proper 400 the frontend can actually display.
       const errorMessage = this.extractPaystackError(
         error,
         'Failed to resolve bank account with Paystack',

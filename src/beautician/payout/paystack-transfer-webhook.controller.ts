@@ -18,6 +18,7 @@ import { Public } from '../../auth/decorators/public.decorator';
 import { PaystackService } from '../../payment/paystack.service';
 import { StaffPayoutService } from '../../payroll/staff-payout.service';
 import { PaystackTransferApprovalService } from './services/paystack-transfer-approval.service';
+import { StaffPayoutService } from '../../payroll/staff-payout.service';
 
 @ApiTags('Webhooks')
 @Controller('webhooks/paystack')
