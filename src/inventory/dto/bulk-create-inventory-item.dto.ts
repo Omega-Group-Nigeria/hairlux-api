@@ -28,9 +28,20 @@ export class BulkCreateInventoryItemDto {
     @IsNotEmpty()
     name: string;
 
-    @ApiProperty({ enum: InventoryCategory })
-    @IsEnum(InventoryCategory)
-    category: InventoryCategory;
+    @ApiProperty({
+        enum: InventoryCategory,
+        isArray: true,
+        description:
+            'Dev Feedback Round 9, item #13: one InventoryItem row is created per (branch × category) ' +
+            'combination -- category is a genuinely separate row, not a bucket on one shared row (see the ' +
+            'branchId+name+category unique constraint), so stocking a product for both retail sale AND ' +
+            'service consumption at a branch requires its own row per category. Selecting all three here ' +
+            'is exactly the "select all 3 at once" the multiselect exists for.',
+    })
+    @IsArray()
+    @ArrayMinSize(1)
+    @IsEnum(InventoryCategory, { each: true })
+    categories: InventoryCategory[];
 
     @ApiPropertyOptional()
     @IsOptional()

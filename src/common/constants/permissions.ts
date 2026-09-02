@@ -161,6 +161,12 @@ export const PERMISSIONS = {
   PAYROLL_APPROVE_PERIOD: 'payroll:approve_period', // Formally approve an AWAITING_RELEASE period
   PAYROLL_MANAGE_ADJUSTMENTS: 'payroll:manage_adjustments', // Add or remove a bonus/deduction adjustment
   PAYROLL_MANAGE_SETTINGS: 'payroll:manage_settings', // Toggle Payday active/inactive, set the pension rate
+  // Dev Feedback Round 9: a stuck-in-PROCESSING withdrawal (the Paystack
+  // transfer webhook never arrived, or predates the webhook fix that
+  // closes that gap) needs an explicit, separately-permissioned admin
+  // action to resync -- distinct from PAYROLL_READ, since this actually
+  // queries Paystack and can transition a withdrawal to COMPLETED/FAILED.
+  PAYROLL_RESYNC_WITHDRAWAL: 'payroll:resync_withdrawal', // Manually resync a stuck withdrawal's status against Paystack
   // Payroll Engine v2, Phase 4: managing Commission Plan records
   // (financially-sensitive -- a plan's rate directly affects pay) is
   // deliberately separate from assigning one to a staff member --
@@ -514,6 +520,7 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.PAYROLL_APPROVE_PERIOD, label: 'Formally approve an Awaiting Release period' },
       { key: PERMISSIONS.PAYROLL_MANAGE_ADJUSTMENTS, label: 'Add or remove a bonus/deduction adjustment' },
       { key: PERMISSIONS.PAYROLL_MANAGE_SETTINGS, label: 'Toggle Payday active/inactive, set the pension rate' },
+      { key: PERMISSIONS.PAYROLL_RESYNC_WITHDRAWAL, label: "Manually resync a stuck withdrawal's status against Paystack" },
       { key: PERMISSIONS.PAYROLL_READ_COMMISSION_PLANS, label: 'View Commission Plan records' },
       { key: PERMISSIONS.PAYROLL_CREATE_COMMISSION_PLAN, label: 'Create a Commission Plan' },
       { key: PERMISSIONS.PAYROLL_UPDATE_COMMISSION_PLAN, label: 'Edit a Commission Plan' },

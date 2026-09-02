@@ -59,9 +59,10 @@ export class StaffSalonBookingController {
         @Query('code') code: string,
         @Query('subtotal') subtotal: string,
         @Query('customerId') customerId?: string,
+        @Query('customerPhone') customerPhone?: string,
     ) {
         const staff = await this.staffService.findByUserId(req.user.id) as unknown as { locationId: string };
-        const data = await this.salonBookingService.previewDiscount(code, staff.locationId, customerId, Number(subtotal));
+        const data = await this.salonBookingService.previewDiscount(code, staff.locationId, customerId, Number(subtotal), customerPhone);
         return { success: true, message: 'Discount is valid', data };
     }
 

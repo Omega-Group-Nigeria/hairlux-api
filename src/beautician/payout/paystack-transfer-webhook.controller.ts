@@ -17,6 +17,7 @@ import type { RawBodyRequest } from '@nestjs/common';
 import { Public } from '../../auth/decorators/public.decorator';
 import { PaystackService } from '../../payment/paystack.service';
 import { PaystackTransferApprovalService } from './services/paystack-transfer-approval.service';
+import { StaffPayoutService } from '../../payroll/staff-payout.service';
 
 @ApiTags('Webhooks')
 @Controller('webhooks/paystack')
@@ -26,9 +27,10 @@ export class PaystackTransferWebhookController {
   constructor(
     private readonly paystackService: PaystackService,
     private readonly transferApprovalService: PaystackTransferApprovalService,
+    private readonly staffPayoutService: StaffPayoutService,
     @InjectQueue('paystack-transfer-webhooks')
     private readonly transferWebhookQueue: Queue,
-  ) {}
+  ) { }
 
   @Public()
   @Post('transfer/approval')
@@ -50,10 +52,18 @@ export class PaystackTransferWebhookController {
       return res.status(HttpStatus.BAD_REQUEST).json({});
     }
 
-    const body = req.body as Record<string, unknown>;
-    const approved = await this.transferApprovalService.validateTransferApproval(
-      body,
-    );
+    const body = req.body as { reference?: string; data?: { reference?: string } };
+    const reference = body.reference ?? body.data?.reference;
+
+    // Dev Feedback Round 9: Paystack only supports ONE Transfer Approval
+    // URL per mode, so Staff Payout has to share this endpoint with
+    // Beautician payouts -- routed by reference prefix (Staff Payout's
+    // own STAFF-PAYOUT-... series) so each system's approval rules stay
+    // entirely self-contained; Beautician's own validateTransferApproval
+    // is untouched and still owns everything else.
+    const approved = reference?.startsWith('STAFF-PAYOUT-')
+      ? await this.staffPayoutService.validateTransferApproval(req.body)
+      : await this.transferApprovalService.validateTransferApproval(req.body);
 
     if (!approved) {
       return res.status(HttpStatus.BAD_REQUEST).json({});

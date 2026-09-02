@@ -123,37 +123,49 @@ export class InventoryService {
      * now-removed currentQuantity field, matching Phase 2's Store/Sales/
      * Usage split; the rest of the logic is untouched.
      */
+    /**
+ * Dev Feedback Round 9, item #13: extended from one row per branch to
+ * one row per (branch × category) -- e.g. 3 branches × all 3
+ * categories selected creates 9 rows in one submission. price is only
+ * ever set on the FOR_SALE row(s) created here, same as every other
+ * create path in this file; the FOR_SALE-requires-a-price check below
+ * only fires when FOR_SALE is actually among the selected categories,
+ * since a submission that only picks INTERNAL_USE/STORAGE has no use
+ * for a price at all.
+ */
     async createItemForBranches(dto: BulkCreateInventoryItemDto) {
-        if (dto.category === 'FOR_SALE' && (dto.price === undefined || dto.price === null)) {
-            throw new BadRequestException('A price is required for items in the "For Sale" category');
+        if (dto.categories.includes('FOR_SALE') && (dto.price === undefined || dto.price === null)) {
+            throw new BadRequestException('A price is required when "For Sale" is one of the selected categories');
         }
 
-        const created: Array<{ branchId: string; id: string }> = [];
-        const skipped: Array<{ branchId: string; reason: string }> = [];
+        const created: Array<{ branchId: string; category: string; id: string }> = [];
+        const skipped: Array<{ branchId: string; category: string; reason: string }> = [];
 
         for (const entry of dto.branches) {
-            const existing = await this.prisma.inventoryItem.findFirst({
-                where: { branchId: entry.branchId, name: dto.name, category: dto.category },
-            });
-            if (existing) {
-                skipped.push({ branchId: entry.branchId, reason: 'An item with this name and category already exists at this branch' });
-                continue;
-            }
+            for (const category of dto.categories) {
+                const existing = await this.prisma.inventoryItem.findFirst({
+                    where: { branchId: entry.branchId, name: dto.name, category },
+                });
+                if (existing) {
+                    skipped.push({ branchId: entry.branchId, category, reason: 'An item with this name and category already exists at this branch' });
+                    continue;
+                }
 
-            const item = await this.prisma.inventoryItem.create({
-                data: {
-                    name: dto.name,
-                    category: dto.category,
-                    branchId: entry.branchId,
-                    supplierId: dto.supplierId,
-                    unit: dto.unit,
-                    lowStockThreshold: dto.lowStockThreshold ?? 5,
-                    storeStock: entry.initialQuantity ?? 0,
-                    expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
-                    price: dto.category === 'FOR_SALE' ? dto.price : (dto.price ?? undefined),
-                },
-            });
-            created.push({ branchId: entry.branchId, id: item.id });
+                const item = await this.prisma.inventoryItem.create({
+                    data: {
+                        name: dto.name,
+                        category,
+                        branchId: entry.branchId,
+                        supplierId: dto.supplierId,
+                        unit: dto.unit,
+                        lowStockThreshold: dto.lowStockThreshold ?? 5,
+                        storeStock: entry.initialQuantity ?? 0,
+                        expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined,
+                        price: category === 'FOR_SALE' ? dto.price : (dto.price ?? undefined),
+                    },
+                });
+                created.push({ branchId: entry.branchId, category, id: item.id });
+            }
         }
 
         return { createdCount: created.length, skippedCount: skipped.length, created, skipped };

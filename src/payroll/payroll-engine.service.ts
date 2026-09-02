@@ -6,6 +6,7 @@ import { CreatePayrollPeriodDto } from './dto/create-payroll-period.dto';
 import { PayrollAuditService } from './payroll-audit.service';
 import { PayrollSalaryCalculatorService } from './payroll-salary-calculator.service';
 import { SystemAuditService } from '../common/services/system-audit.service';
+import { PayslipManualOverridesDto } from './dto/payslip-manual-overrides.dto';
 
 @Injectable()
 export class PayrollEngineService {
@@ -469,6 +470,58 @@ export class PayrollEngineService {
     }
 
     /**
+ * Dev Feedback Round 8/9, item #5's post-release half: merges an
+ * admin's manual field overrides on top of a freshly-recalculated
+ * payslipData object -- only the fields actually provided are
+ * touched, everything else keeps its calculated value. When ANY
+ * field is overridden, grossPay/totalDeductions/netPay are always
+ * re-derived from whichever component values are now in play
+ * (mirroring computePayslipFigures's own formula exactly), so the
+ * payslip can never end up internally inconsistent -- an override to
+ * one deduction line correctly ripples through to netPay, rather
+ * than netPay silently going stale relative to its own components.
+ * Shared by both correctPayslip (post-release) and
+ * regeneratePayslipForStaff (pre-release) so the two stay consistent.
+ */
+    private applyManualOverrides<T extends Record<string, any>>(
+        payslipData: T,
+        overrides: PayslipManualOverridesDto | undefined,
+    ): { payslipData: T; manualOverrideFields: string[] } {
+        if (!overrides) return { payslipData, manualOverrideFields: [] };
+
+        const overridableFields = [
+            'baseSalary', 'allowances', 'overtimeAmount', 'commissionPaid', 'bonusTotal',
+            'attendanceDeduction', 'latePenaltyDeduction', 'fineTotal', 'loanRepayment',
+            'taxDeduction', 'pensionDeduction', 'otherDeductionTotal',
+        ] as const;
+
+        const manualOverrideFields: string[] = [];
+        // Untyped locally (TypeScript won't allow writing to an
+        // arbitrary-key property of a generic T -- "can only be indexed
+        // for reading") -- cast back to T at the return instead, which is
+        // sound here since every write below only overwrites a key that
+        // already exists on the object T came from, never adds/removes one.
+        const merged: Record<string, any> = { ...payslipData };
+        for (const field of overridableFields) {
+            const value = overrides[field];
+            if (value !== undefined) {
+                merged[field] = value;
+                manualOverrideFields.push(field);
+            }
+        }
+
+        if (manualOverrideFields.length) {
+            merged.grossPay = merged.baseSalary + merged.allowances + merged.overtimeAmount + merged.commissionPaid + merged.bonusTotal;
+            merged.totalDeductions =
+                merged.attendanceDeduction + merged.latePenaltyDeduction + merged.fineTotal + merged.loanRepayment +
+                merged.taxDeduction + merged.pensionDeduction + merged.otherDeductionTotal;
+            merged.netPay = merged.grossPay - merged.totalDeductions;
+        }
+
+        return { payslipData: merged as T, manualOverrideFields };
+    }
+
+    /**
      * The shared calculation core behind both generatePayroll() (looping
      * over every active staff member) and correctPayslip() (recalculating
      * one staff member's figures fresh, against current data, for a
@@ -527,18 +580,6 @@ export class PayrollEngineService {
         ]);
 
         const latePenaltyDeduction = Number(lateAgg._sum.latePenaltyAmount ?? 0);
-        // Dev Feedback Round 8: absentFeeAmount is calculated per-minute
-        // (AttendanceService.calculateAbsentFee multiplies the entire
-        // expected shift duration in minutes by the per-minute late-
-        // penalty rate), which is the right mechanism for lateness while
-        // still present, but wildly wrong applied to a full absent day --
-        // it was also double-counting regardless, since an absence is
-        // already fully priced into calc.salaryEarned below via fewer
-        // payableWorkdays. No longer subtracted from pay; the field
-        // itself is left in place (still shown informationally on the
-        // staff portal's attendance history) rather than touching that
-        // separate, correctly-scoped display.
-        const attendanceDeduction = 0;
         const commissionEarned = calc.commissionEarned;
         // No more "withheld in the first month" concept -- under the
         // new model, a period that falls entirely within the salary
@@ -567,19 +608,37 @@ export class PayrollEngineService {
 
         const overtimeAmount = 0; // no overtime-rate tracking exists yet — always 0 until that's built
 
-        // Dev Feedback Round 8: this used to add the raw, un-prorated
-        // baseSalary regardless of attendance -- calc.salaryEarned
-        // (dailyRate * payableWorkdays) is the actual, correctly-prorated
-        // figure the whole PayrollSalaryCalculatorService exists to
-        // compute, but it was never wired in here at all, only stored on
-        // the payslip afterward for display. calc.extraWorkDayEarnings
-        // is NOT added separately -- it's already included inside
-        // salaryEarned (payableWorkdays itself adds approvedExtraWorkdays
-        // before multiplying by dailyRate), so adding it again here would
-        // double-count that portion, the same mistake as attendanceDeduction
-        // above just for the opposite (extra, not absent) direction.
-        const grossPay = calc.salaryEarned + allowances + overtimeAmount + commissionPaid + bonusTotal;
-        const pensionDeduction = (calc.salaryEarned + allowances) * pensionRate;
+        // Dev Feedback Round 9: tax and pension must be computed on the
+        // full ENTITLED compensation for the period, not the amount
+        // actually earned after absence proration -- confirmed by the
+        // user, reversing part of Round 8's item #1. "Entitled" here
+        // still legitimately excludes days before a mid-period hire date
+        // (calc.applicableScheduledWorkdays already reflects that, via
+        // PayrollSalaryCalculatorService's applicableRange) and, for
+        // SALARY_TO_COMMISSION, is scoped to just the salary sub-range --
+        // it only stops excluding ABSENCE specifically, which is what the
+        // user's "if on salary only, your basic salary is your salary"
+        // rule is about. calc.dailyRate/applicableScheduledWorkdays are
+        // both null for COMMISSION-only staff (no salary component at
+        // all), so entitledSalary correctly resolves to 0 there --
+        // commission has no separate "entitled vs earned" distinction,
+        // since it's transaction-based rather than day-based; whatever
+        // was earned is what's entitled.
+        const entitledSalary = (calc.dailyRate !== null && calc.applicableScheduledWorkdays !== null)
+            ? calc.dailyRate * calc.applicableScheduledWorkdays
+            : 0;
+        // The gap between what was entitled and what was actually earned
+        // (calc.salaryEarned) is exactly the absence effect -- reintroduced
+        // here as its own deduction line (the attendance_deduction column
+        // already existed from before Round 8 and was just sitting unused
+        // at a hardcoded 0) rather than folded into a shrunk gross pay.
+        // Can go negative if approved extra workdays outweigh missed ones
+        // this period -- that's correct, it nets against the other
+        // deductions as a small bonus rather than being clamped to 0.
+        const attendanceDeduction = entitledSalary - calc.salaryEarned;
+
+        const grossPay = entitledSalary + allowances + overtimeAmount + commissionPaid + bonusTotal;
+        const pensionDeduction = (entitledSalary + allowances) * pensionRate;
         const taxableIncome = grossPay - pensionDeduction;
         // Dev Feedback Round 8: replaced the progressive PAYE-band
         // calculation with a flat, admin-configurable rate on the same
@@ -638,6 +697,189 @@ export class PayrollEngineService {
     }
 
     /**
+     * Dev Feedback Round 9: preview-only counterpart to
+     * regeneratePayslipForStaff -- returns the current (existing, still-
+     * DRAFT) payslip figures alongside a fresh recalculation, WITHOUT
+     * persisting anything, so the admin can compare old vs. new for each
+     * field before deciding what (if anything) to manually override.
+     * Shares every eligibility check with the real action below, so a
+     * preview never shows figures for a staff member/period combination
+     * that couldn't actually be recalculated.
+     */
+    async previewRecalculationForStaff(periodId: string, staffId: string) {
+        const period = await this.prisma.payrollPeriod.findUnique({ where: { id: periodId } });
+        if (!period) throw new NotFoundException('Payroll period not found');
+        if (period.status !== 'AWAITING_RELEASE') {
+            throw new BadRequestException('A staff member can only be individually recalculated while the period is awaiting release');
+        }
+
+        const existingPayslip = await this.prisma.payslip.findFirst({
+            where: { payrollPeriodId: periodId, staffId, status: { not: 'SUPERSEDED' } },
+        });
+        if (!existingPayslip) throw new NotFoundException('No payslip found for this staff member in this period');
+        if (existingPayslip.status !== 'DRAFT') {
+            throw new BadRequestException('This payslip is not in a state that can be individually recalculated');
+        }
+
+        const staff = await this.prisma.staff.findUnique({
+            where: { id: staffId },
+            include: { commissionPlan: { select: { commissionRate: true } } },
+        });
+        if (!staff) throw new NotFoundException('Staff member not found');
+
+        const settings = await this.prisma.payrollSettings.findFirst();
+        const pensionRate = settings ? Number(settings.pensionRate) : 0.08;
+        const taxRate = settings ? Number(settings.taxRate) : 0;
+        const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
+
+        const { payslipData } = await this.computePayslipFigures(staff, period, periodId, pensionRate, taxRate, cutoffDay);
+
+        return { current: existingPayslip, recalculated: payslipData };
+    }
+
+    /**
+     * Dev Feedback Round 8/9: "Send for corrections" only ever worked at
+ * the whole-period level (requestCorrection in payroll-release.service.ts
+ * reverts the ENTIRE period back to DRAFT, forcing every staff
+ * member's payslip to regenerate) -- there was no way to fix just one
+ * person's still-DRAFT payslip without touching everyone else's.
+ * This is that individual path: recomputes ONE staff member's
+ * payslip fresh against current data, in place, without moving the
+ * period out of AWAITING_RELEASE or touching any other payslip.
+ *
+ * Distinct from correctPayslip below, which is the POST-release
+ * (supersede-and-replace) correction -- this one runs BEFORE release,
+ * while the payslip is still DRAFT, so there's no prior published
+ * version to preserve; a straight in-place recompute is correct here,
+ * matching how generatePayroll's own upsert already treats a DRAFT
+ * payslip on a normal re-run.
+ *
+ * Wallet reconciliation still applies, though: generatePayroll credits
+ * the wallet at GENERATION time (not at release), so by the time a
+ * period reaches AWAITING_RELEASE, this staff member's wallet has
+ * already been credited with the pre-correction netPay -- the same
+ * delta-adjustment pattern correctPayslip uses is reused here.
+ */
+    async regeneratePayslipForStaff(periodId: string, staffId: string, actorId: string | undefined, note: string | undefined, overrides?: PayslipManualOverridesDto) {
+        const period = await this.prisma.payrollPeriod.findUnique({ where: { id: periodId } });
+        if (!period) throw new NotFoundException('Payroll period not found');
+        if (period.status !== 'AWAITING_RELEASE') {
+            throw new BadRequestException('A staff member can only be individually recalculated while the period is awaiting release');
+        }
+
+        const existingPayslip = await this.prisma.payslip.findFirst({
+            where: { payrollPeriodId: periodId, staffId, status: { not: 'SUPERSEDED' } },
+        });
+        if (!existingPayslip) throw new NotFoundException('No payslip found for this staff member in this period');
+        if (existingPayslip.status !== 'DRAFT') {
+            throw new BadRequestException('This payslip is not in a state that can be individually recalculated');
+        }
+
+        const staff = await this.prisma.staff.findUnique({
+            where: { id: staffId },
+            include: { commissionPlan: { select: { commissionRate: true } } },
+        });
+        if (!staff) throw new NotFoundException('Staff member not found');
+
+        const settings = await this.prisma.payrollSettings.findFirst();
+        const pensionRate = settings ? Number(settings.pensionRate) : 0.08;
+        const taxRate = settings ? Number(settings.taxRate) : 0;
+        const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
+
+        const { payslipData: recalculated, adjustments } = await this.computePayslipFigures(staff, period, periodId, pensionRate, taxRate, cutoffDay);
+        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides);
+        const oldNetPay = Number(existingPayslip.netPay);
+
+        const updated = await this.prisma.payslip.update({
+            where: { id: existingPayslip.id },
+            data: { ...payslipData, manualOverrideFields },
+        });
+
+        if (adjustments.length) {
+            await this.prisma.payrollAdjustment.updateMany({
+                where: { id: { in: adjustments.map((a: { id: string }) => a.id) } },
+                data: { payslipId: updated.id },
+            });
+        }
+
+        const reference = `PAYROLL-${periodId}-${staffId}`;
+        const originalTransaction = await this.prisma.staffWalletTransaction.findUnique({ where: { reference } });
+        if (originalTransaction) {
+            const delta = Number(updated.netPay) - oldNetPay;
+            if (delta !== 0) {
+                const priorAdjustments = await this.prisma.staffWalletTransaction.count({
+                    where: { reference: { startsWith: `${reference}-INDCORR` } },
+                });
+                const adjustmentReference = `${reference}-INDCORR${priorAdjustments + 1}`;
+                const wallet = await this.prisma.staffWallet.upsert({
+                    where: { staffId },
+                    create: { staffId, balance: 0 },
+                    update: {},
+                });
+                await this.prisma.$transaction([
+                    this.prisma.staffWallet.update({
+                        where: { id: wallet.id },
+                        data: { balance: { increment: delta } },
+                    }),
+                    this.prisma.staffWalletTransaction.create({
+                        data: {
+                            walletId: wallet.id,
+                            type: 'PAYROLL_CREDIT',
+                            amount: delta,
+                            status: 'COMPLETED',
+                            reference: adjustmentReference,
+                            description: `Individual pre-release correction for ${period.label} (${delta > 0 ? 'top-up' : 'clawback'})`,
+                        },
+                    }),
+                ]);
+            }
+        }
+
+        await this.payrollAuditService.log({
+            action: 'PAYSLIP_INDIVIDUALLY_RECALCULATED',
+            entityType: 'Payslip',
+            entityId: updated.id,
+            staffId,
+            actorId,
+            note,
+            before: { netPay: oldNetPay },
+            after: { netPay: updated.netPay, manualOverrideFields },
+        });
+
+        return updated;
+    }
+
+    /**
+ * Dev Feedback Round 9: preview-only counterpart to correctPayslip --
+ * same "current vs. recalculated, nothing persisted" shape as
+ * previewRecalculationForStaff above, for the post-release side.
+ */
+    async previewCorrection(payslipId: string) {
+        const original = await this.prisma.payslip.findUnique({
+            where: { id: payslipId },
+            include: { payrollPeriod: true, staff: { include: { commissionPlan: { select: { commissionRate: true } } } } },
+        });
+        if (!original) throw new NotFoundException('Payslip not found');
+        if (!['PUBLISHED', 'CORRECTED'].includes(original.status)) {
+            throw new BadRequestException('Only a published (or already-corrected) payslip can be corrected');
+        }
+        if (original.payrollPeriod.status !== 'RELEASED') {
+            throw new BadRequestException('The payroll period for this payslip is not in a released state');
+        }
+
+        const settings = await this.prisma.payrollSettings.findFirst();
+        const pensionRate = settings ? Number(settings.pensionRate) : 0.08;
+        const taxRate = settings ? Number(settings.taxRate) : 0;
+        const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
+
+        const { payslipData } = await this.computePayslipFigures(
+            original.staff, original.payrollPeriod, original.payrollPeriodId, pensionRate, taxRate, cutoffDay,
+        );
+
+        return { current: original, recalculated: payslipData };
+    }
+
+    /**
      * Payroll System Developer Implementation Guide, section 15, "Staff
      * portal and download requirements" #5: "Corrections must retain the
      * original, mark it as superseded, generate a replacement, and show
@@ -648,7 +890,7 @@ export class PayrollEngineService {
      * since the original ran is exactly the kind of thing a correction
      * exists to pick up).
      */
-    async correctPayslip(payslipId: string, reason: string, actorId: string | undefined) {
+    async correctPayslip(payslipId: string, reason: string, actorId: string | undefined, overrides?: PayslipManualOverridesDto) {
         const original = await this.prisma.payslip.findUnique({
             where: { id: payslipId },
             include: { payrollPeriod: true, staff: true },
@@ -666,9 +908,10 @@ export class PayrollEngineService {
         const taxRate = settings ? Number(settings.taxRate) : 0;
         const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
 
-        const { payslipData, adjustments } = await this.computePayslipFigures(
+        const { payslipData: recalculated, adjustments } = await this.computePayslipFigures(
             original.staff, original.payrollPeriod, original.payrollPeriodId, pensionRate, taxRate, cutoffDay,
         );
+        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides);
 
         // How many times has this (period, staff) pair already been
         // corrected? Determines the new reference's suffix -- each
@@ -692,6 +935,7 @@ export class PayrollEngineService {
                     supersedesId: original.id,
                     correctionReference: reason,
                     publishedAt: new Date(),
+                    manualOverrideFields,
                     ...payslipData,
                 },
             }),
@@ -704,6 +948,49 @@ export class PayrollEngineService {
             });
         }
 
+        // Dev Feedback Round 9, item #2: generatePayroll's own comment
+        // (see the "Known limitation" note above the wallet-credit block)
+        // already flagged that a correction never reconciled the wallet --
+        // this closes that gap. If the wallet was already credited for
+        // this (period, staff) — the normal case, since a correction only
+        // makes sense on a released payslip — post a signed adjustment
+        // transaction for exactly the delta between the new and original
+        // netPay, under a distinct reference derived from the correction
+        // count so re-running correctPayslip again (or a retried request)
+        // stays idempotent the same way the original credit is. If the
+        // wallet was never credited for some reason, there's nothing to
+        // reconcile — generatePayroll will pick up the corrected netPay
+        // whenever it does eventually run for this period.
+        const originalReference = `PAYROLL-${original.payrollPeriodId}-${original.staffId}`;
+        const originalTransaction = await this.prisma.staffWalletTransaction.findUnique({ where: { reference: originalReference } });
+        if (originalTransaction) {
+            const delta = Number(newPayslip.netPay) - Number(original.netPay);
+            if (delta !== 0) {
+                const adjustmentReference = `${originalReference}-CORR${priorCorrections + 1}`;
+                const wallet = await this.prisma.staffWallet.upsert({
+                    where: { staffId: original.staffId },
+                    create: { staffId: original.staffId, balance: 0 },
+                    update: {},
+                });
+                await this.prisma.$transaction([
+                    this.prisma.staffWallet.update({
+                        where: { id: wallet.id },
+                        data: { balance: { increment: delta } },
+                    }),
+                    this.prisma.staffWalletTransaction.create({
+                        data: {
+                            walletId: wallet.id,
+                            type: 'PAYROLL_CREDIT',
+                            amount: delta,
+                            status: 'COMPLETED',
+                            reference: adjustmentReference,
+                            description: `Correction adjustment for payslip ${correctedReference} (${delta > 0 ? 'top-up' : 'clawback'})`,
+                        },
+                    }),
+                ]);
+            }
+        }
+
         // Guide, section 15/17: "Log every correction or regeneration with
         // user, timestamp, reason, and payroll period."
         await this.systemAuditService.log({
@@ -714,7 +1001,7 @@ export class PayrollEngineService {
             actorId,
             note: reason,
             before: { payslipId: original.id, netPay: original.netPay },
-            after: { payslipId: newPayslip.id, netPay: newPayslip.netPay },
+            after: { payslipId: newPayslip.id, netPay: newPayslip.netPay, manualOverrideFields },
         });
 
         return newPayslip;
