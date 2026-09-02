@@ -1,0 +1,35 @@
+-- ============================================================================
+-- Dev Feedback Round 9, items #1/#7: Staff.commission_rate was the original
+-- flat commission-rate field, kept around as a fallback for
+-- SALARY_PLUS_COMMISSION staff after Commission Plans (commission_plan_id)
+-- were introduced -- so old data wouldn't need an immediate migration. It
+-- has been surfacing in the admin Staff Records view, the staff portal's
+-- My Commission page, and elsewhere, causing exactly the confusion its
+-- removal was requested to fix. All application code that read or wrote
+-- this column has already been removed (payroll engine, salon booking
+-- commission calculation, staff service/DTOs, both frontends) -- this
+-- migration drops the column itself now that nothing references it.
+--
+-- IF EXISTS guards this the same way the rest of this project's migration
+-- history does, so it's safe to run even if the column was already removed
+-- by some other path. No BEGIN/COMMIT, matching this project's convention.
+--
+-- Irreversible: any staff row that still had a non-null commission_rate
+-- (i.e. was relying on the flat-rate fallback with no Commission Plan
+-- assigned) loses that value here. Before running this against a real
+-- database, confirm every ACTIVE staff member on a commission-earning
+-- compensation type (COMMISSION, SALARY_PLUS_COMMISSION,
+-- SALARY_TO_COMMISSION) already has commission_plan_id set -- otherwise
+-- they were already earning 0 commission on new bookings as of the
+-- application-code change (see salon-booking.service.ts), and this
+-- migration just removes the now-unused historical value. A query to
+-- check first:
+--
+--   SELECT id, name, staff_code, compensation_type, commission_rate
+--   FROM staff
+--   WHERE employment_status = 'ACTIVE'
+--     AND compensation_type IN ('COMMISSION', 'SALARY_PLUS_COMMISSION', 'SALARY_TO_COMMISSION')
+--     AND commission_plan_id IS NULL;
+-- ============================================================================
+
+ALTER TABLE "staff" DROP COLUMN IF EXISTS "commission_rate";

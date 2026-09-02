@@ -355,10 +355,91 @@ export class AttendanceService {
         };
     }
 
+    /**
+ * Dev Feedback Round 9, item #4: mirrors the derivation logic in
+ * clockIn (holiday exception -> effective-day/OFF check -> grace-
+ * period/permission check -> LATE + lateMinutes/latePenaltyAmount) so
+ * a correction can recompute status and its dependent fields from a
+ * corrected checkInAt the exact same way the original clock-in would
+ * have, rather than that logic only ever running once at clock-in
+ * time. Kept as a separate method (not a shared refactor of clockIn
+ * itself) to avoid touching clockIn's already-working, unrelated
+ * code path while fixing this.
+ */
+    private async computeAttendanceOutcome(
+        staffId: string,
+        locationId: string,
+        dateStr: string,
+        checkInAt: Date,
+    ): Promise<{ status: AttendanceStatus; lateMinutes: number | null; latePenaltyAmount: number | null }> {
+        const holidayException = await this.resolveBusinessException(locationId, dateStr);
+        if (holidayException?.isClosed) {
+            return { status: AttendanceStatus.PUBLIC_HOLIDAY, lateMinutes: null, latePenaltyAmount: null };
+        }
+
+        const staff = await this.prisma.staff.findUnique({ where: { id: staffId }, include: { location: true } });
+        if (!staff) throw new NotFoundException('Staff member not found');
+
+        const effectiveDay = await this.workCalendarService.resolveEffectiveDay(staffId, dateStr);
+        const openTime = holidayException?.openTime ?? effectiveDay.resumeTime;
+        const staffExpectedToday = holidayException ? !holidayException.isClosed : effectiveDay.dayType !== 'OFF';
+
+        if (!staffExpectedToday) {
+            return { status: AttendanceStatus.EXTRA_WORK_DAY_PENDING, lateMinutes: null, latePenaltyAmount: null };
+        }
+        if (!openTime) {
+            return { status: AttendanceStatus.PRESENT, lateMinutes: null, latePenaltyAmount: null };
+        }
+
+        const scheduledStart = watDateAtTime(dateStr, openTime);
+        const graceMinutes = staff.lateGracePeriodOverride ?? staff.location.lateGracePeriodMinutes;
+        const graceDeadline = new Date(scheduledStart.getTime() + graceMinutes * 60000);
+
+        if (checkInAt > graceDeadline) {
+            const approvedPermission = await this.leaveService.findApprovedPermissionForToday(
+                staffId, LeaveRequestType.PERMISSION_LATE_ARRIVAL, new Date(dateStr),
+            );
+            if (!approvedPermission) {
+                const lateMinutes = Math.round((checkInAt.getTime() - scheduledStart.getTime()) / 60000);
+                const latePenaltyAmount = await this.calculateLatePenalty(lateMinutes, graceMinutes);
+                return { status: AttendanceStatus.LATE, lateMinutes, latePenaltyAmount };
+            }
+        }
+        return { status: AttendanceStatus.PRESENT, lateMinutes: null, latePenaltyAmount: null };
+    }
+
     async correctRecord(recordId: string, dto: CorrectAttendanceDto, adjustedById: string) {
         const record = await this.prisma.attendanceRecord.findUnique({ where: { id: recordId } });
         if (!record) {
             throw new NotFoundException('Attendance record not found');
+        }
+
+        const dateStr = record.date.toISOString().slice(0, 10);
+        const newCheckInAt = dto.checkInAt !== undefined ? new Date(dto.checkInAt) : record.checkInAt;
+
+        let resultingStatus = dto.status ?? record.status;
+        let lateMinutes = record.lateMinutes;
+
+        let latePenaltyAmount: number | null = record.latePenaltyAmount !== null ? Number(record.latePenaltyAmount) : null;
+
+       
+        if (resultingStatus !== AttendanceStatus.ABSENT && newCheckInAt) {
+            if (dto.status === undefined) {
+                const outcome = await this.computeAttendanceOutcome(record.staffId, record.locationId, dateStr, newCheckInAt);
+                resultingStatus = outcome.status;
+                lateMinutes = outcome.lateMinutes;
+                latePenaltyAmount = outcome.latePenaltyAmount;
+            } else if (resultingStatus === AttendanceStatus.LATE) {
+                const outcome = await this.computeAttendanceOutcome(record.staffId, record.locationId, dateStr, newCheckInAt);
+                lateMinutes = outcome.lateMinutes;
+                latePenaltyAmount = outcome.latePenaltyAmount;
+            } else {
+                lateMinutes = null;
+                latePenaltyAmount = null;
+            }
+        } else if (dto.status !== undefined && resultingStatus !== AttendanceStatus.LATE) {
+            lateMinutes = null;
+            latePenaltyAmount = null;
         }
 
         // Recompute the frozen fee whenever a correction lands the record on
@@ -366,8 +447,6 @@ export class AttendanceService {
         // ABSENT and something else about the record is being corrected) —
         // and clear it if a correction moves the record OFF ABSENT, since a
         // stale fee shouldn't survive a status change away from Absent.
-        const resultingStatus = dto.status ?? record.status;
-        const dateStr = record.date.toISOString().slice(0, 10);
         const absentFeeAmount = resultingStatus === AttendanceStatus.ABSENT
             ? await this.calculateAbsentFee(record.staffId, dateStr)
             : null;
@@ -377,7 +456,9 @@ export class AttendanceService {
             data: {
                 ...(dto.checkInAt !== undefined && { checkInAt: new Date(dto.checkInAt) }),
                 ...(dto.checkOutAt !== undefined && { checkOutAt: new Date(dto.checkOutAt) }),
-                ...(dto.status !== undefined && { status: dto.status }),
+                status: resultingStatus,
+                lateMinutes,
+                latePenaltyAmount,
                 absentFeeAmount,
                 isManuallyAdjusted: true,
                 adjustmentReasonCategory: dto.reasonCategory,
@@ -396,8 +477,8 @@ export class AttendanceService {
             staffId: record.staffId,
             actorId: adjustedById,
             note: dto.reason,
-            before: { status: record.status, absentFeeAmount: record.absentFeeAmount, checkInAt: record.checkInAt, checkOutAt: record.checkOutAt },
-            after: { status: updated.status, absentFeeAmount: updated.absentFeeAmount, checkInAt: updated.checkInAt, checkOutAt: updated.checkOutAt },
+            before: { status: record.status, absentFeeAmount: record.absentFeeAmount, checkInAt: record.checkInAt, checkOutAt: record.checkOutAt, lateMinutes: record.lateMinutes, latePenaltyAmount: record.latePenaltyAmount },
+            after: { status: updated.status, absentFeeAmount: updated.absentFeeAmount, checkInAt: updated.checkInAt, checkOutAt: updated.checkOutAt, lateMinutes: updated.lateMinutes, latePenaltyAmount: updated.latePenaltyAmount },
         });
 
         return updated;

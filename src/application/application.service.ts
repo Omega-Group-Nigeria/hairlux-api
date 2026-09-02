@@ -1381,16 +1381,9 @@ export class ApplicationService {
       employmentStatus: 'ACTIVE',
       employmentNotes: `Converted from application ${application.applicationCode}`,
       userId: user.id,
+      hireDate: new Date().toISOString().slice(0, 10),
     });
 
-    // Seed compensation from the accepted offer letter -- without this, a
-    // freshly-hired staff member's currentBaseSalary/currentAllowances stay
-    // null despite the exact figure already being known and accepted at
-    // hire time, and Payroll would silently treat them as earning ₦0 until
-    // someone manually re-entered it via the admin Compensation UI. Both
-    // the fast-read Staff snapshot AND the first StaffCompensationHistory
-    // entry are written, so the offer letter shows up as the first row in
-    // this person's compensation history, not a gap before manual entries.
     const offerLetter = application.offerLetter as unknown as {
       baseSalary: number | string;
       allowances: number | string | null;

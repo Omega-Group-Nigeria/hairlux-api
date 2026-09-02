@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common'; 
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import axios from 'axios';
@@ -127,7 +127,7 @@ export class PaystackService {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to initialize payment:`, errorMessage);
-      throw new Error('Failed to initialize payment with Paystack');
+      throw new BadRequestException('Failed to initialize payment with Paystack');
     }
   }
 
@@ -148,7 +148,7 @@ export class PaystackService {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       this.logger.error(`Failed to verify payment:`, errorMessage);
-      throw new Error('Failed to verify payment with Paystack');
+      throw new BadRequestException('Failed to verify payment with Paystack');
     }
   }
 
@@ -185,7 +185,7 @@ export class PaystackService {
         'Failed to fetch bank list from Paystack',
       );
       this.logger.error(`Failed to list banks: ${errorMessage}`);
-      throw new Error(errorMessage);
+      throw new BadRequestException(errorMessage);
     }
   }
 
@@ -213,12 +213,13 @@ export class PaystackService {
 
       return response.data.data;
     } catch (error) {
+
       const errorMessage = this.extractPaystackError(
         error,
         'Failed to resolve bank account with Paystack',
       );
       this.logger.error(`Failed to resolve account number: ${errorMessage}`);
-      throw new Error(errorMessage);
+      throw new BadRequestException("Could not verify account, please try again, or try account bank.");
     }
   }
 
@@ -251,10 +252,15 @@ export class PaystackService {
 
       return response.data.data;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      // Dev Feedback Round 9: same fix as resolveAccountNumber above --
+      // was a plain Error (opaque 500), and discarded Paystack's actual
+      // message in favor of a generic one. Both fixed.
+      const errorMessage = this.extractPaystackError(
+        error,
+        'Failed to create Paystack transfer recipient',
+      );
       this.logger.error(`Failed to create transfer recipient: ${errorMessage}`);
-      throw new Error('Failed to create Paystack transfer recipient');
+      throw new BadRequestException(errorMessage);
     }
   }
 
@@ -289,10 +295,12 @@ export class PaystackService {
       this.logger.log(`Transfer initiated: ${input.reference}`);
       return response.data.data;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = this.extractPaystackError(
+        error,
+        'Failed to initiate Paystack transfer',
+      );
       this.logger.error(`Failed to initiate transfer: ${errorMessage}`);
-      throw new Error('Failed to initiate Paystack transfer');
+      throw new BadRequestException(errorMessage);
     }
   }
 
@@ -322,10 +330,45 @@ export class PaystackService {
       this.logger.log(`Transfer finalized: ${input.transferCode}`);
       return response.data.data;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
+      const errorMessage = this.extractPaystackError(
+        error,
+        'Failed to finalize Paystack transfer',
+      );
       this.logger.error(`Failed to finalize transfer: ${errorMessage}`);
-      throw new Error('Failed to finalize Paystack transfer');
+      throw new BadRequestException(errorMessage);
+    }
+  }
+
+  /**
+ * Fetch a transfer's current status directly from Paystack (GET
+ * /transfer/:id_or_code) -- used for admin manual reconciliation of a
+ * request that's stuck locally (e.g. our webhook delivery never
+ * arrived), so the resync trusts Paystack's live state rather than
+ * anything already stored on our side.
+ */
+  async getTransferStatus(transferCodeOrId: string): Promise<string> {
+    try {
+      const response = await axios.get<PaystackTransferResponse>(
+        `${this.baseUrl}/transfer/${transferCodeOrId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${this.secretKey}`,
+          },
+        },
+      );
+
+      if (!response.data.status) {
+        throw new Error(response.data.message || 'Transfer status fetch failed');
+      }
+
+      return response.data.data.status;
+    } catch (error) {
+      const errorMessage = this.extractPaystackError(
+        error,
+        'Failed to fetch transfer status from Paystack',
+      );
+      this.logger.error(`Failed to fetch transfer status: ${errorMessage}`);
+      throw new BadRequestException(errorMessage);
     }
   }
 

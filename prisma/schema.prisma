@@ -1696,17 +1696,19 @@ model SalonBookingCommission {
   rateApplied  Decimal  @map("rate_applied") @db.Decimal(5, 4)
   calculatedAt DateTime @default(now()) @map("calculated_at")
 
-  /// Nullable -- older records predating this feature, and any commission
-  /// still coming from a staff member's plain Staff.commissionRate rather
-  /// than a formal plan, won't have one.
+    /// Nullable -- older records predating this feature won't have one; also
+  /// null for any commission calculated with no active Commission Plan
+  /// assigned (Dev Feedback Round 9, items #1/#7: this now genuinely
+  /// means 0 commission was calculated, since the flat Staff.commissionRate
+  /// fallback this comment used to describe has been removed entirely).
   commissionPlanId String? @map("commission_plan_id")
 
   /// Payroll Developer Implementation Guide, section 11: "only approved
   /// eligible transactions generate commission" -- when the applied plan
   /// has requiresApproval set, this starts PENDING and an admin must
   /// approve it before payroll will count it; when the plan doesn't
-  /// require approval (or there's no plan at all, i.e. the plain
-  /// Staff.commissionRate path), it's created already APPROVED.
+  /// require approval (or there's no plan at all, in which case the
+  /// calculated amount is 0), it's created already APPROVED.
   approvalStatus  ApprovalStatus @default(APPROVED) @map("approval_status")
   approvedById    String?                    @map("approved_by_id")
   approvedAt      DateTime?                  @map("approved_at")
@@ -2280,16 +2282,15 @@ model Staff {
   /// (today's only real path) rather than leaving it nullable, so every
   /// existing staff row has an unambiguous, valid type from the moment
   /// this column exists.
-  compensationType CompensationType @default(SALARY) @map("compensation_type")
-
-  commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 4) // overrides the service's own rate when set; percentage as decimal e.g. 0.15 = 15%
+   compensationType CompensationType @default(SALARY) @map("compensation_type")
 
   /// Payroll Developer Implementation Guide, section 11 -- when set, this
   /// staff member's commission is calculated from the referenced plan's
-  /// rate/eligible-services/approval rules instead of the plain
-  /// commissionRate above. Nullable: a plan is only meaningful once one
-  /// has actually been created and assigned; commissionRate above remains
-  /// the fallback for SALARY_PLUS_COMMISSION staff with no formal plan yet.
+  /// rate/eligible-services/approval rules. Dev Feedback Round 9, items
+  /// #1/#7: this is now the ONLY commission-rate mechanism -- the flat
+  /// Staff.commissionRate fallback field this comment used to describe
+  /// has been removed entirely (migration 20260902090000), since it was
+  /// causing exactly the confusion its removal was requested to fix.
   commissionPlanId String? @map("commission_plan_id")
 
   // Fast-read snapshot of current pay — the audited history of changes
@@ -2675,10 +2676,17 @@ model Payslip {
   commissionRateUsed         Decimal?  @map("commission_rate_used") @db.Decimal(5, 4)
   commissionRateEffectiveDate DateTime? @map("commission_rate_effective_date") @db.Date
 
-  // ── Status / correction model (section 15, "Staff portal and download requirements") ──
+    // ── Status / correction model (section 15, "Staff portal and download requirements") ──
   status              PayslipStatus @default(DRAFT)
   publishedAt         DateTime?     @map("published_at")
   supersedesId        String?       @unique @map("supersedes_id") // the older payslip this one replaces, if this IS a correction
+  /// Dev Feedback Round 8/9: which of the fields above (if any) were
+  /// typed in directly by an admin during a correction, rather than
+  /// coming from the normal recalculation -- empty for every ordinary
+  /// (non-overridden) payslip. Field names match the Prisma property
+  /// names above (e.g. "bonusTotal", "taxDeduction"), not the db column
+  /// names, since this is read/written from application code only.
+  manualOverrideFields String[] @default([]) @map("manual_override_fields")
   correctionReference String?       @map("correction_reference") // human-readable note on why this correction was issued
 
   createdAt DateTime @default(now()) @map("created_at")

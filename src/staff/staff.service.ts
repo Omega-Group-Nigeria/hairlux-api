@@ -683,6 +683,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
             dto.employmentStatus ?? STAFF_EMPLOYMENT_STATUS.ACTIVE,
           userId: dto.userId ?? null,
           reportingToId: resolvedReportingToId ?? null,
+          hireDate: dto.hireDate ? new Date(dto.hireDate) : new Date(),
         } as QueryArgs,
       });
 
@@ -988,9 +989,6 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         }),
         ...(dto.reportingToId !== undefined && {
           reportingToId: dto.reportingToId,
-        }),
-        ...(dto.commissionRate !== undefined && {
-          commissionRate: dto.commissionRate,
         }),
         ...(dto.hireDate !== undefined && {
           hireDate: dto.hireDate ? new Date(dto.hireDate) : null,
