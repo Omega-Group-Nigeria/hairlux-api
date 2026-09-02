@@ -48,7 +48,8 @@ export class WalletController {
     private readonly paystackService: PaystackService,
     @InjectQueue('paystack-webhooks') private webhookQueue: Queue,
     @InjectQueue('monnify-webhooks') private monnifyWebhookQueue: Queue,
-  ) {}
+    @InjectQueue('paystack-transfer-webhooks') private transferWebhookQueue: Queue,
+  ) { }
 
   @Get('balance')
   @ApiOperation({
@@ -269,6 +270,25 @@ export class WalletController {
     }
 
     try {
+      // Dev Feedback Round 9: Paystack only supports ONE general Webhook
+      // URL per mode for ALL event types -- if THIS deposit endpoint is
+      // the one actually registered on the dashboard, transfer.* events
+      // arrive here too, not just charge.success. Forwarding them to the
+      // transfer queue instead of letting handleDepositWebhook's own
+      // "ignore non-success event" branch silently drop them is what
+      // closes the gap that had staff/beautician withdrawals stuck in
+      // PROCESSING forever -- confirmed as the actual cause after a
+      // manual resync (which calls Paystack directly, bypassing webhooks
+      // entirely) succeeded where the automatic path never did.
+      const event = (req.body as { event?: string })?.event ?? '';
+      if (event.startsWith('transfer.')) {
+        await this.transferWebhookQueue.add('transfer-webhook', req.body, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        });
+        return { status: 'queued' };
+      }
+
       await this.webhookQueue.add('deposit-webhook', req.body, {
         attempts: 3,
         backoff: {

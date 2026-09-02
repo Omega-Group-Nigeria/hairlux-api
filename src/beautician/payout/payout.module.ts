@@ -31,7 +31,10 @@ import { DailyPayoutLimitService } from './services/daily-payout-limit.service';
     HomeServiceSharedModule,
     WalletNotificationsModule,
     PayrollModule,
-    BullModule.registerQueue({ name: 'paystack-transfer-webhooks' }),
+    // paystack-webhooks: same underlying Redis-backed queue WalletModule
+    // registers -- needed here too for the symmetric charge.* forwarding
+    // in PaystackTransferWebhookController (see that file's own comment).
+    BullModule.registerQueue({ name: 'paystack-transfer-webhooks' }, { name: 'paystack-webhooks' }),
   ],
   controllers: [AdminPayoutController, PaystackTransferWebhookController],
   providers: [

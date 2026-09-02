@@ -30,6 +30,11 @@ export class PaystackTransferWebhookController {
     private readonly staffPayoutService: StaffPayoutService,
     @InjectQueue('paystack-transfer-webhooks')
     private readonly transferWebhookQueue: Queue,
+    // Dev Feedback Round 9: same underlying Redis-backed queue already
+    // registered in WalletModule -- injectable here too, for the
+    // symmetric charge.* forwarding above.
+    @InjectQueue('paystack-webhooks')
+    private readonly depositWebhookQueue: Queue,
   ) { }
 
   @Public()
@@ -110,6 +115,28 @@ export class PaystackTransferWebhookController {
 
     const body = req.body as { event?: string; data?: Record<string, unknown> };
     const event = body?.event ?? '';
+
+    // Dev Feedback Round 9: symmetric to the same fix on the deposit
+    // webhook endpoint (WalletController.handleWebhook) -- Paystack only
+    // supports ONE general Webhook URL per mode, so whichever single URL
+    // ends up registered on the dashboard needs to correctly route BOTH
+    // event families rather than silently dropping whichever one it
+    // wasn't originally built for.
+    if (event.startsWith('charge.')) {
+      try {
+        await this.depositWebhookQueue.add('deposit-webhook', body, {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 2000 },
+        });
+        return { status: 'queued' };
+      } catch (error) {
+        this.logger.error(
+          'Failed to queue Paystack deposit webhook (forwarded from the transfer endpoint)',
+          error instanceof Error ? error.stack : String(error),
+        );
+        return { status: 'queued_with_error' };
+      }
+    }
 
     if (!event.startsWith('transfer.')) {
       return { status: 'ignored', event };

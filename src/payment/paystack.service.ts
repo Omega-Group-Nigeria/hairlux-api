@@ -376,14 +376,35 @@ export class PaystackService {
     return status.toLowerCase() === 'success';
   }
 
+  /**
+   * Dev Feedback Round 9: only recognized 'failed'/'reversed' -- per
+   * Paystack's own "How Transfers Work" status table, 'rejected'
+   * (merchant's approval URL returned 400), 'abandoned' (OTP not
+   * provided within 30 minutes), and 'blocked' (approval URL didn't
+   * respond in time) are ALL documented as conclusive, terminal failure
+   * statuses too, just missing from this check. 'rejected' in particular
+   * is exactly what every transfer got marked as before today's approval-
+   * routing fix (every approval request was being incorrectly rejected
+   * regardless of which system it belonged to) -- those transfers were
+   * genuinely, conclusively rejected at Paystack's end, but this method
+   * not recognizing 'rejected' as a failure meant adminResyncWithdrawal
+   * fell through to its "still pending" branch for every one of them,
+   * even though Paystack's own status was never actually pending.
+   */
   isTransferFailureStatus(status: string): boolean {
     const normalized = status.toLowerCase();
-    return normalized === 'failed' || normalized === 'reversed';
+    return normalized === 'failed' || normalized === 'reversed' || normalized === 'rejected' || normalized === 'abandoned' || normalized === 'blocked';
   }
 
+  /**
+   * Dev Feedback Round 9: added 'received' -- per the same status table,
+   * this is the non-conclusive state a transfer sits in specifically
+   * while awaiting a response from our own Approval URL, distinct from
+   * 'pending' (queued/processing) and 'otp' (awaiting the OTP step).
+   */
   isTransferAwaitingApproval(status: string): boolean {
     const normalized = status.toLowerCase();
-    return normalized === 'pending' || normalized === 'otp';
+    return normalized === 'pending' || normalized === 'otp' || normalized === 'received';
   }
 
   private extractPaystackError(error: unknown, fallback: string): string {
