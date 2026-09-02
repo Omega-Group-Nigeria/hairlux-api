@@ -616,17 +616,14 @@ export class PayrollEngineService {
         const attendanceDeduction = entitledSalary - calc.salaryEarned;
 
         const grossPay = entitledSalary + allowances + overtimeAmount + commissionPaid + bonusTotal;
-        // Dev Feedback Round 9: tax is now computed first, directly on
-        // the full gross pay -- previously pension was deducted first to
-        // arrive at a reduced "taxable income" base, with tax computed
-        // on THAT smaller amount (the common "pension is tax-deductible"
-        // pattern). Reversed on request: tax no longer gets a pension-
-        // sized discount before it's calculated. Pension's own base
-        // (entitledSalary + allowances) is unchanged -- it was never
-        // computed from a post-tax figure either way, so reordering
-        // which one is "first" only actually changes tax's base here.
-        const taxDeduction = Math.max(0, grossPay) * taxRate;
         const pensionDeduction = (entitledSalary + allowances) * pensionRate;
+        const taxableIncome = grossPay - pensionDeduction;
+        // Dev Feedback Round 8: replaced the progressive PAYE-band
+        // calculation with a flat, admin-configurable rate on the same
+        // taxableIncome base (gross pay minus pension) -- see
+        // PayrollSettings.taxRate's own schema comment for why it
+        // defaults to 0 rather than a guessed percentage.
+        const taxDeduction = Math.max(0, taxableIncome) * taxRate;
 
         const totalDeductions =
             attendanceDeduction + latePenaltyDeduction + fineTotal + loanRepayment + taxDeduction + pensionDeduction + otherDeductionTotal;
