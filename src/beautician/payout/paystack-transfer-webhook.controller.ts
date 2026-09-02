@@ -55,13 +55,8 @@ export class PaystackTransferWebhookController {
     const body = req.body as { reference?: string; data?: { reference?: string } };
     const reference = body.reference ?? body.data?.reference;
 
-    // Dev Feedback Round 9: Paystack only supports ONE Transfer Approval
-    // URL per mode, so Staff Payout has to share this endpoint with
-    // Beautician payouts -- routed by reference prefix (Staff Payout's
-    // own STAFF-PAYOUT-... series) so each system's approval rules stay
-    // entirely self-contained; Beautician's own validateTransferApproval
-    // is untouched and still owns everything else.
-    const approved = reference?.startsWith('STAFF-PAYOUT-')
+  
+    const approved = reference?.startsWith('staff-payout-')
       ? await this.staffPayoutService.validateTransferApproval(req.body)
       : await this.transferApprovalService.validateTransferApproval(req.body);
 

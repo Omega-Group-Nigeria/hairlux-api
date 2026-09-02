@@ -53,7 +53,7 @@ export class StaffPayoutService {
             throw new BadRequestException('No bank account on file — add one before requesting a withdrawal');
         }
 
-        const transferReference = `STAFF-PAYOUT-${randomBytes(8).toString('hex')}`;
+        const transferReference = `staff-payout-${randomBytes(8).toString('hex')}`;
 
         const payoutRequest = await this.prisma.$transaction(async (tx) => {
             // Locks this staff member's wallet row for the rest of this
