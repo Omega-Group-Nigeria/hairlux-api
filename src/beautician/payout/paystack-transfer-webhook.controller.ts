@@ -1,3 +1,5 @@
+import { InjectQueue } from '@nestjs/bull';
+import type { RawBodyRequest } from '@nestjs/common';
 import {
   Controller,
   Headers,
@@ -8,16 +10,14 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import type { Queue } from 'bull';
 import type { Request, Response } from 'express';
-import type { RawBodyRequest } from '@nestjs/common';
 import { Public } from '../../auth/decorators/public.decorator';
 import { PaystackService } from '../../payment/paystack.service';
-import { PaystackTransferApprovalService } from './services/paystack-transfer-approval.service';
 import { StaffPayoutService } from '../../payroll/staff-payout.service';
+import { PaystackTransferApprovalService } from './services/paystack-transfer-approval.service';
 
 @ApiTags('Webhooks')
 @Controller('webhooks/paystack')
@@ -52,10 +52,29 @@ export class PaystackTransferWebhookController {
       return res.status(HttpStatus.BAD_REQUEST).json({});
     }
 
-    const body = req.body as { reference?: string; data?: { reference?: string } };
-    const reference = body.reference ?? body.data?.reference;
+    const body = req.body as {
+      reference?: string;
+      data?: {
+        reference?: string;
+        transfers?: { reference?: string }[];
+        details?: { body?: { reference?: string } };
+      };
+    };
+    // Dev Feedback Round 9: confirmed against a real, logged approval
+    // payload that neither body.reference nor body.data.reference exist
+    // -- the reference is nested three levels deep, at either
+    // data.details.body.reference (the original /transfer request, as
+    // echoed back) or data.transfers[0].reference (the transfer object
+    // itself). Same fix applied to StaffPayoutService.validateTransferApproval's
+    // own extraction. Before this fix, reference always came back
+    // undefined here, so EVERY approval request -- staff or beautician --
+    // silently fell through to the Beautician validator by default,
+    // which is why a staff-payout-... reference was showing up in that
+    // service's own "missing reference" warning.
+    const reference = body.reference ?? body.data?.reference ?? body.data?.transfers?.[0]?.reference ?? body.data?.details?.body?.reference;
 
-  
+    // Dev Feedback Round 9: Paystack only supports ONE Transfer Approval
+
     const approved = reference?.startsWith('staff-payout-')
       ? await this.staffPayoutService.validateTransferApproval(req.body)
       : await this.transferApprovalService.validateTransferApproval(req.body);
