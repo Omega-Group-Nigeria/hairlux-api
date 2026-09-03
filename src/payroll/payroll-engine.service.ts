@@ -92,7 +92,7 @@ export class PayrollEngineService {
         const payslip = await this.prisma.payslip.findUnique({
             where: { id: payslipId },
             include: {
-                staff: { select: { id: true, name: true, staffCode: true, currentRole: true, location: { select: { name: true } } } },
+                staff: { select: { id: true, name: true, staffCode: true, currentRole: true, compensationType: true, location: { select: { name: true } } } },
                 payrollPeriod: { select: { label: true, periodStart: true, periodEnd: true } },
             },
         });
@@ -174,7 +174,16 @@ export class PayrollEngineService {
         drawRow('Base Salary', payslip.baseSalary, y); y -= 18;
         if (Number(payslip.allowances) > 0) { drawRow('Allowances', payslip.allowances, y); y -= 18; }
         if (Number(payslip.overtimeAmount) > 0) { drawRow('Overtime', payslip.overtimeAmount, y); y -= 18; }
-        if (Number(payslip.commissionPaid) > 0) { drawRow('Commission', payslip.commissionPaid, y); y -= 18; }
+        // Dev Feedback Round 9: was gated on commissionPaid > 0 -- for
+        // COMMISSION-only staff, commissionPaid is now deliberately 0
+        // (their commission flows into gross via entitledSalary/Base
+        // Salary instead, to run through the same tax/pension formula
+        // every other type uses), so this line would otherwise silently
+        // vanish for exactly the staff whose payslip most needs it.
+        // commissionEarned is the informational, always-accurate figure
+        // regardless of type -- shown here instead, so the earnings
+        // breakdown always explains where the money actually came from.
+        if (Number(payslip.commissionEarned) > 0) { drawRow('Commission', payslip.commissionEarned, y); y -= 18; }
         if (Number(payslip.bonusTotal) > 0) { drawRow('Bonus', payslip.bonusTotal, y); y -= 18; }
         if (Number(payslip.extraWorkDayEarnings) > 0) { drawRow('Extra Work Day Earnings', payslip.extraWorkDayEarnings, y); y -= 18; }
         y -= 6;
@@ -586,7 +595,20 @@ export class PayrollEngineService {
         // window naturally earns zero commission (calc.commissionEarned
         // is already 0 in that case), rather than needing a separate
         // zeroing step here.
-        const commissionPaid = commissionEarned;
+        //
+        // Dev Feedback Round 9: zeroed specifically for COMMISSION-only
+        // staff -- their commission now flows into gross pay through
+        // entitledSalary (dailyRate * payableWorkdays, both newly
+        // populated for this type in the salary calculator) instead of
+        // through this field directly. Adding commissionPaid on top of
+        // that here would double-count the exact same money. SALARY_
+        // PLUS_COMMISSION and SALARY_TO_COMMISSION are unaffected --
+        // their entitledSalary is driven entirely by baseSalary, so
+        // commissionPaid remains the ONLY place their commission enters
+        // gross pay, exactly as before. commissionEarned itself (the
+        // informational, always-true-figure field, shown as "Commission
+        // earned" wherever it's displayed) is untouched either way.
+        const commissionPaid = staff.compensationType === 'COMMISSION' ? 0 : commissionEarned;
 
         const bonusTotal = adjustments.filter((a: any) => a.type === 'BONUS').reduce((sum: number, a: any) => sum + Number(a.amount), 0);
         const deductionAdjustments = adjustments.filter((a: any) => a.type === 'DEDUCTION');
