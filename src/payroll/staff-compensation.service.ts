@@ -48,10 +48,19 @@ export class StaffCompensationService {
     async getCurrentCompensation(staffId: string) {
         const staff = await this.prisma.staff.findUnique({
             where: { id: staffId },
-            select: { currentBaseSalary: true, currentAllowances: true },
+            select: { currentBaseSalary: true, currentAllowances: true, compensationType: true },
         });
         if (!staff) throw new NotFoundException('Staff member not found');
-        return staff;
+
+        if (staff.compensationType !== 'COMMISSION') return staff;
+
+        const startOfThisMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const agg = await this.prisma.salonBookingCommission.aggregate({
+            where: { staffId, calculatedAt: { gte: startOfThisMonth } },
+            _sum: { amount: true },
+        });
+
+        return { ...staff, commissionThisMonth: Number(agg._sum.amount ?? 0) };
     }
 
     async getHistory(staffId: string) {
