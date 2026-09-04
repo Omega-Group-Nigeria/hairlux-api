@@ -520,7 +520,11 @@ export class PayrollEngineService {
         }
 
         if (manualOverrideFields.length) {
-            merged.grossPay = merged.baseSalary + merged.allowances + merged.overtimeAmount + merged.commissionPaid + merged.bonusTotal;
+            
+            const entitledContribution =
+                Number(payslipData.grossPay) - Number(payslipData.allowances) - Number(payslipData.overtimeAmount) -
+                Number(payslipData.commissionPaid) - Number(payslipData.bonusTotal);
+            merged.grossPay = entitledContribution + merged.allowances + merged.overtimeAmount + merged.commissionPaid + merged.bonusTotal;
             merged.totalDeductions =
                 merged.attendanceDeduction + merged.latePenaltyDeduction + merged.fineTotal + merged.loanRepayment +
                 merged.taxDeduction + merged.pensionDeduction + merged.otherDeductionTotal;

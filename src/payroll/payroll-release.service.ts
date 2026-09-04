@@ -1,12 +1,16 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PayrollAuditService } from './payroll-audit.service';
+import { PayrollEngineService } from './payroll-engine.service';
 
 @Injectable()
 export class PayrollReleaseService {
+    private readonly logger = new Logger(PayrollReleaseService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly payrollAuditService: PayrollAuditService,
+        private readonly payrollEngineService: PayrollEngineService,
     ) { }
 
     async getSettings() {
@@ -64,6 +68,58 @@ export class PayrollReleaseService {
         if (period.status !== 'AWAITING_RELEASE') {
             throw new BadRequestException('Only a period awaiting approval can be approved');
         }
+
+        // Dev Feedback Round 9: an adjustment (bonus, fine, etc.) added
+        // after generatePayroll() ran but before approval used to sit in
+        // the database, correctly linked to this period/staff, but never
+        // actually get folded into the payslip -- nothing between
+        // generation and approval ever recomputed anything, so the
+        // published figures stayed frozen at whatever they were the
+        // moment payroll was generated, silently missing any adjustment
+        // added in between. The only way to pick it up was a full manual
+        // "Recalculate" or a post-release correction after the fact.
+        // Reusing regeneratePayslipForStaff here (same recompute + wallet-
+        // delta-reconciliation logic already proven for individual pre-
+        // release recalculation) for every still-DRAFT payslip, right
+        // before the period actually locks, closes that gap -- whatever
+        // was added right up until the moment of approval is guaranteed
+        // to be reflected in what gets published. Must run while the
+        // period is still AWAITING_RELEASE, since regeneratePayslipForStaff
+        // itself requires that status.
+        //
+        // Concurrent (Promise.allSettled), not sequential -- each staff
+        // member's own wallet/payslip rows are independent of every other
+        // staff member's, so there's no data-race risk running these
+        // together, and a period with many staff no longer means a long
+        // approval request made of dozens of round-trips back to back.
+        //
+        // Each staff member's recompute is individually caught and never
+        // re-thrown -- this is a best-effort freshness pass, not a hard
+        // prerequisite for approval. Letting one staff member's recompute
+        // failure abort the whole operation would silently block
+        // approving the ENTIRE period for everyone else too, worse than
+        // approving with that one payslip's last-known-good figures (the
+        // same figures approval would have published before this
+        // recompute step existed at all) while still getting the benefit
+        // for every other staff member whose recompute succeeds. Failures
+        // are logged so a genuinely broken payslip is still visible, not
+        // swallowed entirely.
+        const draftPayslips = await this.prisma.payslip.findMany({
+            where: { payrollPeriodId: periodId, status: 'DRAFT' },
+            select: { staffId: true },
+        });
+        await Promise.allSettled(
+            draftPayslips.map(({ staffId }: { staffId: string }) =>
+                this.payrollEngineService.regeneratePayslipForStaff(
+                    periodId, staffId, approvedById, 'Final recalculation at approval',
+                ).catch((err) => {
+                    this.logger.error(
+                        `Failed to recompute payslip for staff ${staffId} in period ${periodId} during approval -- proceeding with its last-known-good figures`,
+                        err instanceof Error ? err.stack : String(err),
+                    );
+                }),
+            ),
+        );
 
         const updated = await this.prisma.payrollPeriod.update({
             where: { id: periodId },
