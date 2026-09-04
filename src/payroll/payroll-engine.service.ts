@@ -92,7 +92,7 @@ export class PayrollEngineService {
         const payslip = await this.prisma.payslip.findUnique({
             where: { id: payslipId },
             include: {
-                staff: { select: { id: true, name: true, staffCode: true, currentRole: true, location: { select: { name: true } } } },
+                staff: { select: { id: true, name: true, staffCode: true, currentRole: true, compensationType: true, location: { select: { name: true } } } },
                 payrollPeriod: { select: { label: true, periodStart: true, periodEnd: true } },
             },
         });
@@ -174,7 +174,16 @@ export class PayrollEngineService {
         drawRow('Base Salary', payslip.baseSalary, y); y -= 18;
         if (Number(payslip.allowances) > 0) { drawRow('Allowances', payslip.allowances, y); y -= 18; }
         if (Number(payslip.overtimeAmount) > 0) { drawRow('Overtime', payslip.overtimeAmount, y); y -= 18; }
-        if (Number(payslip.commissionPaid) > 0) { drawRow('Commission', payslip.commissionPaid, y); y -= 18; }
+        // Dev Feedback Round 9: was gated on commissionPaid > 0 -- for
+        // COMMISSION-only staff, commissionPaid is now deliberately 0
+        // (their commission flows into gross via entitledSalary/Base
+        // Salary instead, to run through the same tax/pension formula
+        // every other type uses), so this line would otherwise silently
+        // vanish for exactly the staff whose payslip most needs it.
+        // commissionEarned is the informational, always-accurate figure
+        // regardless of type -- shown here instead, so the earnings
+        // breakdown always explains where the money actually came from.
+        if (Number(payslip.commissionEarned) > 0) { drawRow('Commission', payslip.commissionEarned, y); y -= 18; }
         if (Number(payslip.bonusTotal) > 0) { drawRow('Bonus', payslip.bonusTotal, y); y -= 18; }
         if (Number(payslip.extraWorkDayEarnings) > 0) { drawRow('Extra Work Day Earnings', payslip.extraWorkDayEarnings, y); y -= 18; }
         y -= 6;
@@ -486,6 +495,8 @@ export class PayrollEngineService {
     private applyManualOverrides<T extends Record<string, any>>(
         payslipData: T,
         overrides: PayslipManualOverridesDto | undefined,
+        pensionRate: number,
+        taxRate: number,
     ): { payslipData: T; manualOverrideFields: string[] } {
         if (!overrides) return { payslipData, manualOverrideFields: [] };
 
@@ -511,7 +522,83 @@ export class PayrollEngineService {
         }
 
         if (manualOverrideFields.length) {
-            merged.grossPay = merged.baseSalary + merged.allowances + merged.overtimeAmount + merged.commissionPaid + merged.bonusTotal;
+            // Dev Feedback Round 9: this used to recompute grossPay from
+            // baseSalary -- correct back when baseSalary WAS the gross-pay
+            // driver, but no longer true since the "entitled salary"
+            // refactor (entitledSalary = dailyRate * payableWorkdays is
+            // what actually feeds gross pay now, for every compensation
+            // type, and is never itself stored as a field on payslipData
+            // -- only its already-summed-in effect on grossPay is).
+            // baseSalary is 0 for COMMISSION-only staff specifically,
+            // which meant ANY override silently collapsed their gross pay
+            // to just whatever allowances/bonus/etc. were present,
+            // dropping their entire entitled/commission-derived earnings
+            // -- while taxDeduction, computed earlier against the correct
+            // full gross pay, stayed at its now-orphaned original value,
+            // producing an internally-wrong (sometimes negative) net pay.
+            // Fixed by back-deriving the entitled contribution from the
+            // ORIGINAL, correctly-computed grossPay instead -- "whatever
+            // grossPay component wasn't already accounted for by the
+            // other four additive fields" -- which is correct across
+            // every compensation type without needing to know which one
+            // this payslip is.
+            //
+            // BUT: that back-derivation is exactly what made overriding
+            // baseSalary itself a no-op -- the recomputed entitled
+            // contribution never actually looked at merged.baseSalary,
+            // only at the ORIGINAL grossPay, so typing in a new Base
+            // Salary changed the displayed field but never touched the
+            // real calculation. When baseSalary is one of the overridden
+            // fields (and this is a salary-driven type -- fullMonthScheduledWorkdays/
+            // payableWorkdays are only populated for those), the entitled
+            // contribution is instead recomputed directly from the NEW
+            // baseSalary, via the exact same dailyRate * payableWorkdays
+            // formula the original calculation used -- so the override
+            // actually flows through to gross/net pay, for this payslip
+            // alone, same as every other overridable field already does.
+            const canRecomputeFromNewBaseSalary =
+                manualOverrideFields.includes('baseSalary')
+                && payslipData.fullMonthScheduledWorkdays != null
+                && payslipData.payableWorkdays != null;
+
+            let entitledContribution: number;
+            if (canRecomputeFromNewBaseSalary) {
+                // Dev Feedback Round 9: dailyRate/salaryEarned are ALSO
+                // recomputed from the new baseSalary here (previously
+                // left at their stale, un-overridden values) -- a
+                // payslip meant for manual verification shouldn't show a
+                // Daily rate/Salary earned that silently disagrees with
+                // the Base Salary sitting right above them on the same
+                // document.
+                const newDailyRate = Number(merged.baseSalary) / Number(payslipData.fullMonthScheduledWorkdays);
+                const newSalaryEarned = newDailyRate * Number(payslipData.payableWorkdays);
+                merged.dailyRate = newDailyRate;
+                merged.salaryEarned = newSalaryEarned;
+                entitledContribution = newSalaryEarned;
+            } else {
+                entitledContribution =
+                    Number(payslipData.grossPay) - Number(payslipData.allowances) - Number(payslipData.overtimeAmount) -
+                    Number(payslipData.commissionPaid) - Number(payslipData.bonusTotal);
+            }
+
+            merged.grossPay = entitledContribution + merged.allowances + merged.overtimeAmount + merged.commissionPaid + merged.bonusTotal;
+
+            // Dev Feedback Round 9: tax/pension are formulas OF gross pay,
+            // not independent figures -- previously left untouched
+            // whenever they weren't themselves the field being overridden,
+            // so a baseSalary/allowances/commission/bonus override that
+            // changed gross pay left tax/pension silently anchored to the
+            // stale, pre-override gross pay. Recomputed here from the NEW
+            // gross pay, unless the admin explicitly overrode tax or
+            // pension directly -- an explicit override always wins, same
+            // precedence every other field here already follows.
+            if (!manualOverrideFields.includes('taxDeduction')) {
+                merged.taxDeduction = Math.max(0, merged.grossPay) * taxRate;
+            }
+            if (!manualOverrideFields.includes('pensionDeduction')) {
+                merged.pensionDeduction = (entitledContribution + merged.allowances) * pensionRate;
+            }
+
             merged.totalDeductions =
                 merged.attendanceDeduction + merged.latePenaltyDeduction + merged.fineTotal + merged.loanRepayment +
                 merged.taxDeduction + merged.pensionDeduction + merged.otherDeductionTotal;
@@ -586,7 +673,20 @@ export class PayrollEngineService {
         // window naturally earns zero commission (calc.commissionEarned
         // is already 0 in that case), rather than needing a separate
         // zeroing step here.
-        const commissionPaid = commissionEarned;
+        //
+        // Dev Feedback Round 9: zeroed specifically for COMMISSION-only
+        // staff -- their commission now flows into gross pay through
+        // entitledSalary (dailyRate * payableWorkdays, both newly
+        // populated for this type in the salary calculator) instead of
+        // through this field directly. Adding commissionPaid on top of
+        // that here would double-count the exact same money. SALARY_
+        // PLUS_COMMISSION and SALARY_TO_COMMISSION are unaffected --
+        // their entitledSalary is driven entirely by baseSalary, so
+        // commissionPaid remains the ONLY place their commission enters
+        // gross pay, exactly as before. commissionEarned itself (the
+        // informational, always-true-figure field, shown as "Commission
+        // earned" wherever it's displayed) is untouched either way.
+        const commissionPaid = staff.compensationType === 'COMMISSION' ? 0 : commissionEarned;
 
         const bonusTotal = adjustments.filter((a: any) => a.type === 'BONUS').reduce((sum: number, a: any) => sum + Number(a.amount), 0);
         const deductionAdjustments = adjustments.filter((a: any) => a.type === 'DEDUCTION');
@@ -608,44 +708,43 @@ export class PayrollEngineService {
 
         const overtimeAmount = 0; // no overtime-rate tracking exists yet — always 0 until that's built
 
-        // Dev Feedback Round 9: tax and pension must be computed on the
-        // full ENTITLED compensation for the period, not the amount
-        // actually earned after absence proration -- confirmed by the
-        // user, reversing part of Round 8's item #1. "Entitled" here
-        // still legitimately excludes days before a mid-period hire date
-        // (calc.applicableScheduledWorkdays already reflects that, via
-        // PayrollSalaryCalculatorService's applicableRange) and, for
-        // SALARY_TO_COMMISSION, is scoped to just the salary sub-range --
-        // it only stops excluding ABSENCE specifically, which is what the
-        // user's "if on salary only, your basic salary is your salary"
-        // rule is about. calc.dailyRate/applicableScheduledWorkdays are
-        // both null for COMMISSION-only staff (no salary component at
-        // all), so entitledSalary correctly resolves to 0 there --
-        // commission has no separate "entitled vs earned" distinction,
-        // since it's transaction-based rather than day-based; whatever
-        // was earned is what's entitled.
-        const entitledSalary = (calc.dailyRate !== null && calc.applicableScheduledWorkdays !== null)
-            ? calc.dailyRate * calc.applicableScheduledWorkdays
+   
+        // Dev Feedback Round 9: reverted -- entitled salary is now
+        // dailyRate * payableWorkdays (payableWorkdays already reflects
+        // the absence reduction: scheduledWorkdays - missedWorkdays +
+        // approvedExtraWorkdays), which is the exact same formula
+        // calc.salaryEarned itself uses. Gross pay, tax, and pension are
+        // therefore back to being computed on what was actually worked,
+        // not on the full scheduled-workday entitlement -- "we only want
+        // to pay for days worked." calc.dailyRate/payableWorkdays are
+        // both null for COMMISSION-only staff, so entitledSalary
+        // correctly resolves to 0 there -- commission has no separate
+        // "entitled vs earned" distinction, since it's transaction-based
+        // rather than day-based; whatever was earned is what's entitled.
+        const entitledSalary = (calc.dailyRate !== null && calc.payableWorkdays !== null)
+            ? calc.dailyRate * calc.payableWorkdays
             : 0;
-        // The gap between what was entitled and what was actually earned
-        // (calc.salaryEarned) is exactly the absence effect -- reintroduced
-        // here as its own deduction line (the attendance_deduction column
-        // already existed from before Round 8 and was just sitting unused
-        // at a hardcoded 0) rather than folded into a shrunk gross pay.
-        // Can go negative if approved extra workdays outweigh missed ones
-        // this period -- that's correct, it nets against the other
-        // deductions as a small bonus rather than being clamped to 0.
+        // entitledSalary and calc.salaryEarned are now the same formula,
+        // so this is always exactly 0 -- kept as a real, computed field
+        // (rather than deleted) so a future re-divergence of the two
+        // formulas doesn't silently stop being tracked here; the payslip
+        // PDF and frontend correction-comparison table already only
+        // display a deduction line when its value is > 0, so a
+        // permanent 0 here doesn't show up anywhere on its own.
         const attendanceDeduction = entitledSalary - calc.salaryEarned;
 
         const grossPay = entitledSalary + allowances + overtimeAmount + commissionPaid + bonusTotal;
+        // Dev Feedback Round 9: tax is now computed first, directly on
+        // the full gross pay -- previously pension was deducted first to
+        // arrive at a reduced "taxable income" base, with tax computed
+        // on THAT smaller amount (the common "pension is tax-deductible"
+        // pattern). Reversed on request: tax no longer gets a pension-
+        // sized discount before it's calculated. Pension's own base
+        // (entitledSalary + allowances) is unchanged -- it was never
+        // computed from a post-tax figure either way, so reordering
+        // which one is "first" only actually changes tax's base here.
+        const taxDeduction = Math.max(0, grossPay) * taxRate;
         const pensionDeduction = (entitledSalary + allowances) * pensionRate;
-        const taxableIncome = grossPay - pensionDeduction;
-        // Dev Feedback Round 8: replaced the progressive PAYE-band
-        // calculation with a flat, admin-configurable rate on the same
-        // taxableIncome base (gross pay minus pension) -- see
-        // PayrollSettings.taxRate's own schema comment for why it
-        // defaults to 0 rather than a guessed percentage.
-        const taxDeduction = Math.max(0, taxableIncome) * taxRate;
 
         const totalDeductions =
             attendanceDeduction + latePenaltyDeduction + fineTotal + loanRepayment + taxDeduction + pensionDeduction + otherDeductionTotal;
@@ -787,7 +886,7 @@ export class PayrollEngineService {
         const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
 
         const { payslipData: recalculated, adjustments } = await this.computePayslipFigures(staff, period, periodId, pensionRate, taxRate, cutoffDay);
-        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides);
+        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides, pensionRate, taxRate);
         const oldNetPay = Number(existingPayslip.netPay);
 
         const updated = await this.prisma.payslip.update({
@@ -911,7 +1010,7 @@ export class PayrollEngineService {
         const { payslipData: recalculated, adjustments } = await this.computePayslipFigures(
             original.staff, original.payrollPeriod, original.payrollPeriodId, pensionRate, taxRate, cutoffDay,
         );
-        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides);
+        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides, pensionRate, taxRate);
 
         // How many times has this (period, staff) pair already been
         // corrected? Determines the new reference's suffix -- each

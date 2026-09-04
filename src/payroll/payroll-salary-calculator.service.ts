@@ -3,8 +3,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AttendanceSummaryService } from '../attendance/attendance-summary.service';
 
 export interface SalaryCalculationResult {
-    // Always present when compensationType !== 'COMMISSION'.
     salaryEffectiveDate: Date | null;
+    // fullMonthScheduledWorkdays stays null for COMMISSION -- there's no
+    // "full calendar month" baseline to prorate a commission-only figure
+    // against (unlike a fixed monthly baseSalary), only the applicable
+    // range's own scheduled days. dailyRate/salaryEarned, by contrast,
+    // ARE populated for COMMISSION now too -- see that branch's own
+    // comment for why.
     fullMonthScheduledWorkdays: number | null;
     applicableScheduledWorkdays: number | null;
     missedWorkdays: number | null;
@@ -236,24 +241,65 @@ export class PayrollSalaryCalculatorService {
 
         // COMMISSION-only staff: no salary section applies (guide, section
         // 11: "Salary, start-date, and cutoff fields do not apply to
-        // commission-only employees") -- fullMonthScheduledWorkdays,
-        // dailyRate, and salaryEffectiveDate stay null. But rule 4 ("Daily
-        // Pay = Total Earned Commission / Confirmed Work Days") still needs
-        // a workday breakdown, which previously wasn't computed at all here.
+        // commission-only employees") -- fullMonthScheduledWorkdays and
+        // salaryEffectiveDate stay null (no fixed monthly baseline exists
+        // to prorate against). dailyRate/salaryEarned, however, ARE now
+        // populated: commissionEarned is treated as "salary for the
+        // month" -- spread evenly across this period's scheduled days to
+        // get a daily rate, then applied to payableWorkdays, the exact
+        // same structural role dailyRate/salaryEarned play for SALARY
+        // (post the "we only want to pay for days worked" change) --
+        // so gross pay, tax, and pension run through the SAME formula for
+        // every compensation type, rather than commission-only silently
+        // getting 0 pension/tax the way it did while dailyRate stayed null.
         if (compType === 'COMMISSION') {
             const { scheduledWorkdays, missedWorkdays, approvedExtraWorkdays } = await this.rangeWorkdayBreakdown(staff.id, applicableRange);
             result.applicableScheduledWorkdays = scheduledWorkdays;
             result.missedWorkdays = missedWorkdays;
             result.approvedExtraWorkdaysCount = approvedExtraWorkdays;
-            const payableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
+
+            const rawPayableWorkdays = scheduledWorkdays - missedWorkdays + approvedExtraWorkdays;
+            // Dev Feedback Round 9: capped at scheduledWorkdays -- this is
+            // the actual root fix (capping salaryEarned alone, further
+            // down, was incomplete). payroll-engine.service.ts's
+            // computePayslipFigures computes entitledSalary independently,
+            // as calc.dailyRate * calc.payableWorkdays directly -- it never
+            // reads salaryEarned at all, only uses it afterward to derive
+            // attendanceDeduction = entitledSalary - salaryEarned. So
+            // capping salaryEarned alone left entitledSalary (and
+            // therefore grossPay) still inflated by extra approved days,
+            // with the difference showing up as a confusing POSITIVE
+            // "Attendance" deduction line trying to claw back an inflation
+            // that should never have happened in the first place. Capping
+            // payableWorkdays itself, here, means every downstream reader
+            // of calc.payableWorkdays (both this file's own salaryEarned
+            // below AND entitledSalary in the other file) is correctly
+            // bounded from the same single source, rather than needing a
+            // separate cap in each place that happens to multiply by it.
+            // Only ever caps the extra-days side -- missed days still
+            // correctly reduce this below scheduledWorkdays.
+            const payableWorkdays = Math.min(rawPayableWorkdays, scheduledWorkdays);
             result.payableWorkdays = payableWorkdays;
             result.confirmedWorkdays = payableWorkdays;
 
             result.commissionEarned = await this.commissionEarnedInRange(staff.id, applicableRange);
+            result.dailyRate = scheduledWorkdays > 0 ? result.commissionEarned / scheduledWorkdays : 0;
+            // Math.min(..., commissionEarned) kept as defense-in-depth --
+            // with payableWorkdays now capped above, this should always
+            // evaluate to exactly commissionEarned on its own in the
+            // capped case (dailyRate * scheduledWorkdays === commissionEarned
+            // by construction), never lower than the min() would already
+            // produce, but costs nothing to leave in place.
+            result.salaryEarned = Math.min(result.dailyRate * payableWorkdays, result.commissionEarned);
+            // Rule 4: Daily Pay = Total Earned Commission / scheduled Work
+            // Days -- kept on payableWorkdays specifically to match rules
+            // 1-3's own already-confirmed convention (their own
+            // effectiveDailyPay lines divide by payableWorkdays too, not
+            // literal scheduledWorkdays), for consistency across all four.
             result.effectiveDailyPay = payableWorkdays > 0 ? result.commissionEarned / payableWorkdays : 0;
             return result;
         }
-
+        
         // Section 6: the daily-rate DENOMINATOR (dailyRate, which actually
         // drives salaryEarned) is always the full month regardless of hire
         // date or attendance -- see fullMonthScheduledWorkdays doc comment.

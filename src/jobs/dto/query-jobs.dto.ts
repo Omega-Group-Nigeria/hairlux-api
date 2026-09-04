@@ -33,7 +33,7 @@ export class QueryJobsDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  limit?: number = 10;
+  limit?: number = 20;
 
   @ApiPropertyOptional({ description: 'Filter by branch (StaffLocation ID)' })
   @IsOptional()

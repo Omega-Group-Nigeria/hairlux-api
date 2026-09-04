@@ -139,6 +139,8 @@ export class CommissionPlanService {
             data: {
                 ...(dto.compensationType !== undefined && { compensationType: dto.compensationType as any }),
                 ...(dto.commissionPlanId !== undefined && { commissionPlanId: dto.commissionPlanId }),
+                
+                ...(dto.compensationType === 'COMMISSION' && { currentBaseSalary: null, currentAllowances: null }),
             },
         });
 
