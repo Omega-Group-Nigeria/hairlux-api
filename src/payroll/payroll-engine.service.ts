@@ -495,6 +495,8 @@ export class PayrollEngineService {
     private applyManualOverrides<T extends Record<string, any>>(
         payslipData: T,
         overrides: PayslipManualOverridesDto | undefined,
+        pensionRate: number,
+        taxRate: number,
     ): { payslipData: T; manualOverrideFields: string[] } {
         if (!overrides) return { payslipData, manualOverrideFields: [] };
 
@@ -559,12 +561,44 @@ export class PayrollEngineService {
                 && payslipData.fullMonthScheduledWorkdays != null
                 && payslipData.payableWorkdays != null;
 
-            const entitledContribution = canRecomputeFromNewBaseSalary
-                ? (Number(merged.baseSalary) / Number(payslipData.fullMonthScheduledWorkdays)) * Number(payslipData.payableWorkdays)
-                : Number(payslipData.grossPay) - Number(payslipData.allowances) - Number(payslipData.overtimeAmount) -
-                Number(payslipData.commissionPaid) - Number(payslipData.bonusTotal);
+            let entitledContribution: number;
+            if (canRecomputeFromNewBaseSalary) {
+                // Dev Feedback Round 9: dailyRate/salaryEarned are ALSO
+                // recomputed from the new baseSalary here (previously
+                // left at their stale, un-overridden values) -- a
+                // payslip meant for manual verification shouldn't show a
+                // Daily rate/Salary earned that silently disagrees with
+                // the Base Salary sitting right above them on the same
+                // document.
+                const newDailyRate = Number(merged.baseSalary) / Number(payslipData.fullMonthScheduledWorkdays);
+                const newSalaryEarned = newDailyRate * Number(payslipData.payableWorkdays);
+                merged.dailyRate = newDailyRate;
+                merged.salaryEarned = newSalaryEarned;
+                entitledContribution = newSalaryEarned;
+            } else {
+                entitledContribution =
+                    Number(payslipData.grossPay) - Number(payslipData.allowances) - Number(payslipData.overtimeAmount) -
+                    Number(payslipData.commissionPaid) - Number(payslipData.bonusTotal);
+            }
 
             merged.grossPay = entitledContribution + merged.allowances + merged.overtimeAmount + merged.commissionPaid + merged.bonusTotal;
+
+            // Dev Feedback Round 9: tax/pension are formulas OF gross pay,
+            // not independent figures -- previously left untouched
+            // whenever they weren't themselves the field being overridden,
+            // so a baseSalary/allowances/commission/bonus override that
+            // changed gross pay left tax/pension silently anchored to the
+            // stale, pre-override gross pay. Recomputed here from the NEW
+            // gross pay, unless the admin explicitly overrode tax or
+            // pension directly -- an explicit override always wins, same
+            // precedence every other field here already follows.
+            if (!manualOverrideFields.includes('taxDeduction')) {
+                merged.taxDeduction = Math.max(0, merged.grossPay) * taxRate;
+            }
+            if (!manualOverrideFields.includes('pensionDeduction')) {
+                merged.pensionDeduction = (entitledContribution + merged.allowances) * pensionRate;
+            }
+
             merged.totalDeductions =
                 merged.attendanceDeduction + merged.latePenaltyDeduction + merged.fineTotal + merged.loanRepayment +
                 merged.taxDeduction + merged.pensionDeduction + merged.otherDeductionTotal;
@@ -852,7 +886,7 @@ export class PayrollEngineService {
         const cutoffDay = settings?.salaryToCommissionCutoffDay ?? 15;
 
         const { payslipData: recalculated, adjustments } = await this.computePayslipFigures(staff, period, periodId, pensionRate, taxRate, cutoffDay);
-        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides);
+        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides, pensionRate, taxRate);
         const oldNetPay = Number(existingPayslip.netPay);
 
         const updated = await this.prisma.payslip.update({
@@ -976,7 +1010,7 @@ export class PayrollEngineService {
         const { payslipData: recalculated, adjustments } = await this.computePayslipFigures(
             original.staff, original.payrollPeriod, original.payrollPeriodId, pensionRate, taxRate, cutoffDay,
         );
-        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides);
+        const { payslipData, manualOverrideFields } = this.applyManualOverrides(recalculated, overrides, pensionRate, taxRate);
 
         // How many times has this (period, staff) pair already been
         // corrected? Determines the new reference's suffix -- each
