@@ -520,10 +520,50 @@ export class PayrollEngineService {
         }
 
         if (manualOverrideFields.length) {
-            
-            const entitledContribution =
-                Number(payslipData.grossPay) - Number(payslipData.allowances) - Number(payslipData.overtimeAmount) -
+            // Dev Feedback Round 9: this used to recompute grossPay from
+            // baseSalary -- correct back when baseSalary WAS the gross-pay
+            // driver, but no longer true since the "entitled salary"
+            // refactor (entitledSalary = dailyRate * payableWorkdays is
+            // what actually feeds gross pay now, for every compensation
+            // type, and is never itself stored as a field on payslipData
+            // -- only its already-summed-in effect on grossPay is).
+            // baseSalary is 0 for COMMISSION-only staff specifically,
+            // which meant ANY override silently collapsed their gross pay
+            // to just whatever allowances/bonus/etc. were present,
+            // dropping their entire entitled/commission-derived earnings
+            // -- while taxDeduction, computed earlier against the correct
+            // full gross pay, stayed at its now-orphaned original value,
+            // producing an internally-wrong (sometimes negative) net pay.
+            // Fixed by back-deriving the entitled contribution from the
+            // ORIGINAL, correctly-computed grossPay instead -- "whatever
+            // grossPay component wasn't already accounted for by the
+            // other four additive fields" -- which is correct across
+            // every compensation type without needing to know which one
+            // this payslip is.
+            //
+            // BUT: that back-derivation is exactly what made overriding
+            // baseSalary itself a no-op -- the recomputed entitled
+            // contribution never actually looked at merged.baseSalary,
+            // only at the ORIGINAL grossPay, so typing in a new Base
+            // Salary changed the displayed field but never touched the
+            // real calculation. When baseSalary is one of the overridden
+            // fields (and this is a salary-driven type -- fullMonthScheduledWorkdays/
+            // payableWorkdays are only populated for those), the entitled
+            // contribution is instead recomputed directly from the NEW
+            // baseSalary, via the exact same dailyRate * payableWorkdays
+            // formula the original calculation used -- so the override
+            // actually flows through to gross/net pay, for this payslip
+            // alone, same as every other overridable field already does.
+            const canRecomputeFromNewBaseSalary =
+                manualOverrideFields.includes('baseSalary')
+                && payslipData.fullMonthScheduledWorkdays != null
+                && payslipData.payableWorkdays != null;
+
+            const entitledContribution = canRecomputeFromNewBaseSalary
+                ? (Number(merged.baseSalary) / Number(payslipData.fullMonthScheduledWorkdays)) * Number(payslipData.payableWorkdays)
+                : Number(payslipData.grossPay) - Number(payslipData.allowances) - Number(payslipData.overtimeAmount) -
                 Number(payslipData.commissionPaid) - Number(payslipData.bonusTotal);
+
             merged.grossPay = entitledContribution + merged.allowances + merged.overtimeAmount + merged.commissionPaid + merged.bonusTotal;
             merged.totalDeductions =
                 merged.attendanceDeduction + merged.latePenaltyDeduction + merged.fineTotal + merged.loanRepayment +
