@@ -3,7 +3,10 @@ import { ApiBearerAuth, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags }
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Permission } from '../auth/decorators/permission.decorator';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { AttendanceService } from './attendance.service';
 import { StaffWorkCalendarService } from './staff-work-calendar.service';
 import { AttendanceSummaryService } from './attendance-summary.service';
@@ -16,7 +19,7 @@ import { DecideExtraWorkDayDto } from './dto/decide-extra-work-day.dto';
 @ApiTags('Admin - Attendance')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/attendance')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminAttendanceController {
     constructor(
@@ -30,6 +33,7 @@ export class AdminAttendanceController {
     @ApiParam({ name: 'staffId' })
     @ApiQuery({ name: 'periodStart', description: 'YYYY-MM-DD' })
     @ApiQuery({ name: 'periodEnd', description: 'YYYY-MM-DD' })
+    @Permission(PERMISSIONS.ATTENDANCE_VIEW_REPORTS)
     async getStaffSummary(
         @Param('staffId', ParseUUIDPipe) staffId: string,
         @Query('periodStart') periodStart: string,
@@ -44,6 +48,7 @@ export class AdminAttendanceController {
     @ApiQuery({ name: 'periodStart', description: 'YYYY-MM-DD' })
     @ApiQuery({ name: 'periodEnd', description: 'YYYY-MM-DD' })
     @ApiQuery({ name: 'branchId', required: false })
+    @Permission(PERMISSIONS.ATTENDANCE_VIEW_REPORTS)
     async getAllStaffSummary(
         @Query('periodStart') periodStart: string,
         @Query('periodEnd') periodEnd: string,
@@ -59,6 +64,7 @@ export class AdminAttendanceController {
         description: 'Days not explicitly configured fall back to the company BusinessHours for that day of week.',
     })
     @ApiParam({ name: 'staffId' })
+    @Permission(PERMISSIONS.STAFF_WORK_CALENDAR_READ)
     async getWorkCalendar(@Param('staffId', ParseUUIDPipe) staffId: string) {
         const data = await this.workCalendarService.getCalendar(staffId);
         return { success: true, message: 'Retrieved successfully', data };
@@ -70,6 +76,7 @@ export class AdminAttendanceController {
         description: 'Send one entry per day being configured — up to all 7. Existing days not included are left unchanged.',
     })
     @ApiParam({ name: 'staffId' })
+    @Permission(PERMISSIONS.STAFF_WORK_CALENDAR_MANAGE)
     async setWorkCalendar(@Param('staffId', ParseUUIDPipe) staffId: string, @Body() dto: SetStaffWorkCalendarDto) {
         const data = await this.workCalendarService.setCalendar(staffId, dto);
         return { success: true, message: 'Work calendar updated successfully', data };
@@ -81,6 +88,7 @@ export class AdminAttendanceController {
         description: 'Convenience action for onboarding — by default only fills in days not already explicitly configured for this staff member; pass overwrite=true to replace everything.',
     })
     @ApiParam({ name: 'staffId' })
+    @Permission(PERMISSIONS.STAFF_WORK_CALENDAR_MANAGE)
     async applyBusinessHoursDefault(@Param('staffId', ParseUUIDPipe) staffId: string, @Query('overwrite') overwrite?: string) {
         const data = await this.workCalendarService.applyBusinessHoursDefault(staffId, overwrite === 'true');
         return { success: true, message: 'Default calendar applied successfully', data };
@@ -91,6 +99,7 @@ export class AdminAttendanceController {
         summary: 'Get the late-penalty settings',
         description: 'Grace-period minutes live on Branches (and per-staff overrides) — this only covers the per-minute charge beyond that.',
     })
+    @Permission(PERMISSIONS.ATTENDANCE_MANAGE_LATE_PENALTY)
     async getLatePenaltySettings() {
         const data = await this.attendanceService.getLatePenaltySettings();
         return { success: true, message: 'Late penalty settings retrieved successfully', data };
@@ -98,6 +107,7 @@ export class AdminAttendanceController {
 
     @Patch('late-penalty-settings')
     @ApiOperation({ summary: 'Update the late-penalty settings' })
+    @Permission(PERMISSIONS.ATTENDANCE_MANAGE_LATE_PENALTY)
     async updateLatePenaltySettings(@Body() dto: UpdateLatePenaltySettingsDto) {
         const data = await this.attendanceService.upsertLatePenaltySettings(dto);
         return { success: true, message: 'Late penalty settings updated successfully', data };
@@ -108,6 +118,7 @@ export class AdminAttendanceController {
         summary: 'Extra Work Day approval queue',
         description: 'Attendance records created by a clock-in on a day the staff member\'s own calendar marks OFF. Defaults to PENDING; pass status to view APPROVED/REJECTED history instead.',
     })
+    @Permission(PERMISSIONS.ATTENDANCE_APPROVE_CORRECTION)
     async getExtraWorkDayQueue(
         @Query('branchId') branchId?: string,
         @Query('staffId') staffId?: string,
@@ -120,6 +131,7 @@ export class AdminAttendanceController {
     @Patch('extra-work-days/:id/approve')
     @ApiOperation({ summary: 'Approve an Extra Work Day — makes it eligible for payroll inclusion' })
     @ApiParam({ name: 'id', description: 'Attendance record ID' })
+    @Permission(PERMISSIONS.ATTENDANCE_APPROVE_CORRECTION)
     async approveExtraWorkDay(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DecideExtraWorkDayDto, @Req() req: any) {
         const data = await this.attendanceService.decideExtraWorkDay(id, req.user.id, true, dto.note);
         return { success: true, message: 'Extra work day approved successfully', data };
@@ -128,13 +140,15 @@ export class AdminAttendanceController {
     @Patch('extra-work-days/:id/reject')
     @ApiOperation({ summary: 'Reject an Extra Work Day' })
     @ApiParam({ name: 'id', description: 'Attendance record ID' })
+    @Permission(PERMISSIONS.ATTENDANCE_REJECT_CORRECTION)
     async rejectExtraWorkDay(@Param('id', ParseUUIDPipe) id: string, @Body() dto: DecideExtraWorkDayDto, @Req() req: any) {
         const data = await this.attendanceService.decideExtraWorkDay(id, req.user.id, false, dto.note);
         return { success: true, message: 'Extra work day rejected successfully', data };
     }
 
     @Get()
-@ApiOperation({ summary: 'List attendance records, filterable by staff/branch/date range' })
+    @ApiOperation({ summary: 'List attendance records, filterable by staff/branch/date range' })
+    @Permission(PERMISSIONS.ATTENDANCE_READ)
     async findAll(@Query() query: QueryAttendanceDto) {
         const data = await this.attendanceService.findAllAdmin(query);
         return { success: true, message: 'Attendance records retrieved successfully', data };
@@ -148,6 +162,7 @@ export class AdminAttendanceController {
     @ApiParam({ name: 'id', description: 'Attendance record ID' })
     @ApiResponse({ status: 200, description: 'Attendance record corrected successfully' })
     @ApiResponse({ status: 404, description: 'Attendance record not found' })
+    @Permission(PERMISSIONS.ATTENDANCE_EDIT_RECORD)
     async correct(
         @Param('id', ParseUUIDPipe) id: string,
         @Body() dto: CorrectAttendanceDto,

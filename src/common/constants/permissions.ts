@@ -79,10 +79,109 @@ export const PERMISSIONS = {
   STAFF_READ: 'staff:read', // View staff records
   STAFF_CREATE: 'staff:create', // Create staff records
   STAFF_UPDATE: 'staff:update', // Edit staff profile and history
-  STAFF_ARCHIVE: 'staff:archive', // Archive / restore staff
+  STAFF_ARCHIVE: 'staff:archive', // Archive / restore staff -- STILL covers both; see STAFF_RESTORE below
   STAFF_MANAGE_STATUS: 'staff:manage_status', // Update employment status
   STAFF_MANAGE_LOCATIONS: 'staff:manage_locations', // Manage staff locations
   STAFF_MANAGE_DOCUMENTS: 'staff:manage_documents', // Create/version company documents (contracts, NDA, handbook, etc.)
+  // Dev Feedback Round 9: new granular Staff Records permissions.
+  STAFF_TRANSFER: 'staff:transfer', // Transfer a staff member to a different branch
+  STAFF_ASSIGN_ROLE: 'staff:assign_role', // Assign or change a staff member's admin role
+  // Dev Feedback Round 9: NOT yet wired to the restore endpoint -- that
+  // endpoint still checks STAFF_ARCHIVE (unchanged), since the @Permission
+  // guard requires ALL listed permissions, not "any of", so switching the
+  // restore endpoint to require this NEW key would silently strip restore
+  // access from every role that currently only has STAFF_ARCHIVE granted.
+  // Defined here so it exists in the catalog and can be assigned
+  // alongside STAFF_ARCHIVE going forward, without breaking anyone today.
+  STAFF_RESTORE: 'staff:restore', // Restore an archived staff member (separate from archiving)
+  STAFF_ONBOARDING_READ: 'staff:onboarding_read', // View a staff member's onboarding checklist
+  STAFF_ONBOARDING_MANAGE: 'staff:onboarding_manage', // Manage (check off/edit) a staff member's onboarding checklist
+  STAFF_WORK_CALENDAR_READ: 'staff:work_calendar_read', // View a staff member's work calendar
+  STAFF_WORK_CALENDAR_MANAGE: 'staff:work_calendar_manage', // Manage a staff member's work calendar
+  STAFF_PAYROLL_METHOD_READ: 'staff:payroll_method_read', // View a staff member's payroll method (compensation type/plan)
+  STAFF_PAYROLL_METHOD_MANAGE: 'staff:payroll_method_manage', // Manage a staff member's payroll method
+
+  // ── Company Documents ────────────────────────────────────────────────────────
+  // Dev Feedback Round 9: distinct from STAFF_MANAGE_DOCUMENTS above (which
+  // is the existing, coarser permission already wired to the current
+  // document-management endpoints) -- this is the new, fully granular
+  // breakdown requested. Not yet wired to any endpoint: doing so means
+  // deciding how it relates to STAFF_MANAGE_DOCUMENTS (replace it,
+  // supplement it, or scope it to a different document type) rather than
+  // guessing that here.
+  COMPANY_DOCUMENTS_READ: 'company_documents:read',
+  COMPANY_DOCUMENTS_UPLOAD: 'company_documents:upload',
+  COMPANY_DOCUMENTS_UPDATE: 'company_documents:update',
+  COMPANY_DOCUMENTS_DOWNLOAD: 'company_documents:download',
+  COMPANY_DOCUMENTS_DELETE: 'company_documents:delete',
+  COMPANY_DOCUMENTS_ARCHIVE: 'company_documents:archive',
+  COMPANY_DOCUMENTS_RESTORE: 'company_documents:restore',
+  COMPANY_DOCUMENTS_MANAGE_CATEGORIES: 'company_documents:manage_categories',
+
+  // ── Announcements, Packs & Directives ────────────────────────────────────────
+  // Dev Feedback Round 9: no Announcements/Packs/Directives module exists
+  // in the backend yet -- these keys are forward scaffolding only, ready
+  // for whenever that feature is actually built. Nothing to wire them to today.
+  ANNOUNCEMENTS_READ: 'announcements:read',
+  ANNOUNCEMENTS_CREATE: 'announcements:create',
+  ANNOUNCEMENTS_UPDATE: 'announcements:update',
+  ANNOUNCEMENTS_PUBLISH: 'announcements:publish',
+  ANNOUNCEMENTS_SCHEDULE: 'announcements:schedule',
+  ANNOUNCEMENTS_DELETE: 'announcements:delete',
+  ANNOUNCEMENTS_ARCHIVE: 'announcements:archive',
+  ANNOUNCEMENTS_RESTORE: 'announcements:restore',
+  ANNOUNCEMENTS_MANAGE_AUDIENCE: 'announcements:manage_audience',
+
+  // ── Tasks ─────────────────────────────────────────────────────────────────────
+  // Dev Feedback Round 9: no Tasks module exists in the backend yet --
+  // same as Announcements above, forward scaffolding only.
+  TASKS_READ: 'tasks:read',
+  TASKS_CREATE: 'tasks:create',
+  TASKS_UPDATE: 'tasks:update',
+  TASKS_DELETE: 'tasks:delete',
+  TASKS_ASSIGN: 'tasks:assign',
+  TASKS_REASSIGN: 'tasks:reassign',
+  TASKS_UPDATE_STATUS: 'tasks:update_status',
+  TASKS_MARK_COMPLETE: 'tasks:mark_complete',
+  TASKS_APPROVE_COMPLETION: 'tasks:approve_completion',
+  TASKS_REOPEN: 'tasks:reopen',
+
+  // ── Attendance (granular) ────────────────────────────────────────────────────
+  // Dev Feedback Round 9: the Attendance module exists and has working
+  // endpoints, but is currently protected only by a blanket
+  // @Roles(ADMIN, SUPER_ADMIN) check at the controller level -- no
+  // granular @Permission checks per action at all. These keys are defined
+  // and ready, but NOT YET wired to the actual endpoints -- converting
+  // ~10+ endpoints across two controllers from a role-only check to
+  // per-action permission checks is real, careful work on its own,
+  // deliberately not rushed through in the same pass as everything else.
+  ATTENDANCE_READ: 'attendance:read',
+  ATTENDANCE_CHECK_IN: 'attendance:check_in',
+  ATTENDANCE_CHECK_OUT: 'attendance:check_out',
+  ATTENDANCE_CREATE_RECORD: 'attendance:create_record',
+  ATTENDANCE_EDIT_RECORD: 'attendance:edit_record',
+  ATTENDANCE_SUBMIT_CORRECTION: 'attendance:submit_correction',
+  ATTENDANCE_APPROVE_CORRECTION: 'attendance:approve_correction',
+  ATTENDANCE_REJECT_CORRECTION: 'attendance:reject_correction',
+  ATTENDANCE_MANAGE_LATE_PENALTY: 'attendance:manage_late_penalty',
+  ATTENDANCE_MANAGE_PUBLIC_HOLIDAYS: 'attendance:manage_public_holidays',
+  ATTENDANCE_VIEW_REPORTS: 'attendance:view_reports',
+  ATTENDANCE_EXPORT_REPORTS: 'attendance:export_reports',
+  ATTENDANCE_MANAGE_SETTINGS: 'attendance:manage_settings',
+
+  // ── Leave Requests (granular) ────────────────────────────────────────────────
+  // Dev Feedback Round 9: same situation as Attendance above -- module
+  // exists, currently blanket-role-protected only, these keys are defined
+  // but not yet wired to the actual leave-request endpoints.
+  LEAVE_READ: 'leave:read',
+  LEAVE_SUBMIT: 'leave:submit',
+  LEAVE_UPDATE: 'leave:update',
+  LEAVE_CANCEL: 'leave:cancel',
+  LEAVE_APPROVE: 'leave:approve',
+  LEAVE_REJECT: 'leave:reject',
+  LEAVE_MANAGE_TYPES: 'leave:manage_types',
+  LEAVE_MANAGE_POLICY: 'leave:manage_policy',
+  LEAVE_MANAGE_BALANCE: 'leave:manage_balance',
 
   // ── Suppliers & Vendors (Contacts) ───────────────────────────────────────────
   SUPPLIERS_READ: 'suppliers:read', // View suppliers/vendors and what they supply
@@ -117,6 +216,7 @@ export const PERMISSIONS = {
   PURCHASES_READ: 'purchases:read',
   PURCHASES_RECORD_PAYMENT: 'purchases:record_payment',
   PURCHASES_RECEIVE_GOODS: 'purchases:receive_goods',
+  PURCHASES_ACCEPT_GOODS: 'purchases:accept_goods',
 
   // ── Financial Transactions (Procurement Integration) ──────────────────────
   FINANCIAL_TRANSACTIONS_READ: 'financial_transactions:read',
@@ -429,6 +529,89 @@ export const PERMISSION_GROUPS = [
         key: PERMISSIONS.STAFF_MANAGE_DOCUMENTS,
         label: 'Create and version company documents (contracts, NDA, handbook, etc.)',
       },
+      { key: PERMISSIONS.STAFF_TRANSFER, label: 'Transfer a staff member to a different branch' },
+      { key: PERMISSIONS.STAFF_ASSIGN_ROLE, label: "Assign or change a staff member's admin role" },
+      { key: PERMISSIONS.STAFF_RESTORE, label: 'Restore an archived staff member (not yet enforced separately from Archive and restore staff above)' },
+      { key: PERMISSIONS.STAFF_ONBOARDING_READ, label: "View a staff member's onboarding checklist" },
+      { key: PERMISSIONS.STAFF_ONBOARDING_MANAGE, label: "Manage a staff member's onboarding checklist" },
+      { key: PERMISSIONS.STAFF_WORK_CALENDAR_READ, label: "View a staff member's work calendar" },
+      { key: PERMISSIONS.STAFF_WORK_CALENDAR_MANAGE, label: "Manage a staff member's work calendar" },
+      { key: PERMISSIONS.STAFF_PAYROLL_METHOD_READ, label: "View a staff member's payroll method" },
+      { key: PERMISSIONS.STAFF_PAYROLL_METHOD_MANAGE, label: "Manage a staff member's payroll method" },
+    ],
+  },
+  {
+    group: 'Company Documents',
+    permissions: [
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_READ, label: 'View company documents' },
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_UPLOAD, label: 'Upload company documents' },
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_UPDATE, label: 'Edit company documents' },
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_DOWNLOAD, label: 'Download company documents' },
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_DELETE, label: 'Delete company documents' },
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_ARCHIVE, label: 'Archive company documents' },
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_RESTORE, label: 'Restore archived company documents' },
+      { key: PERMISSIONS.COMPANY_DOCUMENTS_MANAGE_CATEGORIES, label: 'Manage company document categories' },
+    ],
+  },
+  {
+    group: 'Announcements, Packs & Directives',
+    permissions: [
+      { key: PERMISSIONS.ANNOUNCEMENTS_READ, label: 'View announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_CREATE, label: 'Create announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_UPDATE, label: 'Edit announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_PUBLISH, label: 'Publish announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_SCHEDULE, label: 'Schedule announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_DELETE, label: 'Delete announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_ARCHIVE, label: 'Archive announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_RESTORE, label: 'Restore archived announcements, packs, and directives' },
+      { key: PERMISSIONS.ANNOUNCEMENTS_MANAGE_AUDIENCE, label: 'Manage which audience an announcement targets' },
+    ],
+  },
+  {
+    group: 'Tasks',
+    permissions: [
+      { key: PERMISSIONS.TASKS_READ, label: 'View tasks' },
+      { key: PERMISSIONS.TASKS_CREATE, label: 'Create tasks' },
+      { key: PERMISSIONS.TASKS_UPDATE, label: 'Edit tasks' },
+      { key: PERMISSIONS.TASKS_DELETE, label: 'Delete tasks' },
+      { key: PERMISSIONS.TASKS_ASSIGN, label: 'Assign tasks' },
+      { key: PERMISSIONS.TASKS_REASSIGN, label: 'Reassign tasks' },
+      { key: PERMISSIONS.TASKS_UPDATE_STATUS, label: 'Update task status' },
+      { key: PERMISSIONS.TASKS_MARK_COMPLETE, label: 'Mark a task complete' },
+      { key: PERMISSIONS.TASKS_APPROVE_COMPLETION, label: 'Approve a task marked complete' },
+      { key: PERMISSIONS.TASKS_REOPEN, label: 'Reopen a closed task' },
+    ],
+  },
+  {
+    group: 'Attendance (granular)',
+    permissions: [
+      { key: PERMISSIONS.ATTENDANCE_READ, label: 'View attendance records' },
+      { key: PERMISSIONS.ATTENDANCE_CHECK_IN, label: 'Check in' },
+      { key: PERMISSIONS.ATTENDANCE_CHECK_OUT, label: 'Check out' },
+      { key: PERMISSIONS.ATTENDANCE_CREATE_RECORD, label: 'Create an attendance record' },
+      { key: PERMISSIONS.ATTENDANCE_EDIT_RECORD, label: 'Edit an attendance record' },
+      { key: PERMISSIONS.ATTENDANCE_SUBMIT_CORRECTION, label: 'Submit an attendance correction' },
+      { key: PERMISSIONS.ATTENDANCE_APPROVE_CORRECTION, label: 'Approve an attendance correction' },
+      { key: PERMISSIONS.ATTENDANCE_REJECT_CORRECTION, label: 'Reject an attendance correction' },
+      { key: PERMISSIONS.ATTENDANCE_MANAGE_LATE_PENALTY, label: 'Update late-penalty settings' },
+      { key: PERMISSIONS.ATTENDANCE_MANAGE_PUBLIC_HOLIDAYS, label: 'Manage public holidays' },
+      { key: PERMISSIONS.ATTENDANCE_VIEW_REPORTS, label: 'View attendance reports' },
+      { key: PERMISSIONS.ATTENDANCE_EXPORT_REPORTS, label: 'Export attendance reports' },
+      { key: PERMISSIONS.ATTENDANCE_MANAGE_SETTINGS, label: 'Manage attendance settings' },
+    ],
+  },
+  {
+    group: 'Leave Requests (granular)',
+    permissions: [
+      { key: PERMISSIONS.LEAVE_READ, label: 'View leave requests' },
+      { key: PERMISSIONS.LEAVE_SUBMIT, label: 'Submit a leave request' },
+      { key: PERMISSIONS.LEAVE_UPDATE, label: 'Edit a leave request' },
+      { key: PERMISSIONS.LEAVE_CANCEL, label: 'Cancel a leave request' },
+      { key: PERMISSIONS.LEAVE_APPROVE, label: 'Approve a leave request' },
+      { key: PERMISSIONS.LEAVE_REJECT, label: 'Reject a leave request' },
+      { key: PERMISSIONS.LEAVE_MANAGE_TYPES, label: 'Manage leave types' },
+      { key: PERMISSIONS.LEAVE_MANAGE_POLICY, label: 'Manage leave policy' },
+      { key: PERMISSIONS.LEAVE_MANAGE_BALANCE, label: 'Manage staff leave balances' },
     ],
   },
   {
@@ -489,6 +672,7 @@ export const PERMISSION_GROUPS = [
       { key: PERMISSIONS.PURCHASES_READ, label: 'View purchases, payments, and receiving history' },
       { key: PERMISSIONS.PURCHASES_RECORD_PAYMENT, label: 'Record a payment made to a vendor' },
       { key: PERMISSIONS.PURCHASES_RECEIVE_GOODS, label: 'Confirm goods received against a purchase' },
+      { key: PERMISSIONS.PURCHASES_ACCEPT_GOODS, label: 'Review a delivery and accept it into usable inventory' },
     ],
   },
   {

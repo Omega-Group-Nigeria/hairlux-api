@@ -318,7 +318,7 @@ export class AdminStaffController {
   }
 
   @Get('onboarding-summary')
-  @Permission(PERMISSIONS.STAFF_READ)
+  @Permission(PERMISSIONS.STAFF_ONBOARDING_READ)
   async getOnboardingSummary() {
     const data = await this.staffService.getOnboardingSummary();
     return { success: true, message: 'Onboarding summary retrieved successfully', data };
@@ -439,7 +439,7 @@ export class AdminStaffController {
   @ApiResponse({ status: 200, description: 'Staff transferred successfully' })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 404, description: 'Staff record or destination branch not found' })
-  @Permission(PERMISSIONS.STAFF_MANAGE_STATUS)
+  @Permission(PERMISSIONS.STAFF_TRANSFER)
   async transferBranch(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: TransferBranchDto,
@@ -757,14 +757,14 @@ export class AdminStaffController {
   }
 
   @Get(':id/onboarding')
-  @Permission(PERMISSIONS.STAFF_READ)
+  @Permission(PERMISSIONS.STAFF_ONBOARDING_READ)
   async getOnboardingItems(@Param('id', ParseUUIDPipe) id: string) {
     const data = await this.staffService.getOnboardingItems(id);
     return { success: true, message: 'Onboarding checklist retrieved successfully', data };
   }
 
   @Patch(':id/onboarding/:itemId')
-  @Permission(PERMISSIONS.STAFF_UPDATE)
+  @Permission(PERMISSIONS.STAFF_ONBOARDING_MANAGE)
   async updateOnboardingItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,
