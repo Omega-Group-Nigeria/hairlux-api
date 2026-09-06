@@ -3,7 +3,10 @@ import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@ne
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { Permission } from '../auth/decorators/permission.decorator';
+import { PERMISSIONS } from '../common/constants/permissions';
 import { LeaveService } from './leave.service';
 import { QueryLeaveRequestDto } from './dto/query-leave-request.dto';
 import { RejectLeaveRequestDto, ReassignLeaveRequestDto } from './dto/leave-request-action.dto';
@@ -11,13 +14,14 @@ import { RejectLeaveRequestDto, ReassignLeaveRequestDto } from './dto/leave-requ
 @ApiTags('Admin - Leave')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin/leave-requests')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionGuard)
 @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
 export class AdminLeaveController {
     constructor(private readonly leaveService: LeaveService) { }
 
     @Get()
     @ApiOperation({ summary: 'List leave requests, filterable by status/type/staff' })
+    @Permission(PERMISSIONS.LEAVE_READ)
     async findAll(@Query() query: QueryLeaveRequestDto) {
         const data = await this.leaveService.findAllAdmin(query);
         return { success: true, message: 'Leave requests retrieved successfully', data };
@@ -25,6 +29,7 @@ export class AdminLeaveController {
 
     @Get('staff-options')
     @ApiOperation({ summary: 'Minimal active staff list for this page\'s own dropdowns -- Dev Feedback Round 6, item #22' })
+    @Permission(PERMISSIONS.LEAVE_READ)
     async listStaffOptions() {
         const data = await this.leaveService.listStaffOptions();
         return { success: true, message: 'Staff options retrieved successfully', data };
@@ -34,6 +39,7 @@ export class AdminLeaveController {
     @ApiOperation({ summary: 'Approve a leave/permission request' })
     @ApiParam({ name: 'id' })
     @ApiResponse({ status: 200, description: 'Leave request approved successfully' })
+    @Permission(PERMISSIONS.LEAVE_APPROVE)
     async approve(@Param('id', ParseUUIDPipe) id: string) {
         const data = await this.leaveService.approve(id);
         return { success: true, message: 'Leave request approved successfully', data };
@@ -42,6 +48,7 @@ export class AdminLeaveController {
     @Patch(':id/reject')
     @ApiOperation({ summary: 'Reject a leave/permission request' })
     @ApiParam({ name: 'id' })
+    @Permission(PERMISSIONS.LEAVE_REJECT)
     async reject(@Param('id', ParseUUIDPipe) id: string, @Body() dto: RejectLeaveRequestDto) {
         const data = await this.leaveService.reject(id, dto);
         return { success: true, message: 'Leave request rejected successfully', data };
@@ -53,6 +60,7 @@ export class AdminLeaveController {
     @ApiResponse({ status: 200, description: 'Leave request reassigned successfully' })
     @ApiResponse({ status: 400, description: 'Request is not pending, or already assigned to that staff member' })
     @ApiResponse({ status: 404, description: 'Request or staff member not found' })
+    @Permission(PERMISSIONS.LEAVE_UPDATE)
     async reassign(@Req() req: any, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReassignLeaveRequestDto) {
         const data = await this.leaveService.reassign(id, dto, req.user?.id);
         return { success: true, message: 'Leave request reassigned successfully', data };

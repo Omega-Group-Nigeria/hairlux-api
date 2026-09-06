@@ -731,6 +731,12 @@ enum PurchasePaymentStatus {
   OVERPAID
 }
 
+enum ProductAcceptanceStatus {
+  PENDING          // no goods received against this purchase yet
+  RECEIVED         // at least one delivery recorded, but at least one goods receipt line hasn't been reviewed for acceptance yet
+  FULLY_ACCEPTED   // every goods receipt line recorded against this purchase has been explicitly accepted (or rejected as damaged/short) -- nothing left pending review
+}
+
 /**
  * Created automatically the moment its source PurchaseRequest is
  * approved -- never created directly, never re-enters product data (spec
@@ -745,6 +751,8 @@ enum PurchasePaymentStatus {
  * "service-maintained snapshot, not recomputed" convention as
  * Staff.currentBaseSalary elsewhere in this codebase, since this field
  * is read constantly (purchase list, Vendor Ledger) and rarely written.
+ * acceptanceStatus is maintained the same way, updated by the service
+ * whenever a delivery is recorded or a goods receipt line is accepted.
  */
 model Purchase {
   id                String                 @id @default(uuid())
@@ -754,6 +762,7 @@ model Purchase {
   vendorId          String                 @map("vendor_id")
   purchaseDate      DateTime               @default(now()) @map("purchase_date")
   status            PurchaseStatus         @default(PENDING)
+  acceptanceStatus  ProductAcceptanceStatus @default(PENDING) @map("acceptance_status")
   paymentStatus     PurchasePaymentStatus  @default(UNPAID) @map("payment_status")
   grandTotal        Decimal                @map("grand_total") @db.Decimal(12, 2)
   amountPaid        Decimal                @default(0) @map("amount_paid") @db.Decimal(12, 2)
@@ -847,17 +856,22 @@ model GoodsReceiptLine {
   purchaseLineId String    @map("purchase_line_id")
   deliveredQty   Int       @map("delivered_qty")
   damagedQty     Int       @default(0) @map("damaged_qty")
-  // Stored explicitly rather than always computed as delivered-damaged --
-  // spec §8 lists Accepted Quantity as its own field, and a stored value
-  // survives correctly even if delivered/damaged figures are later
-  // corrected for record-keeping, without silently changing what actually
-  // already entered inventory.
-  acceptedQty    Int       @map("accepted_qty")
+  // Dev Feedback Round 9: no longer set at receipt time -- stays 0 until
+  // the separate "Accept Products" action reviews this line. acceptedAt/
+  // acceptedById record when/who that review happened; a null acceptedAt
+  // is what "still needs review" actually means now, not just "0 accepted
+  // so far" (a genuine review can also correctly land on 0 accepted --
+  // e.g. everything delivered was damaged -- and that's still a
+  // completed review, distinct from not yet reviewed at all).
+  acceptedQty    Int       @default(0) @map("accepted_qty")
+  acceptedAt     DateTime? @map("accepted_at")
+  acceptedById   String?   @map("accepted_by_id")
   batchLotNumber String?   @map("batch_lot_number")
   expiryDate     DateTime? @map("expiry_date") @db.Date
 
   goodsReceipt GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
   purchaseLine PurchaseLine @relation(fields: [purchaseLineId], references: [id])
+  acceptedBy   Staff?       @relation(fields: [acceptedById], references: [id])
 
   @@index([goodsReceiptId])
   @@index([purchaseLineId])
@@ -2303,15 +2317,10 @@ model Staff {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  location      StaffLocation            @relation(fields: [locationId], references: [id])
-  managedBranch StaffLocation?           @relation("BranchManager")
-  // Dev Feedback Round 4, item #25: additive, not a replacement for
-  // managedBranch above -- that stays the single "manager of record" for
-  // org-chart/reporting purposes. This is a broader, permission-like
-  // grant of which branches' finance data a staff member can access,
-  // independent of it. A staff member's OWN primary branch (location
-  // above) is always accessible without needing a row here at all --
-  // this table only needs entries for the EXTRA branches beyond that.
+    location      StaffLocation            @relation(fields: [locationId], references: [id])
+
+  managedBranches StaffLocation[]         @relation("BranchManager")
+
   additionalFinanceBranches StaffManagedFinanceBranch[]
   histories     StaffEmploymentHistory[]
   codeHistory   StaffCodeHistory[]
@@ -2379,6 +2388,7 @@ model Staff {
   siteStatsUpdates          SiteStats[]
   branchFinanceSettingsUpdates BranchFinanceSettings[]
   goodsReceiptsReceived     GoodsReceipt[]
+  goodsReceiptLinesAccepted GoodsReceiptLine[]
   compensationHistory     StaffCompensationHistory[] @relation("StaffCompensationHistory")
   compensationChangesMade StaffCompensationHistory[] @relation("CompensationChangedBy")
   payrollPeriodsGenerated PayrollPeriod[]            @relation("PayrollGeneratedBy")
@@ -2977,10 +2987,8 @@ model StaffLocation {
 
   lateGracePeriodMinutes Int @default(10) @map("late_grace_period_minutes")
 
-  // Branch Manager — max one active manager per branch, enforced by the unique
-  // constraint below (a staff member can only be the designated manager of one
-  // branch at a time; unset before reassigning them elsewhere).
-  managerId String? @unique @map("manager_id")
+
+  managerId String? @map("manager_id")
   manager   Staff?  @relation("BranchManager", fields: [managerId], references: [id], onDelete: SetNull)
 
   staff                    Staff[]

@@ -15,10 +15,6 @@ export class GoodsReceiptLineDto {
     @IsOptional() @Type(() => Number) @IsInt() @Min(0)
     damagedQty?: number;
 
-    @ApiProperty({ description: 'Quantity actually entering usable inventory -- not necessarily deliveredQty minus damagedQty, there may be other reasons for a gap' })
-    @Type(() => Number) @IsInt() @Min(0)
-    acceptedQty: number;
-
     @ApiPropertyOptional()
     @IsOptional() @IsString()
     batchLotNumber?: string;

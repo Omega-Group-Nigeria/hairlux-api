@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FinancialTransactionService } from '../finance/financial-transaction.service';
 import { RecordPurchasePaymentDto } from './dto/record-purchase-payment.dto';
 import { ReceiveGoodsDto } from './dto/receive-goods.dto';
+import { AcceptGoodsDto } from './dto/accept-goods.dto';
 
 @Injectable()
 export class PurchaseService {
@@ -124,6 +125,13 @@ export class PurchaseService {
      * delivered quantity per line is validated against what was
      * originally ordered on every call, across every receipt so far.
      */
+    /**
+ * Dev Feedback Round 9: this used to ALSO take acceptedQty and credit
+ * inventory in the same action -- now purely records what physically
+ * arrived (delivered/damaged). Accepting it into usable inventory is
+ * the separate acceptGoods() action below, matching the new Pending
+ * -> Received -> Fully Accepted status flow.
+ */
     async receiveGoods(purchaseId: string, dto: ReceiveGoodsDto, receivedById: string | undefined) {
         const purchase = await this.prisma.purchase.findUnique({
             where: { id: purchaseId },
@@ -142,9 +150,9 @@ export class PurchaseService {
             }
 
             const damaged = receiptLine.damagedQty ?? 0;
-            if (receiptLine.acceptedQty + damaged > receiptLine.deliveredQty) {
+            if (damaged > receiptLine.deliveredQty) {
                 throw new BadRequestException(
-                    `For product line ${receiptLine.purchaseLineId}: accepted (${receiptLine.acceptedQty}) + damaged (${damaged}) cannot exceed delivered (${receiptLine.deliveredQty}).`,
+                    `For product line ${receiptLine.purchaseLineId}: damaged (${damaged}) cannot exceed delivered (${receiptLine.deliveredQty}).`,
                 );
             }
 
@@ -163,73 +171,20 @@ export class PurchaseService {
             });
 
             for (const receiptLine of dto.lines) {
-                const purchaseLine = lineById.get(receiptLine.purchaseLineId)!;
-
                 await tx.goodsReceiptLine.create({
                     data: {
                         goodsReceiptId: receipt.id,
                         purchaseLineId: receiptLine.purchaseLineId,
                         deliveredQty: receiptLine.deliveredQty,
                         damagedQty: receiptLine.damagedQty ?? 0,
-                        acceptedQty: receiptLine.acceptedQty,
+                        // acceptedQty/acceptedAt/acceptedById deliberately
+                        // left at their defaults (0/null/null) -- this
+                        // line now needs the separate Accept Products
+                        // action before anything from it enters inventory.
                         batchLotNumber: receiptLine.batchLotNumber,
                         expiryDate: receiptLine.expiryDate ? new Date(receiptLine.expiryDate) : undefined,
                     },
                 });
-
-                if (receiptLine.acceptedQty > 0) {
-                    // Find-or-create the branch's InventoryItem for this
-                    // product -- same pattern InventoryService.approveTransfer
-                    // already uses for a destination branch that has never
-                    // stocked this item before.
-                    let item = await tx.inventoryItem.findFirst({
-                        where: { branchId: purchase.branchId, productId: purchaseLine.productId },
-                    });
-
-                    if (!item) {
-                        const product = await tx.inventoryProduct.findUnique({ where: { id: purchaseLine.productId } });
-                        if (!product) throw new NotFoundException('Product not found');
-                        item = await tx.inventoryItem.create({
-                            data: {
-                                name: product.name,
-                                // Dev Feedback Round 8: InventoryProduct.category
-                                // is now an array (a product can belong to more
-                                // than one), but InventoryItem.category is still
-                                // single-value -- picks the first as a sensible
-                                // default for this auto-created branch item; the
-                                // admin can adjust the item's own category
-                                // afterward if a different one applies here.
-                                // Falls back to FOR_SALE only as a defensive
-                                // guard -- product.category should never actually
-                                // be empty, since the DTO enforces at least one.
-                                category: product.category[0] ?? 'FOR_SALE',
-                                branchId: purchase.branchId,
-                                productId: product.id,
-                                unit: product.unit,
-                                lowStockThreshold: product.lowStockThreshold,
-                                price: product.sellingPrice,
-                                expiryDate: receiptLine.expiryDate ? new Date(receiptLine.expiryDate) : undefined,
-                            },
-                        });
-                    }
-
-                    await tx.inventoryItem.update({
-                        where: { id: item.id },
-                        data: { storeStock: { increment: receiptLine.acceptedQty } },
-                    });
-
-                    await tx.stockMovement.create({
-                        data: {
-                            itemId: item.id,
-                            type: StockMovementType.RECEIVED,
-                            stockType: StockType.STORE,
-                            quantityDelta: receiptLine.acceptedQty,
-                            referenceId: receipt.id,
-                            performedById: receivedById,
-                            reason: `Goods receipt for Purchase #${purchase.purchaseNumber}`,
-                        },
-                    });
-                }
             }
 
             // Recompute overall Purchase status from cumulative delivered
@@ -254,10 +209,140 @@ export class PurchaseService {
                         : anyReceived
                             ? PurchaseStatus.PARTIALLY_RECEIVED
                             : purchase.status,
+                    // Dev Feedback Round 9: a delivery arriving always
+                    // means "there's now something to review" -- moves
+                    // PENDING -> RECEIVED. Never moves it BACKWARD from
+                    // FULLY_ACCEPTED to RECEIVED just because a further,
+                    // separate delivery came in against the same purchase
+                    // (a real scenario -- multiple partial deliveries are
+                    // normal) -- that new delivery's own lines correctly
+                    // still need their own review, but acceptGoods()
+                    // recomputes acceptanceStatus fresh from ALL receipt
+                    // lines' review state every time it runs, so an
+                    // already-FULLY_ACCEPTED purchase would only actually
+                    // move back to RECEIVED once acceptGoods next runs and
+                    // finds this new, still-unreviewed line -- setting it
+                    // eagerly here too (rather than leaving a stale
+                    // FULLY_ACCEPTED sitting alongside a newly-unreviewed
+                    // line until the next accept action) is what keeps the
+                    // status honest in the meantime.
+                    acceptanceStatus: purchase.acceptanceStatus === 'PENDING' ? 'RECEIVED' : purchase.acceptanceStatus === 'FULLY_ACCEPTED' ? 'RECEIVED' : purchase.acceptanceStatus,
                 },
             });
 
             return tx.goodsReceipt.findUnique({ where: { id: receipt.id }, include: { lines: true } });
+        });
+    }
+
+    /**
+     * Dev Feedback Round 9: the "Accept Products" action -- the second,
+     * separate step of the new Pending -> Received -> Fully Accepted
+     * flow. Reviews specific still-pending goods receipt lines (a line
+     * that already has acceptedAt set can't be re-accepted -- each line
+     * is reviewed exactly once) and, for whatever's actually accepted,
+     * credits it into usable inventory -- this is where that crediting
+     * logic moved to, out of receiveGoods.
+     */
+    async acceptGoods(purchaseId: string, dto: AcceptGoodsDto, acceptedById: string | undefined) {
+        const purchase = await this.prisma.purchase.findUnique({ where: { id: purchaseId } });
+        if (!purchase) throw new NotFoundException('Purchase not found');
+
+        const receiptLines = await this.prisma.goodsReceiptLine.findMany({
+            where: { goodsReceipt: { purchaseId } },
+            include: { purchaseLine: true },
+        });
+        const receiptLineById = new Map(receiptLines.map((l) => [l.id, l]));
+
+        for (const acceptLine of dto.lines) {
+            const receiptLine = receiptLineById.get(acceptLine.goodsReceiptLineId);
+            if (!receiptLine) {
+                throw new BadRequestException(`Goods receipt line ${acceptLine.goodsReceiptLineId} does not belong to this purchase.`);
+            }
+            if (receiptLine.acceptedAt) {
+                throw new BadRequestException(`Goods receipt line ${acceptLine.goodsReceiptLineId} has already been reviewed.`);
+            }
+            const maxAcceptable = receiptLine.deliveredQty - receiptLine.damagedQty;
+            if (acceptLine.acceptedQty > maxAcceptable) {
+                throw new BadRequestException(
+                    `For receipt line ${acceptLine.goodsReceiptLineId}: accepted (${acceptLine.acceptedQty}) cannot exceed delivered minus damaged (${maxAcceptable}).`,
+                );
+            }
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            for (const acceptLine of dto.lines) {
+                const receiptLine = receiptLineById.get(acceptLine.goodsReceiptLineId)!;
+
+                await tx.goodsReceiptLine.update({
+                    where: { id: receiptLine.id },
+                    data: { acceptedQty: acceptLine.acceptedQty, acceptedAt: new Date(), acceptedById },
+                });
+
+                if (acceptLine.acceptedQty > 0) {
+                    // Find-or-create the branch's InventoryItem for this
+                    // product -- same pattern InventoryService.approveTransfer
+                    // already uses for a destination branch that has never
+                    // stocked this item before.
+                    let item = await tx.inventoryItem.findFirst({
+                        where: { branchId: purchase.branchId, productId: receiptLine.purchaseLine.productId },
+                    });
+
+                    if (!item) {
+                        const product = await tx.inventoryProduct.findUnique({ where: { id: receiptLine.purchaseLine.productId } });
+                        if (!product) throw new NotFoundException('Product not found');
+                        item = await tx.inventoryItem.create({
+                            data: {
+                                name: product.name,
+                                category: product.category[0] ?? 'FOR_SALE',
+                                branchId: purchase.branchId,
+                                productId: product.id,
+                                unit: product.unit,
+                                lowStockThreshold: product.lowStockThreshold,
+                                price: product.sellingPrice,
+                                expiryDate: receiptLine.expiryDate ?? undefined,
+                            },
+                        });
+                    }
+
+                    await tx.inventoryItem.update({
+                        where: { id: item.id },
+                        data: { storeStock: { increment: acceptLine.acceptedQty } },
+                    });
+
+                    await tx.stockMovement.create({
+                        data: {
+                            itemId: item.id,
+                            type: StockMovementType.RECEIVED,
+                            stockType: StockType.STORE,
+                            quantityDelta: acceptLine.acceptedQty,
+                            referenceId: receiptLine.goodsReceiptId,
+                            performedById: acceptedById,
+                            reason: `Product acceptance for Purchase #${purchase.purchaseNumber}`,
+                        },
+                    });
+                }
+            }
+
+            // Recomputed fresh from ALL receipt lines' review state every
+            // time, not just the ones touched by this call -- FULLY_ACCEPTED
+            // only once every line across every delivery for this purchase
+            // has been reviewed, matching how the overall PurchaseStatus
+            // above is recomputed from cumulative totals, not just this call's own lines.
+            const allLines = await tx.goodsReceiptLine.findMany({
+                where: { goodsReceipt: { purchaseId } },
+                select: { acceptedAt: true },
+            });
+            const allReviewed = allLines.length > 0 && allLines.every((l) => l.acceptedAt != null);
+
+            await tx.purchase.update({
+                where: { id: purchaseId },
+                data: { acceptanceStatus: allReviewed ? 'FULLY_ACCEPTED' : 'RECEIVED' },
+            });
+
+            return tx.goodsReceiptLine.findMany({
+                where: { goodsReceipt: { purchaseId } },
+                include: { purchaseLine: { include: { product: true } } },
+            });
         });
     }
 }

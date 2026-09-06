@@ -114,7 +114,7 @@ export class PayrollAdjustmentService {
     async listForPeriod(periodId: string) {
         return this.prisma.payrollAdjustment.findMany({
             where: { payrollPeriodId: periodId, status: 'ACTIVE' },
-            include: { staff: { select: { id: true, name: true, staffCode: true } }, createdBy: { select: { id: true, name: true } } },
+            include: { staff: { select: { id: true, name: true, staffCode: true, locationId: true, location: { select: { name: true } } } }, createdBy: { select: { id: true, name: true } } },
             orderBy: { createdAt: 'desc' },
         });
     }
