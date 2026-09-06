@@ -10,6 +10,7 @@ import { StaffService } from '../staff/staff.service';
 import { PurchaseService } from './purchase.service';
 import { RecordPurchasePaymentDto } from './dto/record-purchase-payment.dto';
 import { ReceiveGoodsDto } from './dto/receive-goods.dto';
+import { AcceptGoodsDto } from './dto/accept-goods.dto';
 
 @ApiTags('Admin - Purchases')
 @ApiBearerAuth('JWT-auth')
@@ -71,11 +72,21 @@ export class AdminPurchaseController {
 
     @Post(':id/receive')
     @Permission(PERMISSIONS.PURCHASES_RECEIVE_GOODS)
-    @ApiOperation({ summary: 'Confirm a delivery against this purchase -- only the accepted quantity enters inventory (into Store Stock). Supports multiple partial deliveries.' })
+    @ApiOperation({ summary: 'Confirm a delivery against this purchase -- just records what arrived (delivered/damaged). Nothing enters inventory until it is separately accepted via /accept-goods. Supports multiple partial deliveries.' })
     @ApiParam({ name: 'id' })
     async receiveGoods(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ReceiveGoodsDto, @Req() req: any) {
         const staffId = await this.resolveActingStaffId(req.user.id);
         const data = await this.purchaseService.receiveGoods(id, dto, staffId);
         return { success: true, message: 'Goods receipt recorded', data };
+    }
+
+    @Post(':id/accept-goods')
+    @Permission(PERMISSIONS.PURCHASES_ACCEPT_GOODS)
+    @ApiOperation({ summary: 'Product Acceptance -- review specific still-pending goods receipt lines and accept whatever quantity is actually usable into inventory (Store Stock). Each receipt line can only be reviewed once.' })
+    @ApiParam({ name: 'id' })
+    async acceptGoods(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AcceptGoodsDto, @Req() req: any) {
+        const staffId = await this.resolveActingStaffId(req.user.id);
+        const data = await this.purchaseService.acceptGoods(id, dto, staffId);
+        return { success: true, message: 'Products accepted', data };
     }
 }

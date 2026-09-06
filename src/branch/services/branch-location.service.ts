@@ -164,32 +164,13 @@ export class BranchLocationService {
     return { message: 'Branch deleted successfully' };
   }
 
-  /**
-   * Appoint a staff member as this branch's manager. Enforced at the
-   * database level too (unique constraint on staffLocation.managerId) — a
-   * given staff member can only manage one branch at a time; assigning them
-   * elsewhere requires clearing the prior assignment first, which this
-   * naturally does since we're setting the field directly, not appending.
-   */
+  
   async setManager(branchId: string, staffId: string) {
     const branch = await this.prisma.staffLocation.findUnique({ where: { id: branchId } });
     if (!branch) throw new NotFoundException('Branch not found');
 
     const staff = await this.prisma.staff.findUnique({ where: { id: staffId } });
     if (!staff) throw new NotFoundException('Staff record not found');
-    if (staff.locationId !== branchId) {
-      throw new ConflictException('This staff member is not assigned to this branch — reassign their branch first');
-    }
-
-    const alreadyManagingElsewhere = await this.prisma.staffLocation.findFirst({
-      where: { managerId: staffId, id: { not: branchId } },
-      select: { id: true, name: true },
-    });
-    if (alreadyManagingElsewhere) {
-      throw new ConflictException(
-        `This staff member already manages ${alreadyManagingElsewhere.name} — remove that assignment first`,
-      );
-    }
 
     const updated = await this.prisma.staffLocation.update({
       where: { id: branchId },

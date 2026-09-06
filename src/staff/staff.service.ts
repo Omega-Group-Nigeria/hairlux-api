@@ -171,6 +171,7 @@ interface StaffHistoryModelDelegate {
   create(args: QueryArgs): Promise<StaffEmploymentHistoryRecord>;
   update(args: QueryArgs): Promise<StaffEmploymentHistoryRecord>;
   delete(args: QueryArgs): Promise<StaffEmploymentHistoryRecord>;
+  count(args?: QueryArgs): Promise<number>;
 }
 
 interface DisciplinaryActionModelDelegate {
@@ -756,7 +757,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
           include: { location: true },
         },
         reportingTo: { select: { id: true, name: true, currentRole: true } },
-        managedBranch: { select: { id: true, name: true } },
+        managedBranches: { select: { id: true, name: true } },
         user: {
           select: {
             adminRole: {
@@ -1412,6 +1413,21 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
+      // Dev Feedback Round 9: this method also handles adding a
+      // SUBSEQUENT history entry (a promotion, transfer, role change --
+      // closing out the current open record above is exactly that
+      // case), not just an initial hire -- syncing Staff.hireDate to
+      // every such entry's startDate would silently overwrite someone's
+      // real, already-correct hire date with the date of a much later
+      // role change, breaking the SALARY_TO_COMMISSION cutoff rule and
+      // mid-period-hire proration for them retroactively. Only synced
+      // when this is genuinely the FIRST employment history record ever
+      // added for this staff member -- checked BEFORE creating the new
+      // one, so it can only ever be true once, for whichever entry
+      // actually represents their hire.
+      const priorHistoryCount = await txClient.staffEmploymentHistory.count({ where: { staffId: id } });
+      const isFirstHistoryEntry = priorHistoryCount === 0;
+
       const history = await txClient.staffEmploymentHistory.create({
         data: {
           staffId: id,
@@ -1430,6 +1446,7 @@ export class StaffService implements OnModuleInit, OnModuleDestroy {
         data: {
           currentRole: dto.roleTitle,
           locationId: dto.locationId,
+          ...(isFirstHistoryEntry ? { hireDate: startDate } : {}),
           ...(dto.endDate
             ? { employmentStatus: STAFF_EMPLOYMENT_STATUS.ACTIVE }
             : {}),

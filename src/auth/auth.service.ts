@@ -609,6 +609,8 @@ export class AuthService {
       currentSessionId: string | null;
       adminRole: { id: string; name: string } | null;
       hasPin: boolean;
+
+      managedBranches: { id: string; name: string }[];
     }>(profileKey);
 
     let user: NonNullable<typeof cached>;
@@ -639,10 +641,16 @@ export class AuthService {
         throw new NotFoundException(ErrorMessages.USER_NOT_FOUND);
       }
 
+      const staff = await this.prisma.staff.findFirst({
+        where: { userId: dbUser.id },
+        select: { managedBranches: { select: { id: true, name: true } } },
+      });
+
       const { pin, ...userWithoutPin } = dbUser;
       user = {
         ...userWithoutPin,
         hasPin: !!pin,
+        managedBranches: staff?.managedBranches ?? [],
       };
       // Cache for 5 min — invalidated on status change, role reassign, or delete
       await this.redis.set(profileKey, user, 300);
